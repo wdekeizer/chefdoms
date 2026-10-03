@@ -2,10 +2,11 @@
 
 A cooking-themed real-time strategy game in the spirit of Age of Empires, for 1 to 8 players (any mix of humans and bots).
 You host it from your own computer; everyone plays in a web browser. Nothing to install for your friends.
+It can also be played turn-based, on a grid, one kitchen at a time (see [Turn-based mode](#turn-based-mode)).
 
 Gather Produce, Firewood, Spice and Salt. Build stations. Advance from the Food Cart Age to the Five-Star Age.
 Lead your brigade with one of six commanders, each a hero on the battlefield with their own buffs, aura,
-activated ability and unique unit. Destroy the enemy Kitchen HQ.
+activated ability, ultimate and unique unit. Destroy the enemy Kitchen HQ.
 
 ---
 
@@ -55,7 +56,7 @@ and about 20 KB per second with 8 kitchens (up to roughly twice that in the busi
 home connection is fine.
 
 If someone's connection drops, they just open the same link again (or refresh) and they are back in their seat.
-After 45 seconds away, a bot minds their kitchen until they return.
+After 45 seconds away (20 in a turn-based match, where everyone is waiting), a bot minds their kitchen until they return.
 
 ## Giving friends their own copy (GitHub)
 
@@ -105,9 +106,11 @@ A friend's copy uses its own `public/music` and `public/sfx` folders, so each pl
 - The first player in (or whoever is on the host PC) is the host. The host adds bots, sets the options and starts the match.
 - Click your commander to choose one. Click the coloured dot to change colour. Same team number = allies (shared vision, team chat).
 - Up to 8 kitchens per match. Fill empty seats with bots from the "+ Add bot" menu on each seat.
+- **Game mode**: Real-time (the classic game) or Turn-based (see [Turn-based mode](#turn-based-mode)).
 - Options: map size, starting pantry, staff limit, game speed, fog of war, and the victory rule
-  (destroy every enemy Kitchen HQ, or Conquest: destroy every station). Map size "Auto" picks Small for 2,
-  Medium for 3-4, Large for 5-6 and Huge for 7-8 kitchens; a size too small for the head count is bumped up.
+  (destroy every enemy Kitchen HQ, or Conquest: destroy every station). Map size "Auto" picks Small (96×96 tiles) for 2,
+  Medium (128) for 3-4, Large (160) for 5-6 and Huge (200) for 7-8 kitchens; a size too small for the head count is bumped up.
+- **Hall of Fame** shows the best scores by human players on this server (kept in `highscores.json` next to `server.js`).
 - Bots come in Easy, Normal, Hard and Extreme. Easy to Hard play by the same rules as you. Extreme plays the
   Hard script flat out and also gathers 25% faster. No bot is limited by fog of war.
 - One seat and no bots = a solo sandbox to learn the ropes.
@@ -116,13 +119,20 @@ A friend's copy uses its own `public/music` and `public/sfx` folders, so each pl
 
 | | |
 |---|---|
-| **Produce** | Pick it from Veggie Patches, then build Garden Plots (endless, one Prep Cook each). Pays for most units. |
+| **Produce** | Pick it from Veggie Patches, fish it from the Fishing Spots on a pond's shore, then build Garden Plots (endless, one Prep Cook each). Pays for most units. |
 | **Firewood** | Chop trees. Pays for stations. |
 | **Spice** | Dig Spice Mounds. Pays for the good stuff: advanced units, upgrades, new ages. |
-| **Salt** | Chip Salt Rocks. Pays for towers, your Signature Restaurant and extra Kitchen HQs. |
+| **Salt** | Chip Salt Rocks (every base starts with two deposits, and the map holds plenty more). Pays for towers, your Signature Restaurant and extra Kitchen HQs. |
 | **Staff** | Your population. Build Break Rooms to raise the limit. |
 
 Prep Cooks carry what they gather to the nearest Kitchen HQ or Pantry, so build Pantries next to distant resources.
+Right-click a Kitchen HQ or Pantry with cooks selected (or press Deliver on their command card) and they bank what they
+are holding straight away. A cook holding one ingredient who is sent to gather another banks the first on the way.
+
+**The bell.** Under attack? Ring the bell (the bell button above the minimap, on the Kitchen HQ's card, or the `U` key):
+every Prep Cook drops their load at the door and shelters inside the nearest Kitchen HQ (30 each), where nothing can
+hurt them. Every 5 cooks inside add one plate to the HQ's volley. "All clear" sends everyone straight back to the job
+they had.
 
 **Ages:** Food Cart → Diner → Bistro → Five-Star. Advance at the Kitchen HQ. Each age unlocks units, stations and upgrades,
 and makes your commander stronger.
@@ -142,46 +152,117 @@ and makes your commander stronger.
 
 Ranged units barely scratch stations. Bring Line Cooks, your unique unit, or siege to take down a Kitchen HQ.
 
+**Stances and formations** (on the army's command card)
+
+| | |
+|---|---|
+| Aggressive | The default: chase and attack anything hostile in sight |
+| Hold the Line | Stay put; only fight what comes within reach, then walk back |
+| Stand Down | Never pick a fight (not even when hit) until you order an attack |
+| Loose / Service Line / Square / V Wedge / Spread Out | The shape your army takes on every move order. Infantry and vehicles go in front, ranged behind, siege and Baristas at the back, and a formation marches at the pace of its slowest member. |
+
+**Defences.** Pepper Mill Towers, Kitchen HQs and the Signature Restaurant shoot at intruders. The restaurant is the
+big one: three plates per volley, each at a different target. The Twin Grinders upgrade adds a projectile to all of them.
+
+**Upgrades.** Besides the weapon, armour and economy lines there are general military upgrades in every age:
+Cast-Iron Pans (Food Cart Age, at the Grill Station), Non-Slip Clogs, Family Meal, Order Tickets and Mise en Place (Diner),
+Staff Banquet, Twin Grinders and Chef's Table (Bistro), Michelin Discipline (Five-Star).
+
+**Pings.** Hold Alt and click the map or the minimap (or press `M`, then click) to flash a marker, with a sound, for
+your whole team. Tab jumps the camera to the latest alert or ping.
+
+**Ultimates.** From the Bistro Age every commander has a second, much bigger ability on a cooldown of two and a half
+to three minutes (the round button next to the ability, or the `O` key). It shows a padlock until you get there.
+
+**After the match** you get a score (military, economy, technology, society), a table of everything that happened,
+a graph of score / army / staff / ingredients / kills over time for every player, and the server's Hall of Fame.
+
 **Commanders**
 
-| Commander | Style | Hero aura | Ability (Space) | Unique unit |
-|---|---|---|---|---|
-| Chef Magnus Flint, "The Inferno" | Faster attacks, cheaper ages, faster research | Nearby units deal +10% damage | SERVICE!: nearby units attack and move faster | Flambadier (short-range splash fire) |
-| Nonna Rosalia Bianchi, "The Matriarch" | Cheaper cooks, better gardens, bigger Break Rooms | Nearby units regenerate | Mangia!: big heal for nearby units | Pin Roller (armoured infantry) |
-| Pitmaster "Big Hank" Dawson, "The Smoke" | Faster firewood, tougher stations and infantry | Nearby units take 18% less damage | Smoke Ring: nearby units take half damage | Brisket Brute (heavy infantry) |
-| Master Ryo Tanabe, "The Blade" | Stronger infantry, +1 range, bigger baskets | Nearby units attack 10% faster | Thousand Cuts: damages every enemy around him | Blade Dancer (fast striker) |
-| Madame Odile Fontaine, "The Pastry Queen" | Faster spice, cheaper upgrades, faster building | Nearby units move faster | Sugar Rush: all your units move and gather faster | Macaron Mortar (light artillery) |
-| Zara Okoye, "The Street Food Mogul" | Faster training, cheaper vehicles and Pantries | Kills near her pay Spice | Lunch Rush: all stations work 3x faster | Skewer Rider (lancer scooter) |
+| Commander | Style | Hero aura | Ability (Space) | Ultimate (O) | Unique unit |
+|---|---|---|---|---|---|
+| Chef Magnus Flint, "The Inferno" | Faster attacks, cheaper ages, faster research | Nearby units deal +10% damage | SERVICE!: nearby units attack and move faster | Full Flambé: heavy damage to every enemy unit and station around him | Flambadier (short-range splash fire) |
+| Nonna Rosalia Bianchi, "The Matriarch" | Cheaper cooks, better gardens, bigger Break Rooms | Nearby units regenerate | Mangia!: big heal for nearby units | Sunday Feast: ALL your units heal 60% and take 30% less damage while they eat | Pin Roller (armoured infantry) |
+| Pitmaster "Big Hank" Dawson, "The Smoke" | Faster firewood, tougher stations and infantry | Nearby units take 18% less damage | Smoke Ring: nearby units take half damage | Lockdown: all your stations take 75% less damage and shoot twice as fast | Brisket Brute (heavy infantry) |
+| Master Ryo Tanabe, "The Blade" | Stronger infantry, +1 range, bigger baskets | Nearby units attack 10% faster | Thousand Cuts: damages every enemy around him | The Perfect Cut: enormous damage to the toughest enemy in reach | Blade Dancer (fast striker) |
+| Madame Odile Fontaine, "The Pastry Queen" | Faster spice, cheaper upgrades, faster building | Nearby units move faster | Sugar Rush: all your units move and gather faster | Sugar Glass: every enemy unit around her is stuck fast, unable to move or attack | Macaron Mortar (light artillery) |
+| Zara Okoye, "The Street Food Mogul" | Faster training, cheaper vehicles and Pantries | Kills near her pay Spice | Lunch Rush: all stations work 3x faster | Delivery Swarm: free Delivery Scooters roar in and fight for 45 seconds | Skewer Rider (lancer scooter) |
 
 Your commander is free, respawns at the Kitchen HQ a while after falling, and grows stronger with each age.
 All commanders are original characters; names, buffs and everything else live in `game/data.js`.
 
-**Controls** (also under Menu → Controls in the game)
+**Controls** (every hotkey can be changed under Menu → Controls & hotkeys; the table shows the defaults)
 
 | | |
 |---|---|
 | Left-click / drag | Select; double-click selects all of that type on screen |
-| Right-click | Smart order: move, attack, gather, build/repair, or set a station's rally point |
+| Right-click | Smart order: move, attack (sword cursor), gather (basket cursor), build/repair (hammer), deliver to a Kitchen HQ or Pantry, or set a station's rally point |
 | Shift + order | Queue it after the current one |
+| Alt + click | Ping the map for your team |
 | Q W E R T / A S D F G / Z X C V B | The command card buttons, laid out like the keyboard |
 | A, then click | Attack-move |
-| Space | Commander ability |
+| Space / O | Commander ability / ultimate (from the Bistro Age) |
 | ` (under Esc) / H | Select commander / Kitchen HQ (press twice to jump there) |
 | . and , | Next idle Prep Cook / whole army |
-| Tab | Jump to the last "under attack" alert |
+| U / M / L | Ring or silence the bell / ping (then click) / next formation |
+| Tab | Jump to the last alert or ping |
 | Ctrl or Shift + 1…9 | Save a control group; the number recalls it |
-| Arrows, screen edge, middle-drag, minimap | Move the camera; mouse wheel zooms |
+| Arrows, screen edge, middle-drag, minimap | Move the camera; mouse wheel (or = and -) zooms |
 | Delete | Remove selected units/stations |
 | Enter / Shift+Enter | Chat with everyone / your team |
 | F10, P | Menu, pause (host) |
+| I | End your turn (turn-based matches) |
+
+**WASD camera (optional).** Tick "W A S D moves the camera" in Menu → Controls & hotkeys. The command card then moves to
+Q E R T Y / F G H J K / Z X C V B and the Kitchen HQ key becomes N. The same screen has the camera speed, the edge
+scrolling switch and a "reset to defaults" button. The pointer keeps scrolling for a moment after it slips past the
+window edge; Menu → Full screen makes edge scrolling nicer still.
+
+## Turn-based mode
+
+Choose **Game mode → Turn-based (tactics)** in the lobby for a match in the style of the handheld Age of Empires
+games: the same commanders, units, stations, upgrades and ages, on a small grid, one kitchen at a time.
+
+- **Your turn.** Every unit may move once (the blue tiles show how far) and then do one thing: attack, build, repair
+  or heal. Attacking ends that unit's turn. Units with something left to do carry a yellow dot; finished ones fade.
+  Press **End turn** (or `I`) to hand over. `.` jumps to the next unit that can still act.
+- **Moving.** Infantry move 3 tiles, Food Trucks, Blade Dancers and the quicker commanders 4, Delivery Scooters 5,
+  Skewer Riders 6, Catapults 2.
+  Forest costs double (triple for vehicles and siege), but a unit standing among trees takes a quarter less damage.
+  You can walk through your own units, never through enemies, stations or water.
+- **Fighting.** Point at a red-marked enemy and the forecast shows the damage you will do and what comes back; click
+  to attack. The defender hits back at 60% strength if it survives and can reach you, so Sauciers (range 2) strike
+  infantry for free. Wounded units hit less hard. A Meatball Catapult (range 2-3) cannot move and fire in the same turn.
+- **Ingredients.** Prep Cooks do not gather. Build a **Pantry on top of a resource** (Veggie Patch, Timber Stand,
+  Spice Mound, Salt Rock or Fishing Spot: right-click it with a Prep Cook) and it pays that ingredient at the start of
+  each of your turns. The Kitchen HQ pays a basic income and Garden Plots a little Produce. Gathering upgrades and
+  commander bonuses raise what stations pay. What your next turn brings is shown in green next to each ingredient.
+- **Stations** take one tile and one job at a time. A unit takes a turn to train and walks out at the start of your
+  next turn; upgrades and ages take one to three turns. A Prep Cook can lend a hand on a building site (right-click)
+  to finish it a turn sooner, or repair a damaged station.
+- **Defences** (Kitchen HQ, Pepper Mill Tower, Signature Restaurant) do not hit back when struck. Instead they volley
+  at the nearest enemies in range at the start of their owner's turn.
+- **Commanders.** Auras reach 2 tiles and abilities 3. Cooldowns count your turns (ability every 3 to 4, ultimate
+  every 6 to 7), and a fallen commander returns after a few turns.
+- **Lobby options.** A turn timer (1 to 3 minutes; when it runs out your turn ends) and a round limit (after 30, 50 or
+  80 rounds the best score wins). The staff limit is a fifth of the real-time one (100 becomes 20). Maps are
+  26, 34, 42 or 50 tiles across.
+- **Mouse.** Left-click selects, moves to a blue tile, or attacks a red enemy. Right-click moves and attacks too, and
+  is how a Barista tops up a friend and how a Prep Cook repairs, helps build, or puts a Pantry on a resource.
 
 ## Sound and music
 
 Everything you hear is generated in the browser: the effects are synthesised, and the soundtrack is a set of
 original pieces (`public/client/tracks.js`) played by a small software synth in the style of a late-90s
-General MIDI module: lute, harp, recorder, strings, choir pads, timpani. Calm and ambient pieces rotate while
-you build, and the battle piece takes over while you are fighting. Volumes are under Menu (in a match) or
-"Sound & music" (in the lobby).
+General MIDI module: lute, harp, recorder, strings, choir pads, timpani. There are twelve pieces, about
+26 minutes in all: a lobby theme, five calm tunes and three ambient ones that rotate while you build, and three
+battle pieces that take turns while you are fighting. Volumes and a "Next track" button are under Menu (in a match)
+or "Sound & music" (in the lobby).
+
+Every kind of unit has its own voice: Prep Cooks, infantry, ranged units, vehicles, siege, Baristas and your commander
+each answer a click differently, each ingredient sounds different when gathered, each projectile has its own launch
+sound, and a new unit announces itself (a counter bell for a Prep Cook, a drum ruff and horn call for soldiers, an
+engine for vehicles).
 
 **Use your own audio.** As the host, drop files into these folders and everyone who connects hears them
 (they just refresh the page):
@@ -193,12 +274,13 @@ you build, and the battle piece takes over while you are fighting. Volumes are u
   The README in that folder lists the names.
 
 You can also write new built-in pieces: add an entry to `TRACKS` in `public/client/tracks.js`
-(the note format is explained at the top of that file).
+(the note format, and how sections are strung into longer arrangements, is explained at the top of that file).
 
 ## Changing the game
 
 Everything about the rules is plain data in **`game/data.js`**: unit and station stats, costs, upgrades, ages,
-commander names and bonuses, lobby options. Edit, restart the server, and have everyone refresh the page.
+commander names and bonuses, lobby options, and (in the `TB` section) the numbers of the turn-based mode.
+Edit, restart the server, and have everyone refresh the page.
 
 Check that a change did not break anything, or see how the bots fare with it:
 
@@ -207,7 +289,8 @@ node tools/sim-test.js                      one 4-bot match with a timeline
 node tools/sim-test.js --series 12          twelve quick matches and a win table
 node tools/sim-test.js --players flint:extreme,nonna:hard --map small
 node tools/sim-test.js --n 8 --level hard   an eight-bot free-for-all
-node tools/rules-test.js                    rule checks (economy, combat, heroes, victory, ...)
+node tools/sim-test.js --mode turn --rounds 60   a turn-based bot match (add --series 6 for a win table)
+node tools/rules-test.js                    rule checks (economy, combat, heroes, ultimates, turn-based mode, victory, ...)
 node tools/net-test.js                      end-to-end server test (Node 22+)
 ```
 
@@ -220,9 +303,12 @@ game/sim.js           the simulation: movement, economy, combat, heroes
 game/pathfinding.js   A* pathfinding
 game/mapgen.js        random maps
 game/ai.js            the bots
+game/tactics.js       turn-based mode: the same game on a grid, one kitchen at a time
+game/tactics-ai.js    the bots for turn-based mode
 lib/wsserver.js       dependency-free WebSocket server
 public/               the browser client (canvas renderer, HUD, input, sprites, sounds, music)
 public/music, sfx     drop your own audio here
+highscores.json       the Hall of Fame (created after the first real match; delete it to start over)
 tools/                test scripts
 ```
 

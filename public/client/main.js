@@ -4,13 +4,16 @@
 // ============================================================================
 import { G, K_UNIT, K_BLDG, beginMatch, applySnapshot, frameUpdate, canSee, isAlly, tileVisible, send, isSpectator } from './state.js';
 import { Net, wsUrl } from './net.js';
+import { labelOf } from './keys.js';
 import * as R from './render.js';
 import * as UI from './ui.js';
 import * as IN from './input.js';
 import * as SPR from './sprites.js';
 import { sfx, unlockAudio, setCustomSfx, effectiveMusicVolume } from './audio.js';
 import { music } from './music.js';
-import { COMMANDERS, COMMANDER_KEYS, AGE_NAMES, TECHS, VERSION } from '/game/data.js';
+import { cursorFor } from './cursors.js';
+import * as TAC from './tactics.js';
+import { COMMANDERS, COMMANDER_KEYS, AGE_NAMES, TECHS, UNITS, VERSION, RES, RES_INFO, TB } from '/game/data.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -34,7 +37,7 @@ let battleUntil = 0, fightSince = 0, lastAmbient = 0, lastMood = 0;
 function soundscape(now) {
   if (now - lastMood > 500) {
     lastMood = now;
-    let fighting = G.lastAlertAt && now - G.lastAlertAt < 6000;
+    let fighting = (G.lastAlertAt && now - G.lastAlertAt < 6000) || (G.tb && G.lastFightAt && now - G.lastFightAt < 9000);
     if (!fighting) {
       let n = 0;
       for (const e of G.units) if (e.st === 2 && (G.me < 0 || e.owner === G.me)) { if (++n >= (G.me < 0 ? 6 : 2)) { fighting = true; break; } }
@@ -49,9 +52,42 @@ function soundscape(now) {
     for (const e of G.units) if (e.rx > x0 && e.rx < x1 && e.ry > y0 && e.ry < y1 && (e.st >= 2) && canSee(e)) seen.push(e);
     if (!seen.length) return;
     const e = seen[(Math.random() * seen.length) | 0];
-    if (e.st === 2) { if (now - e.hitAt < 400 || Math.random() < 0.35) sfx(Math.random() < 0.5 ? 'clang' : 'hit'); }
-    else if (Math.random() < 0.45) sfx(e.st === 4 ? 'hammer' : e.tgt ? 'pick' : 'chop');
+    if (e.st === 2) { if (now - e.hitAt < 400 || Math.random() < 0.35) sfx(MELEE_SOUND[e.type] || MELEE_BY_CLASS[unitClass(e.type)] || 'clang'); }
+    else if (e.st === 5) { if (Math.random() < 0.2) sfx('steam'); }
+    else if (e.st === 6) { /* sheltering: silent */ }
+    else if (Math.random() < 0.45) sfx(e.st === 4 ? 'hammer' : workSound(e));
   }
+}
+
+// ---- who makes which noise
+/** cook | hero | siege | veh | ranged | support | inf */
+function unitClass(type) {
+  const U = UNITS[type];
+  if (!U) return 'inf';
+  for (const k of ['cook', 'hero', 'siege', 'veh', 'ranged', 'support']) if (U.tags.includes(k)) return k;
+  return 'inf';
+}
+const MELEE_SOUND = { butcher: 'cleaver', dancer: 'cleaver', hero_ryo: 'cleaver', hero_flint: 'cleaver', ram: 'ram_hit', cook: 'hit' };
+const MELEE_BY_CLASS = { veh: 'veh_hit', inf: 'clang', hero: 'clang', ranged: '', siege: '' };
+/** The sound of a Prep Cook at work depends on what is being gathered. */
+function workSound(e) {
+  if (!e.tgt) return 'chop';
+  const t = G.ents.get(e.tgt);
+  if (!t) return 'pick';
+  if (t.kind === K_BLDG) return 'g_garden';
+  return { veg: 'g_veg', spice: 'g_spice', salt: 'g_salt', fish: 'g_fish' }[t.type] || 'pick';
+}
+/** Selection and order acknowledgements: every kind of unit answers in its own voice. */
+function unitSound(list, kind) {
+  if (!list.length) return;
+  const e = list.find((x) => x.kind === K_UNIT && x.type !== 'cook') || list[0];
+  if (e.kind !== K_UNIT) { sfx(kind === 'select' ? (e.kind === K_BLDG ? 'sel_bldg' : 'click') : 'move'); return; }
+  const cls = unitClass(e.type);
+  if (kind === 'select') sfx('sel_' + cls);
+  else if (kind === 'attack') sfx(cls === 'veh' ? 'attack_veh' : 'attack');
+  else if (kind === 'gather') sfx('gather_ack');
+  else if (kind === 'build') sfx('build_ack');
+  else sfx(cls === 'veh' ? 'move_veh' : cls === 'siege' ? 'move_siege' : 'move');
 }
 
 // ------------------------------------------------------------------ network
@@ -98,6 +134,7 @@ function onMessage(m) {
       R.resize();
       UI.resetHUD();
       if (!m.resync) UI.note(m.you >= 0 ? `You are ${COMMANDERS[m.players[m.you].commander].name}. Good luck, chef!` : 'You are watching this match.', 'good');
+      if (!m.resync && G.tb && m.you >= 0) UI.note(`Turn-based match: move each unit once, then act. ${labelOf('endTurn')} ends your turn.`);
       break;
     }
     case 's': if (G.phase === 'game') applySnapshot(m); break;
@@ -120,16 +157,39 @@ function onMessage(m) {
     case 'kicked':
       net.stop(); show('join'); $('join-status').textContent = m.m || 'Disconnected.';
       break;
+    case 'mp': {                         // a team-mate (or you) pinged the map
+      if (G.phase !== 'game' || !G.players[m.p]) break;
+      const now = performance.now(), color = R.colorOf(m.p);
+      G.teamPings.push({ x: m.x, y: m.y, t0: now, color, name: m.p === G.me ? '' : G.players[m.p].name });
+      G.pings.push({ x: m.x, y: m.y, t0: now, color });
+      G.lastAlert = { x: m.x, y: m.y };
+      sfx('ping');
+      if (m.p !== G.me) UI.note(`${G.players[m.p].name} pinged the map (${labelOf('alert')} jumps there)`);
+      break;
+    }
+    case 'scores': UI.showHall(m.list || []); break;
   }
 }
 
 // -------------------------------------------------------------- game events
+const SPAWN_SOUND = { cook: 'spawn_cook', hero: 'spawn_hero', siege: 'spawn_siege', veh: 'spawn_veh', ranged: 'spawn_mil', support: 'spawn_support', inf: 'spawn_mil' };
 const NOTES = {
+  bell: 'There is no Kitchen HQ to shelter in',
   res: 'Not enough ingredients for that',
   place: "Can't build there",
   pop: 'Staff limit reached: build another Break Room',
   popmax: 'Staff limit reached',
+  ultage: 'Ultimates unlock in the Bistro Age',
+  ulttarget: 'No enemy within reach for that',
+  // turn-based
+  pantry: 'A Pantry is built ON a resource: a Veggie Patch, Timber Stand, Spice Mound, Salt Rock or Fishing Spot',
+  busy: 'That station is busy: one job at a time',
+  setup: 'Artillery cannot move and fire in the same turn',
+  timeup: 'Time is up: your turn has ended',
+  blocked: 'Something is in the way',
+  stuck: 'Stuck in caramel: it cannot attack this turn',
 };
+let lastIncome = null;
 const onScreen = (x, y) => (isSpectator() || tileVisible(x, y));
 
 G.hooks.event = (ev) => {
@@ -146,7 +206,22 @@ G.hooks.event = (ev) => {
         tx: lobbed ? ev[5] / Q : tg.rx, ty: lobbed ? ev[6] / Q : tg.ry - 0.4,
         t0: now, dur: Math.max(60, ev[4] * G.snapDt),
       });
-      if (onScreen(x0, y0)) sfx('shot');
+      if (onScreen(x0, y0)) sfx('shot_' + ev[3]);
+      break;
+    }
+    case 'spawned': {                    // one of our own units just walked out of a station
+      const e = G.ents.get(ev[1]);
+      if (!e || e.owner !== G.me) break;
+      const cls = unitClass(e.type);
+      if (cls !== 'hero') sfx(SPAWN_SOUND[cls] || 'train');
+      G.fx.push({ kind: 'ring', x: e.x, y: e.y, t0: now, dur: 500, color: R.colorOf(G.me), k: 0.3 });
+      break;
+    }
+    case 'bell': {
+      const P = G.players[ev[1]];
+      if (mine) { UI.note(ev[2] ? 'The bell rings: Prep Cooks are heading inside!' : 'All clear: back to work!', ev[2] ? 'warn' : 'good'); sfx(ev[2] ? 'bell' : 'allclear'); }
+      else if (isAlly(ev[1])) { UI.note(`${P.name} ${ev[2] ? 'rang the bell' : 'gave the all-clear'}`); if (ev[2]) sfx('bell', 0.5); }
+      UI.refreshAll(true);
       break;
     }
     case 'alert':
@@ -175,21 +250,61 @@ G.hooks.event = (ev) => {
       const P = G.players[ev[1]], A = COMMANDERS[P.commander].ability;
       const x = ev[3] / Q, y = ev[4] / Q;
       if (onScreen(x, y) || mine) {
-        G.fx.push({ kind: 'ring', x, y, t0: now, dur: 900, color: R.colorOf(ev[1]), k: (A.radius || 8) / 3 });
+        G.fx.push({ kind: 'ring', x, y, t0: now, dur: 900, color: R.colorOf(ev[1]), k: G.tb ? (TB.abilityRange + 0.5) / 3 : (A.radius || 8) / 3 });
         sfx('ability');
       }
       if (mine) UI.note(A.name + '!', 'good');
       else if (isAlly(ev[1])) UI.note(`${P.name} used ${A.name}`);
       break;
     }
+    case 'ult': {                        // a commander's ultimate: everybody hears about it
+      const P = G.players[ev[1]], U = COMMANDERS[P.commander].ultimate;
+      const x = ev[3] / Q, y = ev[4] / Q, col = R.colorOf(ev[1]), seen = onScreen(x, y) || mine;
+      const big = G.tb ? (TB.abilityRange + 0.5) / 3 : (U.radius || 9) / 3;
+      if (seen) {
+        for (const [d, k] of [[0, big], [150, big * 0.72], [300, big * 0.45]]) G.fx.push({ kind: 'ring', x, y, t0: now + d, dur: 1100, color: col, k });
+        if (ev[2] === 'flambe') G.fx.push({ kind: 'boom', x, y, t0: now, dur: 750, k: 2.4 });
+        if (ev[2] === 'perfectcut') G.fx.push({ kind: 'atkmark', x, y, t0: now, dur: 900 });
+      }
+      sfx('ult_' + ev[2], seen ? 1 : 0.55);
+      UI.note(mine ? U.name + '!' : `${P.name} unleashes ${U.name}!`, mine ? 'good' : isAlly(ev[1]) ? '' : 'bad');
+      break;
+    }
+    case 'dmg': {                        // turn-based: numbers float up from every blow and every heal
+      const x = ev[1] / Q, y = ev[2] / Q;
+      if (!onScreen(x, y)) break;
+      G.fx.push({ kind: 'num', x, y, t0: now, dur: 1200, text: (ev[4] ? '+' : '−') + ev[3], color: ev[4] ? '#8dff9a' : '#ff8a7a' });
+      if (ev[4]) { G.fx.push({ kind: 'heal', x, y, t0: now, dur: 800 }); sfx('heal'); }
+      else { G.fx.push({ kind: 'hit', x, y: y - 0.2, t0: now, dur: 260, k: 1.6 }); G.lastFightAt = now; }
+      break;
+    }
+    case 'swing': {                      // turn-based: a blow at arm's length
+      const a = G.ents.get(ev[1]);
+      if (a && canSee(a)) sfx(MELEE_SOUND[a.type] || MELEE_BY_CLASS[unitClass(a.type)] || 'clang');
+      break;
+    }
+    case 'income': if (mine) lastIncome = ev; break;
+    case 'turn': {
+      if (!G.tb) break;
+      G.tb.n = ev[1]; G.tb.cur = ev[2]; G.tbDirty = true;
+      if (G.mode && G.mode.type === 'tplace') G.mode = null;
+      if (ev[2] === G.me) {
+        const got = lastIncome ? RES.map((r, i) => (lastIncome[2 + i] ? `+${lastIncome[2 + i]} ${RES_INFO[r].name}` : '')).filter(Boolean).join(', ') : '';
+        UI.note(`Your turn · round ${ev[1]}` + (got ? ' · ' + got : ''), 'good');
+        sfx('turn');
+      } else sfx('turn_other');
+      lastIncome = null;
+      UI.refreshAll(true);
+      break;
+    }
     case 'herodown': {
       const P = G.players[ev[1]];
-      UI.note(mine ? 'Your commander is down! Back at the Kitchen HQ shortly.' : `${COMMANDERS[P.commander].name} (${P.name}) has been carried off the field`, mine ? 'bad' : '');
+      UI.note(mine ? (G.tb ? 'Your commander is down! Back at the Kitchen HQ in a few turns.' : 'Your commander is down! Back at the Kitchen HQ shortly.') : `${COMMANDERS[P.commander].name} (${P.name}) has been carried off the field`, mine ? 'bad' : '');
       if (mine) sfx('herodown');
       break;
     }
     case 'heroup':
-      if (mine) { UI.note('Your commander is back on the field', 'good'); sfx('train'); }
+      if (mine) { UI.note('Your commander is back on the field', 'good'); sfx('spawn_hero'); }
       break;
     case 'elim':
       UI.note(mine ? 'Your kitchen has fallen. You can keep watching.' : `${G.players[ev[1]].name} has been eliminated`, mine ? 'bad' : 'warn');
@@ -206,7 +321,7 @@ G.hooks.event = (ev) => {
 
 G.hooks.impact = (kind, x, y) => {
   if (!onScreen(x, y)) return;
-  sfx(kind === 'sauce' || kind === 'frosting' ? 'splat' : kind === 'meatball' || kind === 'macaron' ? 'boom' : 'hit');
+  sfx(kind === 'sauce' || kind === 'frosting' ? 'splat' : kind === 'meatball' || kind === 'macaron' ? 'boom' : kind === 'plate' ? 'smash' : 'hit');
 };
 
 G.hooks.removed = (e) => {
@@ -214,8 +329,9 @@ G.hooks.removed = (e) => {
   const now = performance.now();
   if (e.kind === K_UNIT) {
     if (!onScreen(e.rx, e.ry)) return;
+    if (e.st === 6) return;                         // was sheltering: nothing to see
     G.fx.push({ kind: 'death', x: e.rx, y: e.ry, t0: now, dur: 650, color: R.colorOf(e.owner) });
-    sfx('death');
+    { const cls = unitClass(e.type); sfx(cls === 'veh' || cls === 'siege' ? 'death_veh' : 'death'); }
   } else if (e.kind === K_BLDG) {
     if (!onScreen(e.x, e.y)) return;
     G.fx.push({ kind: 'collapse', x: e.x, y: e.y + e.size * 0.25, t0: now, dur: 900, k: e.size * 0.5 });
@@ -249,6 +365,7 @@ function boot() {
   $('btn-join').addEventListener('click', join);
   $('name').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') join(); });
   $('btn-help').addEventListener('click', () => UI.showHelp());
+  $('btn-hall').addEventListener('click', () => send({ t: 'scores' }));
   $('btn-sound').addEventListener('click', () => UI.showSound());
   fetch('/api/audio').then((r) => r.json()).then((j) => { music.setCustom(j.music || {}); setCustomSfx(j.sfx || {}); }).catch(() => { /* older server: built-in audio only */ });
   music.setState('lobby');
@@ -265,23 +382,30 @@ function boot() {
     selectArmy: () => IN.selectArmy(),
     stop: () => IN.stopSelected(),
     setEdgeScroll: (v) => IN.setEdgeScroll(v),
+    setCamSpeed: (v) => IN.setCamSpeed(v),
+    setFormation: (f) => IN.setFormation(f),
+    toggleBell: () => IN.toggleBell(),
   });
   IN.initInput(canvas, {
     selection: () => UI.refreshAll(true),
-    cardKey: (letter, shift) => UI.cardKey(letter, shift),
+    cardKey: (i, shift) => UI.cardKey(i, shift),
+    unitSound,
     openChat: (team) => UI.openChat(team),
     toggleMenu: (v) => UI.toggleMenu(v),
     note: (t) => UI.note(t, 'warn'),
   });
+  TAC.initTactics({ note: (t) => { UI.note(t, 'warn'); sfx('error'); }, sound: unitSound, selection: () => UI.refreshAll(true), canAfford: UI.canAfford });
   IN.setEdgeScroll(store.get('edge') !== '0');
+  IN.setCamSpeed(Number(store.get('camSpeed')) || 1);
 
   // minimap: left-drag moves the camera, right-click sends the selection there
   let mmDrag = false;
   const mmWorld = (ev) => { const r = mm.getBoundingClientRect(); return [((ev.clientX - r.left) / r.width) * G.w, ((ev.clientY - r.top) / r.height) * G.h]; };
   mm.addEventListener('mousedown', (ev) => {
     const [x, y] = mmWorld(ev);
-    if (ev.button === 0) { mmDrag = true; G.cam.x = x; G.cam.y = y; }
-    else if (ev.button === 2) IN.contextCommand(x, y, ev.shiftKey);
+    if (ev.button === 0 && (ev.altKey || (G.mode && G.mode.type === 'ping'))) { IN.pingAt(x, y); if (G.mode && G.mode.type === 'ping') G.mode = null; }
+    else if (ev.button === 0) { mmDrag = true; G.cam.x = x; G.cam.y = y; }
+    else if (ev.button === 2 && !G.tb) IN.contextCommand(x, y, ev.shiftKey);
     ev.preventDefault();
   });
   window.addEventListener('mousemove', (ev) => { if (mmDrag) { const [x, y] = mmWorld(ev); G.cam.x = x; G.cam.y = y; } });
@@ -291,7 +415,7 @@ function boot() {
   if (store.get('name') && store.get('token')) { G.name = store.get('name'); $('join-status').textContent = 'Connecting…'; net.connect(); }
   else $('name').focus();
 
-  let last = performance.now();
+  let last = performance.now(), lastCursor = null;
   const frame = (now) => {
     requestAnimationFrame(frame);
     const dt = Math.min(0.1, (now - last) / 1000);
@@ -299,10 +423,14 @@ function boot() {
     if (G.phase !== 'game') return;
     IN.updateInput(dt);
     frameUpdate(now);
-    const hov = G.mouse.inside && !G.mode && !G.drag ? IN.pickEntity(G.mouse.wx, G.mouse.wy) : null;
-    G.hover = hov ? hov.id : 0;
-    const cur = G.mode ? 'crosshair' : hov ? (hov.kind !== 2 && hov.owner >= 0 && !isAlly(hov.owner) && G.sel.size && G.me >= 0 ? 'crosshair' : 'pointer') : 'default';
-    if (canvas.style.cursor !== cur) canvas.style.cursor = cur;
+    // what is under the mouse decides the cursor: sword = attack, basket = gather, hammer = build, arrow = deliver
+    let kind = '';
+    TAC.update();
+    if (G.mode && G.mode.type !== 'tplace') { G.hover = 0; G.hoverTree = -1; TAC.T.hov = null; kind = G.mode.type === 'amove' ? 'attack' : G.mode.type === 'ping' ? 'ping' : 'place'; }
+    else if (G.mouse.inside && !G.drag) kind = IN.hoverIntent(G.mouse.wx, G.mouse.wy);
+    else { G.hover = 0; G.hoverTree = -1; TAC.T.hov = null; }
+    G.hoverKind = kind;
+    if (kind !== lastCursor) { lastCursor = kind; canvas.style.cursor = cursorFor(kind); mm.style.cursor = kind === 'ping' ? cursorFor('ping') : 'pointer'; }
     R.render(now);
     UI.updateHUD(now);
     soundscape(now);
@@ -313,3 +441,4 @@ function boot() {
 boot();
 // handy for debugging from the browser console
 window.CHEFDOMS = G;
+G.tac = TAC.T;

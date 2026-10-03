@@ -4,7 +4,7 @@
 //  game.command), so it cannot cheat on resources. It does read the full game
 //  state, i.e. it is not limited by fog of war.
 // ============================================================================
-import { RES, TICK_RATE, COMMANDERS, TECHS, BUILDINGS, techCost } from './data.js';
+import { RES, TICK_RATE, COMMANDERS, TECHS, BUILDINGS, ULT_AGE, techCost } from './data.js';
 
 const LEVELS = {
   easy: {
@@ -31,7 +31,8 @@ const LEVELS = {
 };
 
 const ECO_TECHS = ['hatchet1', 'peeler1', 'basket', 'sifter1', 'peeler2', 'hatchet2', 'carts', 'sifter2'];
-const MIL_TECHS = ['knives1', 'aprons1', 'sauce1', 'knives2', 'aprons2', 'sauce2', 'bumper1', 'ovens', 'knives3', 'aprons3', 'sauce3', 'bumper2', 'meatballs'];
+const MIL_TECHS = ['pans', 'knives1', 'aprons1', 'sauce1', 'meals1', 'clogs', 'mise', 'knives2', 'aprons2', 'sauce2', 'bumper1', 'meals2', 'ovens', 'kds', 'grinders', 'cheftable',
+  'knives3', 'aprons3', 'sauce3', 'bumper2', 'meatballs', 'veteran'];
 const PROD = ['grill', 'sauce', 'garage', 'workshop', 'restaurant'];
 
 export class Bot {
@@ -243,7 +244,7 @@ export class Bot {
     if (a === 1 && this.c.cooks.length < 8) { W.spice = 0; }
     if (this.c.cooks.length <= 5) { W.food = 0.7; W.wood = 0.3; W.spice = 0; W.salt = 0; }   // rebuilding from scratch
     if (a >= 2) W.wood += 0.04;
-    if (P.res.food < 120 && P.res.wood < 120 && !this.g.findNode('veg', P.home.x, P.home.y, 22)) W.wood *= 2;   // gardens need firewood
+    if (P.res.food < 120 && P.res.wood < 120 && !this.g.findNode('veg', P.home.x, P.home.y, 22) && !this.g.findNode('fish', P.home.x, P.home.y, 20)) W.wood *= 2;   // gardens need firewood
     if (a >= 3 && !this.c.n('restaurant') && P.res.salt < 380) W.salt = 0.16;
     else if (a >= 2 && P.res.salt > 500) W.salt = 0.02;
     let sum = 0;
@@ -323,6 +324,12 @@ export class Bot {
         g.command(pi, { c: 'ga', ids: [u.id], tid: n.id });
         return true;
       }
+      const fish = g.findNode('fish', home.x, home.y, 20);          // the pond is the next best thing to a veggie patch
+      if (fish && this.fishers(fish) < 3) {
+        if (this.nearestDropDist(fish.x, fish.y) > 8.5 && this.build('pantry', fish, 1.5, 5, u)) return true;
+        g.command(pi, { c: 'ga', ids: [u.id], tid: fish.id });
+        return true;
+      }
       const gd = g.findGarden(u, home.x, home.y, 40, null);
       if (gd) { g.command(pi, { c: 'ga', ids: [u.id], tid: gd.id }); return !!u.order; }
       let gardenSites = 0;
@@ -344,11 +351,18 @@ export class Bot {
       g.command(pi, { c: 'ga', ids: [u.id], tree: near[(Math.random() * near.length) | 0] });
       return true;
     }
-    const n = g.findNode(res, home.x, home.y, 34);
+    const n = g.findNode(res, home.x, home.y, Math.max(34, Math.min(72, g.w * 0.36)));   // bigger maps: walk further for spice and salt
     if (!n) return false;
     if (this.nearestDropDist(n.x, n.y) > 7.5 && this.build('pantry', n, 1.5, 5, u)) return true;
     g.command(pi, { c: 'ga', ids: [u.id], tid: n.id });
     return true;
+  }
+
+  /** How many of our cooks already work the pond around this fishing spot. */
+  fishers(node) {
+    let n = 0;
+    for (const u of this.c.cooks) { const o = u.order; if (o && o.t === 'gather' && o.ntype === 'fish' && Math.hypot(o.ox - node.x, o.oy - node.y) < 8) n++; }
+    return n;
   }
 
   builders() {
@@ -469,6 +483,7 @@ export class Bot {
     const fighters = c.army, hero = c.hero;
     const all = hero ? fighters.concat(hero, c.support) : fighters.concat(c.support);
     this.maybeAbility(hero);
+    this.maybeUltimate(hero);
 
     // commander falls back when badly hurt
     if (hero && hero.hp < hero.S.hp * 0.3 && Math.hypot(hero.x - P.home.x, hero.y - P.home.y) > 12 && !(hero.order && hero.order.t === 'move')) {
@@ -521,6 +536,42 @@ export class Bot {
         g.command(pi, { c: 'am', ids: all.map((u) => u.id), x: this.target.x, y: this.target.y });
       }
     }
+  }
+
+  /** Ultimates are rare: wait for a moment that is worth three minutes of cooldown. */
+  maybeUltimate(hero) {
+    const g = this.g, P = this.P, U = COMMANDERS[P.commander].ultimate;
+    if (!this.L.ability || !hero || !U || P.age < ULT_AGE || g.tick < P.ultReady) return;
+    const count = (R) => {
+      let foes = 0, big = 0;
+      const list = g.near(hero.x, hero.y, R);
+      for (let i = 0; i < list.length; i++) {
+        const v = list[i];
+        if (v.dead || !g.hostile(P.idx, v.owner) || Math.hypot(v.x - hero.x, v.y - hero.y) > R) continue;
+        foes++; if (v.isHero || v.hp >= 150) big++;
+      }
+      return { foes, big };
+    };
+    const la = P.lastAttacked, fire = () => g.command(P.idx, { c: 'ul' });
+    switch (U.key) {
+      case 'flambe': if (count(U.radius).foes >= 5) fire(); break;
+      case 'glass': if (count(U.radius).foes >= 5) fire(); break;
+      case 'perfectcut': if (count(U.radius).big >= 1) fire(); break;
+      case 'swarm': if (count(10).foes >= 4) fire(); break;
+      case 'feast': {
+        let hurt = 0;
+        for (const u of this.c.army) if (u.hp < u.S.hp * 0.55) hurt++;
+        if (hurt >= 5) fire();
+        break;
+      }
+      case 'lockdown': if (la && g.tick - la.tick < 60 && this.nearOwnBuilding(la.x, la.y, 5) && count(14).foes + this.enemiesNear(la.x, la.y, 8) >= 5) fire(); break;
+    }
+  }
+  enemiesNear(x, y, R) {
+    const g = this.g, list = g.near(x, y, R);
+    let n = 0;
+    for (let i = 0; i < list.length; i++) if (!list[i].dead && g.hostile(this.P.idx, list[i].owner)) n++;
+    return n;
   }
 
   maybeAbility(hero) {

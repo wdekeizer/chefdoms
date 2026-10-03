@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { attachWebSocket } from './lib/wsserver.js';
 import { Game } from './game/sim.js';
 import { Bot } from './game/ai.js';
+import { TacticsGame } from './game/tactics.js';
+import { TacticsBot } from './game/tactics-ai.js';
 import { VERSION, TICK_RATE, MAX_PLAYERS, COMMANDER_KEYS, OPTIONS, PLAYER_COLORS, BOT_LEVELS } from './game/data.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -34,6 +36,8 @@ const WANT_PUBLIC = argv.includes('--public');
 const WANT_OPEN = argv.includes('--open');
 const WARP = Number(argVal('warp', 0));          // testing aid: pre-simulate this many seconds before a match begins
 const TAKEOVER_MS = Number(process.env.CHEFDOMS_TAKEOVER_MS) || 45000;   // how long a dropped player's kitchen waits before a bot minds it
+const SCORES_FILE = process.env.CHEFDOMS_SCORES || path.join(ROOT, 'highscores.json');   // the Hall of Fame lives next to server.js
+const SCORE_MIN_MINUTES = Number(process.env.CHEFDOMS_SCORE_MIN) || 3;                    // shorter matches don't count
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log('Chefdoms server\n  node server.js [--port 3000] [--host 0.0.0.0] [--public] [--open]\n  --public   start a free Cloudflare quick tunnel so friends anywhere can join (needs cloudflared)\n  --open     open the game in your default browser');
   process.exit(0);
@@ -114,6 +118,36 @@ const urls = { local: `http://localhost:${PORT}`, lan: [], public: null };
 
 const send = (c, obj) => c.conn.send(JSON.stringify(obj));
 const joined = () => [...clients.values()].filter((c) => c.joined);
+
+// ------------------------------------------------------------ hall of fame
+// Best scores by human players in real matches (2+ kitchens), kept in highscores.json.
+let hallOfFame = [];
+try {
+  const j = JSON.parse(fs.readFileSync(SCORES_FILE, 'utf8'));
+  if (Array.isArray(j)) hallOfFame = j.filter((e) => e && typeof e.name === 'string' && Number.isFinite(e.score)).slice(0, 50);
+} catch { /* no scores yet */ }
+
+/** Add this match's human players to the Hall of Fame. Returns the entries that made the list. */
+function recordScores(m, summary, team) {
+  const minutes = m.g.tick / TICK_RATE / 60;
+  if (summary.length < 2 || minutes < SCORE_MIN_MINUTES) return [];
+  const bots = summary.filter((s) => s.bot);
+  const order = Object.keys(BOT_LEVELS);
+  const hardest = bots.reduce((best, s) => (order.indexOf(s.bot) > order.indexOf(best) ? s.bot : best), '');
+  const fresh = [];
+  summary.forEach((s, i) => {
+    if (!m.tokens[i]) return;
+    const e = {
+      name: s.name, commander: s.commander, score: s.score.total, won: s.team === team, minutes: Math.round(minutes * 10) / 10,
+      players: summary.length, bots: bots.length, hardest, map: m.g.mapSize, mode: m.g.mode === 'turn' ? 'turn' : 'rt', date: new Date().toISOString().slice(0, 10), id: randomBytes(6).toString('hex'),
+    };
+    hallOfFame.push(e); fresh.push(e);
+  });
+  hallOfFame.sort((a, b) => b.score - a.score);
+  hallOfFame = hallOfFame.slice(0, 50);
+  try { fs.writeFileSync(SCORES_FILE, JSON.stringify(hallOfFame, null, 1)); } catch (e) { log('could not save highscores.json:', e.message); }
+  return fresh.filter((e) => hallOfFame.includes(e));
+}
 
 function cleanName(s) {
   s = String(s ?? '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 16);
@@ -244,20 +278,21 @@ function startMatch() {
     name: s.name, team: s.team, color: s.color, bot: s.kind === 'bot' ? s.level : null,
     commander: s.commander === 'random' ? (pool.pop() || COMMANDER_KEYS[(Math.random() * COMMANDER_KEYS.length) | 0]) : s.commander,
   }));
-  const g = new Game({ players, ...lobby.opts, seed: (Math.random() * 2147483647) | 0 });
-  g.players.forEach((P, i) => { if (seats[i].kind === 'bot') P.ai = new Bot(g, P, seats[i].level); });
+  const turnBased = lobby.opts.mode === 'turn';
+  const g = new (turnBased ? TacticsGame : Game)({ players, ...lobby.opts, seed: (Math.random() * 2147483647) | 0 });
+  g.players.forEach((P, i) => { if (seats[i].kind === 'bot') P.ai = new (turnBased ? TacticsBot : Bot)(g, P, seats[i].level); });
   match = {
     g, timer: null, paused: false, over: false, speed: Number(lobby.opts.speed) || 1,
     tokens: seats.map((s) => (s.kind === 'human' ? s.token : null)),
     takeover: new Map(), emptySince: 0, started: Date.now(),
   };
   for (const s of lobby.slots) if (s && s.kind === 'human') s.ready = false;
-  if (WARP > 0) { for (let i = 0; i < WARP * TICK_RATE && !g.over; i++) g.step(); g.delta(); }
+  if (WARP > 0 && !turnBased) { for (let i = 0; i < WARP * TICK_RATE && !g.over; i++) g.step(); g.delta(); }
   for (const c of joined()) {
     c.player = match.tokens.indexOf(c.token);
     sendStart(c);
   }
-  log(`match started: ${players.map((p) => `${p.name} (${p.commander}${p.bot ? ', ' + p.bot + ' bot' : ''})`).join(' vs ')} | map ${lobby.opts.mapSize}, seed ${g.seed}`);
+  log(`match started: ${players.map((p) => `${p.name} (${p.commander}${p.bot ? ', ' + p.bot + ' bot' : ''})`).join(' vs ')} | ${turnBased ? 'turn-based, ' : ''}map ${g.mapSize} ${g.w}x${g.h}, seed ${g.seed}`);
   runLoop();
 }
 
@@ -265,7 +300,7 @@ function sendStart(c) {
   const g = match.g;
   send(c, { t: 'start', you: c.player, tick: g.tick, paused: match.paused, host: lobby.hostId, cid: c.id, ...g.startInfo() });
   send(c, g.full());
-  if (match.over) send(c, { t: 'over', team: g.over ? g.over.team : -1, summary: g.summary(), minutes: g.tick / TICK_RATE / 60 });
+  if (match.over && match.overMsg) send(c, match.overMsg);
   c.synced = true;
 }
 
@@ -304,7 +339,14 @@ function broadcastDelta(m) {
   }
   if (g.over && !m.over) {
     m.over = true;
-    const out = { t: 'over', team: g.over.team, summary: g.summary(), minutes: g.tick / TICK_RATE / 60 };
+    const summary = g.summary();
+    const fresh = recordScores(m, summary, g.over.team);
+    const out = {
+      t: 'over', team: g.over.team, summary, minutes: g.tick / TICK_RATE / 60, timeline: g.timeline(),
+      rounds: g.turn ? g.turn.n : 0, onScore: !!g.over.onScore,
+      hof: hallOfFame.slice(0, 10), fresh: fresh.map((e) => e.id),
+    };
+    m.overMsg = out;
     for (const c of joined()) send(c, out);
     log(`match over after ${(g.tick / TICK_RATE / 60).toFixed(1)} min; winning team ${g.over.team}`);
   }
@@ -315,9 +357,11 @@ function housekeeping(m) {
   // a human who dropped gets a caretaker bot after 45s so their kitchen isn't defenceless
   for (const [pi, since] of m.takeover) {
     const P = m.g.players[pi];
-    if (!P.ai && P.alive && now - since > TAKEOVER_MS) {
-      P.ai = new Bot(m.g, P, 'normal');
+    // (in a turn-based match everyone is waiting on the player whose turn it is, so the bot steps in sooner)
+    if (!P.ai && P.alive && now - since > (m.g.mode === 'turn' ? Math.min(TAKEOVER_MS, 20000) : TAKEOVER_MS)) {
+      P.ai = m.g.mode === 'turn' ? new TacticsBot(m.g, P, 'normal') : new Bot(m.g, P, 'normal');
       P.ai.caretaker = true;
+      if (P.bell) m.g.command(pi, { c: 'bell', on: 0 });        // the caretaker needs the Prep Cooks at work
       for (const c of joined()) send(c, { t: 'chat', sys: 1, m: `${P.name} is still away; a bot is minding their kitchen.` });
     }
   }
@@ -352,6 +396,16 @@ function matchAction(c, m) {
         try { match.g.command(c.player, m); } catch (e) { console.error('bad command from', c.name, e.message); }
       }
       break;
+    case 'mp': {                      // map ping: shown to the sender's team
+      if (c.player < 0 || !Number.isFinite(m.x) || !Number.isFinite(m.y)) return;
+      const now = Date.now();
+      if (now - (c.lastPing || 0) < 350) return;
+      c.lastPing = now;
+      const g = match.g, team = g.players[c.player].team;
+      const out = { t: 'mp', p: c.player, x: Math.max(0, Math.min(g.w, m.x)), y: Math.max(0, Math.min(g.h, m.y)) };
+      for (const x of joined()) if (x.player >= 0 && g.players[x.player].team === team) send(x, out);
+      break;
+    }
     case 'pause':
       if (!isHost || match.over) return;
       match.paused = !match.paused;
@@ -422,6 +476,7 @@ function onMessage(c, text) {
   if (!m || typeof m !== 'object' || typeof m.t !== 'string') return;
   if (!c.joined) { if (m.t === 'hello') join(c, m); return; }
   if (m.t === 'ping') { send(c, { t: 'pong', n: m.n }); return; }
+  if (m.t === 'scores') { send(c, { t: 'scores', list: hallOfFame }); return; }
   if (m.t === 'chat') {
     const text = cleanText(m.m, 200);
     if (!text) return;

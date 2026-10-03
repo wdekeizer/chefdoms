@@ -6,18 +6,22 @@
 import {
   TICK_RATE, DT, RES, TILE, TREE_WOOD, NODES, BUILDINGS, TECHS, COMMANDERS, BUFFS,
   AURA_RADIUS, ZARA_TIP, HERO_RESPAWN, START_RES, MAP_SIZES, mapSizeFor,
+  GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, FORMATIONS, ULT_AGE,
   computeStats, techCost, techTime, trainList,
 } from './data.js';
 import { Pathfinder } from './pathfinding.js';
 import { generateMap } from './mapgen.js';
 
 export const K_UNIT = 0, K_BLDG = 1, K_NODE = 2;
-export const ST = { IDLE: 0, MOVE: 1, ATTACK: 2, GATHER: 3, BUILD: 4, HEAL: 5 };
+export const ST = { IDLE: 0, MOVE: 1, ATTACK: 2, GATHER: 3, BUILD: 4, HEAL: 5, INSIDE: 6 };
 export const POS_Q = 32;              // network position precision: 1/32 of a tile
 
 const REACH = 1.1;                    // how close a worker must be to its target's edge
 const MELEE_GAP = 0.3;
 const PATH_BUDGET = 48;               // A* searches per tick; the rest wait a tick
+const PATH_NODES = 60000;             // A* nodes expanded per tick before further searches wait
+const SAMPLE_TICKS = 15 * TICK_RATE;  // how often the end-of-match graphs get a data point
+const HOLD_LEASH = 3;                 // "Hold the Line" units chase this far from their post, then walk back
 const PROJ_SPEED = { sauce: 10, flame: 12, frosting: 11, skewer: 13, plate: 11, pepper: 12, macaron: 7.5, meatball: 6.5 };
 
 export function rectDist(x, y, e) {
@@ -36,9 +40,7 @@ export class Game {
   constructor(opts) {
     this.opts = opts;
     this.seed = opts.seed ?? ((Math.random() * 2147483647) | 0);
-    this.mapSize = mapSizeFor(opts.mapSize, opts.players.length);
-    const size = MAP_SIZES[this.mapSize];
-    const map = generateMap(size, opts.players.length, this.seed);
+    const map = this.makeMap(opts);
     this.w = map.w; this.h = map.h;
     this.tiles = map.tiles;
     const N = this.w * this.h;
@@ -68,6 +70,7 @@ export class Game {
     for (const n of map.nodes) this.addNode(n.type, n.tx, n.ty);
     this.players = opts.players.map((p, idx) => this.makePlayer(p, idx));
     this.teamsAtStart = new Set(this.players.map((p) => p.team)).size;
+    this.tl = { every: SAMPLE_TICKS, t: [], s: this.players.map(() => ({ score: [], army: [], pop: [], gathered: [], kills: [] })) };
     this.starts = map.starts;
     map.starts.forEach((s, i) => this.setupBase(this.players[i], s));
   }
@@ -75,6 +78,12 @@ export class Game {
   // ==========================================================================
   //  Setup
   // ==========================================================================
+  /** The world to play on (the turn-based mode brings its own). */
+  makeMap(opts) {
+    this.mapSize = mapSizeFor(opts.mapSize, opts.players.length);
+    return generateMap(MAP_SIZES[this.mapSize], opts.players.length, this.seed);
+  }
+
   makePlayer(p, idx) {
     const cmd = COMMANDERS[p.commander] ? p.commander : 'flint';
     return {
@@ -83,10 +92,13 @@ export class Game {
       pop: 0, popCap: 0, maxPop: +this.opts.popCap || 100,
       age: 1, techs: [], pending: new Set(),
       stats: computeStats(cmd, 1, []),
-      alive: true, heroId: 0, heroRespawn: 0, abilityReady: 0, lunchUntil: 0,
+      alive: true, heroId: 0, heroRespawn: 0, abilityReady: 0, lunchUntil: 0, ultReady: 0, lockUntil: 0,
       lastAlert: -9999, lastAttacked: null, popNote: -9999,
-      dropoffs: [], home: { x: 0, y: 0 }, ai: null, gatherBonus: 1,
-      score: { kills: 0, lost: 0, razed: 0, bldgLost: 0, gathered: 0, trained: 0 },
+      dropoffs: [], home: { x: 0, y: 0 }, ai: null, gatherBonus: 1, bell: false,
+      score: {
+        kills: 0, lost: 0, razed: 0, bldgLost: 0, gathered: 0, trained: 0, built: 0, heroKills: 0, heroDeaths: 0,
+        peakPop: 0, peakArmy: 0, res: { food: 0, wood: 0, spice: 0, salt: 0 }, outAt: 0,
+      },
       _sig: '',
     };
   }
@@ -116,7 +128,7 @@ export class Game {
       id: this.nextId++, kind: K_BLDG, type, owner, tx, ty, size: S.size,
       x: tx + S.size / 2, y: ty + S.size / 2, S,
       hp: done ? S.hp : 1, prog: done ? 1 : 0, done: false,
-      q: [], rally: null, cd: 0, tgt: 0, builders: 0, worker: 0, paid: null,
+      q: [], rally: null, cd: 0, tgt: 0, builders: 0, worker: 0, paid: null, inside: 0,
       lastHit: -9999, dead: false, _sig: '',
     };
     for (let y = ty; y < ty + S.size; y++) for (let x = tx; x < tx + S.size; x++) {
@@ -132,6 +144,7 @@ export class Game {
   completeBuilding(b) {
     b.done = true; b.prog = 1;
     if (b.hp > b.S.hp) b.hp = b.S.hp;
+    if (this.tick > 0) this.players[b.owner].score.built++;
     this.refreshBuildings(this.players[b.owner]);
     this.events.push(['built', b.owner, b.id]);
   }
@@ -156,10 +169,11 @@ export class Game {
       isCook: type === 'cook', isHero: S.tags.includes('hero'),
       order: null, queue: [], path: null, pi: 0, goal: null, wantPath: false, partial: false, repathAt: 0,
       st: ST.IDLE, tgt: 0, cd: 0, face: 1,
+      stance: 0, inside: 0, saved: null, expire: 0, noPop: false, stunned: false,
       carryType: null, carryAmt: 0, gAcc: 0,
       buffs: null, bAtk: 1, bReload: 1, bSpeed: 1, bDmg: 1, bGather: 1, bmask: 0,
       lastHit: -9999, ignoreId: 0, ignoreUntil: 0, killer: -1, dead: false,
-      _new: true, _hp: 0, _st: 0, _tgt: 0, _carry: 0, _bm: 0, _qx: 0, _qy: 0,
+      _new: true, _hp: 0, _st: 0, _tgt: 0, _carry: 0, _bm: 0, _sn: 0, _qx: 0, _qy: 0,
     };
     this.ents.set(u.id, u); this.units.push(u);
     P.pop += S.pop;
@@ -177,11 +191,12 @@ export class Game {
 
     // path requests that didn't fit in last tick's budget
     this.pathBudget = PATH_BUDGET;
+    this.pathStop = this.pf.expanded + PATH_NODES;       // ...and a cap on total search work per tick, so big maps never hitch
     if (this.pathQueue.length) {
       const q = this.pathQueue; this.pathQueue = [];
       for (const u of q) {
         if (u.dead || !u.wantPath) continue;
-        if (this.pathBudget > 0) { this.pathBudget--; this.computePath(u); }
+        if (this.pathBudget > 0 && this.pf.expanded < this.pathStop) { this.pathBudget--; this.computePath(u); }
         else this.pathQueue.push(u);
       }
     }
@@ -197,6 +212,7 @@ export class Game {
     if (tick % 10 === 0) this.updateHeroes();
     this.cleanup();
     if (tick % 20 === 0) this.checkVictory();
+    if (tick % this.tl.every === 0) this.sample();
     for (const P of this.players) if (P.ai && P.alive && !this.over) P.ai.update();
   }
 
@@ -206,7 +222,7 @@ export class Game {
     t.length = 0;
     const w = this.w, cells = this.cells;
     for (const u of this.units) {
-      if (u.dead) continue;
+      if (u.dead || u.inside) continue;          // sheltered units cannot be seen, hit or bumped into
       const c = cells[(u.y | 0) * w + (u.x | 0)];
       if (c.length === 0) t.push(c);
       c.push(u);
@@ -260,7 +276,7 @@ export class Game {
         u.path = [gx, gy]; u.wantPath = false; return;
       }
     }
-    if (this.pathBudget > 0) { this.pathBudget--; this.computePath(u); }
+    if (this.pathBudget > 0 && this.pf.expanded < (this.pathStop || Infinity)) { this.pathBudget--; this.computePath(u); }
     else if (!u.wantPath) { u.wantPath = true; this.pathQueue.push(u); }
   }
   computePath(u) {
@@ -323,17 +339,21 @@ export class Game {
   updateUnit(u) {
     const S = u.S, tick = this.tick;
     if (u.cd > 0) u.cd--;
+    if (u.inside) { u.st = ST.INSIDE; u.tgt = 0; return; }
+    if (u.expire && tick >= u.expire) { this.killEntity(u, -1); return; }        // a hired rider heads home
     if (this.block[(u.y | 0) * this.w + (u.x | 0)]) this.unstick(u);
+    if (u.stunned) { u.st = ST.IDLE; u.tgt = 0; return; }                         // stuck in caramel
     const o = u.order;
     if (!o) {
       u.st = ST.IDLE; u.tgt = 0;
       if ((tick + u.id) % 8 === 0) this.idleScan(u, S);
       return;
     }
-    const speed = S.speed * u.bSpeed;
+    let speed = S.speed * u.bSpeed;
     switch (o.t) {
       case 'move': {
         u.st = ST.MOVE; u.tgt = 0;
+        if (o.sp && o.sp * u.bSpeed < speed) speed = o.sp * u.bSpeed;       // a formation marches at its slowest member's pace
         if (!o.go) { o.go = 1; this.requestPath(u, { x: o.x, y: o.y }); }
         const r = this.travel(u, speed);
         if (r === 0) this.nextOrder(u);
@@ -341,11 +361,12 @@ export class Game {
         break;
       }
       case 'amove': {
-        if ((tick + u.id) % 6 === 0) {
-          const tg = this.acquire(u, S);
-          if (tg) { this.beginOrder(u, { t: 'attack', id: tg.id, auto: true, gx: u.x, gy: u.y, resume: o }); break; }
+        if ((tick + u.id) % 6 === 0 && u.stance !== 2) {
+          const tg = this.acquire(u, S, u.stance === 1 ? this.holdRadius(S) : 0);
+          if (tg) { this.beginOrder(u, { t: 'attack', id: tg.id, auto: true, gx: u.x, gy: u.y, resume: o, leash: u.stance === 1 ? HOLD_LEASH : 0 }); break; }
         }
         u.st = ST.MOVE; u.tgt = 0;
+        if (o.sp && o.sp * u.bSpeed < speed) speed = o.sp * u.bSpeed;
         if (!o.go) { o.go = 1; this.requestPath(u, { x: o.x, y: o.y }); }
         const r = this.travel(u, speed);
         if (r === 0) this.nextOrder(u);
@@ -354,7 +375,7 @@ export class Game {
       }
       case 'attack': {
         const tg = this.ents.get(o.id);
-        if (!tg || tg.dead || tg.hp <= 0 || tg.kind === K_NODE || !this.hostile(u.owner, tg.owner)) { this.endAttack(u, o, false); break; }
+        if (!tg || tg.dead || tg.hp <= 0 || tg.inside || tg.kind === K_NODE || !this.hostile(u.owner, tg.owner)) { this.endAttack(u, o, false); break; }
         const isB = tg.kind === K_BLDG;
         const d = isB ? rectDist(u.x, u.y, tg) : Math.hypot(tg.x - u.x, tg.y - u.y) - tg.r;
         const reach = S.range > 0 ? S.range : isB ? 0.85 : u.r + MELEE_GAP;
@@ -372,7 +393,7 @@ export class Game {
             u.cd = Math.max(2, Math.round(S.reload * u.bReload * TICK_RATE));
           }
         } else {
-          if (o.auto && Math.hypot(u.x - o.gx, u.y - o.gy) > (o.resume ? 14 : 10)) { this.endAttack(u, o, true); break; }
+          if (o.auto && Math.hypot(u.x - o.gx, u.y - o.gy) > (o.leash || (o.resume ? 14 : 10))) { this.endAttack(u, o, true); break; }
           if (!isB && o.pathed && Math.hypot(tg.x - o.px, tg.y - o.py) > 0.8) o.pathed = false;   // target moved
           if (!o.pathed) { o.px = tg.x; o.py = tg.y; }
           u.tgt = tg.id;
@@ -397,7 +418,7 @@ export class Game {
       }
       case 'heal': {
         const tg = this.ents.get(o.id);
-        if (!tg || tg.dead || tg.kind !== K_UNIT || tg.hp >= tg.S.hp || this.hostile(u.owner, tg.owner)) { this.nextOrder(u); break; }
+        if (!tg || tg.dead || tg.inside || tg.kind !== K_UNIT || tg.hp >= tg.S.hp || this.hostile(u.owner, tg.owner)) { this.nextOrder(u); break; }
         const d = Math.hypot(tg.x - u.x, tg.y - u.y) - tg.r;
         if (d <= S.range) {
           u.path = null; u.wantPath = false; u.st = ST.HEAL; u.tgt = tg.id; o.pathed = false; o.fails = 0;
@@ -410,9 +431,35 @@ export class Game {
         }
         break;
       }
+      case 'drop': {                              // carry what we hold to a chosen drop-off, then await orders
+        const d = this.ents.get(o.id);
+        if (!d || d.dead || !d.done || d.owner !== u.owner || !d.S.dropoff) { this.nextOrder(u); break; }
+        u.tgt = 0;
+        if (rectDist(u.x, u.y, d) <= REACH) { this.deposit(u); u.path = null; u.wantPath = false; this.nextOrder(u); }
+        else if (!this.approach(u, o, rectGoal(d), speed)) this.nextOrder(u);
+        break;
+      }
+      case 'shelter': {                           // the bell rang: get inside a Kitchen HQ
+        let b = this.ents.get(o.id);
+        if (!b || b.dead || !b.done) {
+          b = this.shelterFor(u);
+          if (!b) { this.restore(u); break; }
+          o.id = b.id; o.pathed = false; o.fails = 0;
+        }
+        u.tgt = 0;
+        if (rectDist(u.x, u.y, b) <= REACH) {
+          if (b.inside < b.S.garrison) { this.enter(u, b); break; }
+          const alt = this.shelterFor(u, true);
+          if (alt) { o.id = alt.id; o.pathed = false; o.fails = 0; } else { u.st = ST.IDLE; u.path = null; u.wantPath = false; }   // full house: huddle by the door
+        } else if (!this.approach(u, o, rectGoal(b), speed)) u.st = ST.IDLE;
+        break;
+      }
       default: this.nextOrder(u);
     }
   }
+
+  /** How far a unit on "Hold the Line" looks for trouble. */
+  holdRadius(S) { return S.range > 0 ? S.range + 0.5 : HOLD_LEASH; }
 
   idleScan(u, S) {
     if (S.heal > 0) {
@@ -420,9 +467,68 @@ export class Game {
       if (t) this.beginOrder(u, { t: 'heal', id: t.id, auto: true });
       return;
     }
-    if (S.atk <= 0 || u.isCook) return;
-    const tg = this.acquire(u, S);
-    if (tg) this.beginOrder(u, { t: 'attack', id: tg.id, auto: true, gx: u.x, gy: u.y });
+    if (S.atk <= 0 || u.isCook || u.stance === 2) return;
+    const hold = u.stance === 1;
+    const tg = this.acquire(u, S, hold ? this.holdRadius(S) : 0);
+    if (tg) this.beginOrder(u, { t: 'attack', id: tg.id, auto: true, gx: u.x, gy: u.y, leash: hold ? HOLD_LEASH : 0 });
+  }
+
+  // ------------------------------------------------- sheltering (the HQ bell)
+  /** Bank whatever a Prep Cook is carrying. */
+  deposit(u) {
+    if (u.carryAmt <= 0 || !u.carryType) return;
+    const P = this.players[u.owner], s = P.score;
+    P.res[u.carryType] += u.carryAmt; s.gathered += u.carryAmt; s.res[u.carryType] += u.carryAmt;
+    u.carryAmt = 0;
+  }
+  /** Nearest finished own station that can shelter units (with room first; `needRoom` = only those with room). */
+  shelterFor(u, needRoom) {
+    let best = null, bs = Infinity;
+    for (const b of this.bldgs) {
+      if (b.dead || !b.done || b.owner !== u.owner || !b.S.garrison) continue;
+      const full = b.inside >= b.S.garrison;
+      if (full && needRoom) continue;
+      const score = rectDist(u.x, u.y, b) + (full ? 1000 : 0);
+      if (score < bs) { bs = score; best = b; }
+    }
+    return best;
+  }
+  /** Send a unit to shelter, remembering what it was doing. False if there is nowhere to go. */
+  shelter(u) {
+    if (u.inside || (u.order && u.order.t === 'shelter')) return true;
+    const b = this.shelterFor(u);
+    if (!b) return false;
+    u.saved = { order: u.order, queue: u.queue.slice() };
+    u.queue.length = 0;
+    this.beginOrder(u, { t: 'shelter', id: b.id });
+    return true;
+  }
+  enter(u, b) {
+    this.deposit(u);
+    u.inside = b.id; b.inside++;
+    u.st = ST.INSIDE; u.tgt = 0; u.path = null; u.wantPath = false;
+    u.x = b.x; u.y = b.y;
+  }
+  /** Step back outside, next to the station, on the side facing (tx,ty). */
+  eject(u, tx, ty) {
+    const b = this.ents.get(u.inside);
+    u.inside = 0; u.st = ST.IDLE;
+    if (!b) return;
+    b.inside = Math.max(0, b.inside - 1);
+    const pt = this.spawnPoint(b, tx ?? b.x, ty ?? b.y + b.size);
+    u.x = pt[0] + (Math.random() - 0.5) * 0.5; u.y = pt[1] + (Math.random() - 0.5) * 0.5;
+    if (this.block[(u.y | 0) * this.w + (u.x | 0)]) { u.x = pt[0]; u.y = pt[1]; }
+  }
+  /** All clear: come out (if inside) and pick up where we left off. */
+  restore(u) {
+    const s = u.saved;
+    u.saved = null;
+    let o = s ? s.order : null;
+    if (o && o.t === 'gather' && o.phase === 2) { if (o.last) o = null; else o.phase = 0; }     // the basket was emptied on the way in
+    if (u.inside) this.eject(u, o ? (o.ox ?? o.x) : undefined, o ? (o.oy ?? o.y) : undefined);
+    u.queue = s ? s.queue : [];
+    if (o) { o.pathed = false; o.fails = 0; o.go = 0; o.tries = 0; this.beginOrder(u, o); }
+    else this.nextOrder(u);
   }
 
   endAttack(u, o, leashed) {
@@ -432,8 +538,8 @@ export class Game {
   }
 
   /** Pick something to attack near u (enemy units first, then stations). */
-  acquire(u, S) {
-    const R = Math.max(S.sight, S.range + 1.5);
+  acquire(u, S, limit) {
+    const R = limit || Math.max(S.sight, S.range + 1.5);
     const team = this.players[u.owner].team;
     const players = this.players, tick = this.tick;
     let best = null, bs = Infinity;
@@ -482,9 +588,9 @@ export class Game {
     else this.applyDamage(u.owner, u.id, tg, atk, S.bonus, false);
   }
 
-  launch(src, S, tg, atk) {
+  launch(src, S, tg, atk, extra = 0) {
     const dist = Math.hypot(tg.x - src.x, tg.y - src.y);
-    const travel = Math.max(2, Math.round((dist / (PROJ_SPEED[S.proj] || 10)) * TICK_RATE));
+    const travel = Math.max(2, Math.round((dist / (PROJ_SPEED[S.proj] || 10)) * TICK_RATE)) + extra;
     this.hits.push({ at: this.tick + travel, owner: src.owner, src: src.id, tid: tg.id, x: tg.x, y: tg.y, atk, bonus: S.bonus, splash: S.splash || 0 });
     this.events.push(['shot', src.id, tg.id, S.proj, travel, Math.round(tg.x * POS_Q), Math.round(tg.y * POS_Q)]);
   }
@@ -508,7 +614,7 @@ export class Game {
         }
       } else {
         const tg = this.ents.get(h.tid);
-        if (tg && !tg.dead && tg.hp > 0) this.applyDamage(h.owner, h.src, tg, h.atk, h.bonus, true);
+        if (tg && !tg.dead && tg.hp > 0 && !tg.inside) this.applyDamage(h.owner, h.src, tg, h.atk, h.bonus, true);
       }
     }
     this.hits = keep;
@@ -522,6 +628,7 @@ export class Game {
     let dmg = atk * mult - (ranged ? TS.parmor : TS.armor);
     if (dmg < 1) dmg = 1;
     if (tg.kind === K_UNIT) dmg *= tg.bDmg;
+    else if (this.players[tg.owner].lockUntil > this.tick) dmg *= 0.25;         // Lockdown
     tg.hp -= dmg; tg.lastHit = this.tick;
     if (tg.hp <= 0) { this.killEntity(tg, owner); return; }
     this.onDamaged(tg, srcId, owner);
@@ -533,11 +640,12 @@ export class Game {
     const tick = this.tick;
     if (tick - P.lastAlert > 120) { P.lastAlert = tick; this.events.push(['alert', tg.owner, Math.round(tg.x), Math.round(tg.y), tg.kind]); }
     P.lastAttacked = { tick, x: tg.x, y: tg.y, by };
-    // idle soldiers hit back
-    if (tg.kind === K_UNIT && !tg.order && tg.S.atk > 0 && !tg.isCook) {
+    // idle soldiers hit back (unless told to hold the line or stand down)
+    if (tg.kind === K_UNIT && !tg.order && tg.S.atk > 0 && !tg.isCook && tg.stance !== 2) {
       const src = this.ents.get(srcId);
-      if (src && !src.dead && (!tg.S.onlyBldg || src.kind === K_BLDG) && Math.hypot(src.x - tg.x, src.y - tg.y) < 12) {
-        this.beginOrder(tg, { t: 'attack', id: src.id, auto: true, gx: tg.x, gy: tg.y });
+      const reach = tg.stance === 1 ? this.holdRadius(tg.S) : 12;
+      if (src && !src.dead && (!tg.S.onlyBldg || src.kind === K_BLDG) && Math.hypot(src.x - tg.x, src.y - tg.y) < reach) {
+        this.beginOrder(tg, { t: 'attack', id: src.id, auto: true, gx: tg.x, gy: tg.y, leash: tg.stance === 1 ? HOLD_LEASH : 0 });
       }
     }
   }
@@ -573,7 +681,7 @@ export class Game {
       }
       u.tgt = 0;
       if (rectDist(u.x, u.y, d) <= REACH) {
-        if (u.carryAmt > 0) { P.res[u.carryType] += u.carryAmt; P.score.gathered += u.carryAmt; u.carryAmt = 0; }
+        this.deposit(u);
         if (o.last) { this.nextOrder(u); return; }
         o.phase = 0; o.pathed = false; o.fails = 0; u.repathAt = 0;
       } else if (!this.approach(u, o, rectGoal(d), speed)) this.nextOrder(u);
@@ -613,7 +721,7 @@ export class Game {
     if (Math.abs(fx - u.x) > 0.05) u.face = fx > u.x ? 1 : -1;
     if (u.carryType !== o.res) { u.carryType = o.res; u.carryAmt = 0; }
     if (u.carryAmt >= S.carry) { this.startDrop(u, o); return; }
-    u.gAcc += S.gather[o.gid ? 'garden' : o.res] * u.bGather * P.gatherBonus * DT;
+    u.gAcc += S.gather[o.gid ? 'garden' : o.ntype === 'fish' ? 'fish' : o.res] * u.bGather * P.gatherBonus * DT;
     if (u.gAcc >= 1) {
       u.gAcc -= 1; u.carryAmt++;
       if (o.nid) { if (--node.amount <= 0) this.killEntity(node, -1); }
@@ -763,7 +871,7 @@ export class Game {
       const st = u.st, ot = u.order ? u.order.t : '';
       // workers on a job hold their spot and slip past each other, so a busy
       // veggie patch or tree line can never wall anyone out
-      if (st === ST.GATHER || st === ST.BUILD || ot === 'gather' || ot === 'build') continue;
+      if (u.inside || st === ST.GATHER || st === ST.BUILD || ot === 'gather' || ot === 'build' || ot === 'drop' || ot === 'shelter') continue;
       const cx = u.x | 0, cy = u.y | 0;
       let ax = 0, ay = 0;
       for (let yy = cy - 1; yy <= cy + 1; yy++) {
@@ -838,11 +946,37 @@ export class Game {
     if (S.atk > 0) {
       if (b.cd > 0) b.cd--;
       let tg = b.tgt ? this.ents.get(b.tgt) : null;
-      if (tg && (tg.dead || tg.hp <= 0 || rectDist(tg.x, tg.y, b) > S.range + 0.5)) tg = null;
+      if (tg && (tg.dead || tg.hp <= 0 || tg.inside || rectDist(tg.x, tg.y, b) > S.range + 0.5)) tg = null;
       if (!tg && (tick + b.id) % 6 === 0) tg = this.acquireForBuilding(b, S);
       b.tgt = tg ? tg.id : 0;
-      if (tg && b.cd <= 0) { this.launch(b, S, tg, S.atk); b.cd = Math.round(S.reload * TICK_RATE); }
+      if (tg && b.cd <= 0) {
+        // a volley: several plates, spread over whoever is in range (sheltered Prep Cooks lend a Kitchen HQ extra hands)
+        const shots = S.shots + (S.garrison ? Math.min(GARRISON_MAX_SHOTS, Math.floor(b.inside / GARRISON_PER_SHOT)) : 0);
+        if (shots <= 1) this.launch(b, S, tg, S.atk);
+        else {
+          const list = this.volleyTargets(b, S, tg, shots);
+          for (let i = 0; i < shots; i++) this.launch(b, S, list[i % list.length], S.atk, i < list.length ? 0 : 2 * Math.floor(i / list.length));
+        }
+        b.cd = Math.round(S.reload * TICK_RATE * (tick < P.lockUntil ? 0.5 : 1));
+      }
     }
+  }
+
+  /** Up to n enemy units in range of a station, the current target first, then nearest first. */
+  volleyTargets(b, S, first, n) {
+    const team = this.players[b.owner].team;
+    const list = this.near(b.x, b.y, S.range + b.size / 2 + 0.5);
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const v = list[i];
+      if (v === first || v.dead || this.players[v.owner].team === team) continue;
+      const d = rectDist(v.x, v.y, b);
+      if (d <= S.range) out.push([d, v]);
+    }
+    out.sort((x, y) => x[0] - y[0]);
+    const res = [first];
+    for (let i = 0; i < out.length && res.length < n; i++) res.push(out[i][1]);
+    return res;
   }
 
   acquireForBuilding(b, S) {
@@ -878,7 +1012,8 @@ export class Game {
     const r = b.rally;
     const pt = this.spawnPoint(b, r ? r.x : b.x, r ? r.y : b.y + b.size);
     const u = this.spawnUnit(b.owner, key, pt[0], pt[1]);
-    if (!r) return u;
+    const bell = u.isCook && this.players[b.owner].bell;
+    if (!r) { if (bell) this.shelter(u); return u; }
     let order = null;
     if (u.isCook) {
       if (r.tid) {
@@ -899,6 +1034,7 @@ export class Game {
       }
     }
     this.beginOrder(u, order || { t: 'move', x: r.x, y: r.y });
+    if (bell) this.shelter(u);
     return u;
   }
 
@@ -967,6 +1103,7 @@ export class Game {
         if (!any) u.buffs = null;
       }
       u.bAtk = atk; u.bReload = rel; u.bSpeed = spd; u.bDmg = dmg; u.bGather = gat; u.bmask = mask;
+      u.stunned = (mask & BUFFS.stun.bit) !== 0;
       if (!regen) continue;
       if (u.isHero && tick - u.lastHit > 6 * TICK_RATE) heal += 2;
       if (heal > 0 && u.hp < u.S.hp) u.hp = Math.min(u.S.hp, u.hp + heal * 0.25);
@@ -1028,13 +1165,75 @@ export class Game {
     return true;
   }
 
+  /** The commander's ultimate: unlocked in the Bistro Age, on a long cooldown. */
+  useUltimate(P) {
+    const U = COMMANDERS[P.commander].ultimate;
+    const hero = P.heroId ? this.ents.get(P.heroId) : null;
+    if (!U) return false;
+    if (P.age < ULT_AGE) { this.events.push(['note', P.idx, 'ultage']); return false; }
+    if (!hero || hero.dead || this.tick < P.ultReady) return false;
+    const up = P.age - ULT_AGE, R = U.radius;
+    const foes = () => this.near(hero.x, hero.y, R).filter((v) => !v.dead && this.hostile(P.idx, v.owner) && Math.hypot(v.x - hero.x, v.y - hero.y) - v.r <= R);
+    let fxX = hero.x, fxY = hero.y;
+    switch (U.key) {
+      case 'flambe': {
+        const dmg = U.dmg + U.dmgPerAge * up, bd = U.bldg + U.bldgPerAge * up;
+        for (const v of foes()) this.applyDamage(P.idx, hero.id, v, dmg + v.S.armor, {}, false);
+        for (const b of this.bldgs.slice()) {
+          if (b.dead || !this.hostile(P.idx, b.owner) || rectDist(hero.x, hero.y, b) > R) continue;
+          this.applyDamage(P.idx, hero.id, b, bd + b.S.armor, {}, false);
+        }
+        break;
+      }
+      case 'feast':
+        for (const u of this.units) if (u.owner === P.idx && !u.dead && !u.inside) this.addBuff(u, 'feast', U.dur);
+        break;
+      case 'lockdown':
+        P.lockUntil = this.tick + U.dur * TICK_RATE;
+        break;
+      case 'perfectcut': {
+        // the toughest enemy unit in reach; with no unit around, the toughest station
+        let best = null;
+        for (const v of foes()) if (!best || v.hp > best.hp) best = v;
+        if (!best) for (const b of this.bldgs) {
+          if (b.dead || !this.hostile(P.idx, b.owner) || rectDist(hero.x, hero.y, b) > R) continue;
+          if (!best || b.hp > best.hp) best = b;
+        }
+        if (!best) { this.events.push(['note', P.idx, 'ulttarget']); return false; }
+        fxX = best.x; fxY = best.y;
+        this.applyDamage(P.idx, hero.id, best, (U.dmg + U.dmgPerAge * up) * (best.isHero ? 0.5 : 1) + best.S.armor, {}, false);
+        if (best.dead) P.abilityReady = this.tick;
+        break;
+      }
+      case 'glass':
+        for (const v of foes()) this.addBuff(v, 'stun', v.isHero ? U.dur / 2 : U.dur);
+        break;
+      case 'swarm': {
+        const n = U.count + up;
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2;
+          const f = this.pf.nearestFree(Math.floor(hero.x + Math.cos(a) * 1.6), Math.floor(hero.y + Math.sin(a) * 1.6), 6);
+          if (!f) continue;
+          const u = this.spawnUnit(P.idx, 'scooter', f[0] + 0.5, f[1] + 0.5);
+          u.expire = this.tick + U.dur * TICK_RATE; u.noPop = true; P.pop -= u.S.pop;
+        }
+        break;
+      }
+      default: return false;
+    }
+    P.ultReady = this.tick + U.cd * TICK_RATE;
+    this.updateBuffs(false);
+    this.events.push(['ult', P.idx, U.key, Math.round(fxX * POS_Q), Math.round(fxY * POS_Q)]);
+    return true;
+  }
+
   // ==========================================================================
   //  Deaths, elimination, victory
   // ==========================================================================
   freeTiles(e) {
     for (let y = e.ty; y < e.ty + e.size; y++) for (let x = e.tx; x < e.tx + e.size; x++) {
       const i = y * this.w + x;
-      if (this.occ[i] === e.id) { this.occ[i] = 0; this.block[i] = 0; }
+      if (this.occ[i] === e.id) { this.occ[i] = 0; const t = this.tiles[i]; this.block[i] = t === TILE.WATER || t === TILE.TREE ? 1 : 0; }
     }
   }
 
@@ -1050,9 +1249,11 @@ export class Game {
       if (e.kind === K_UNIT) {
         du = true;
         this.leaveOrder(e);
-        P.pop -= e.S.pop;
+        if (!e.noPop) P.pop -= e.S.pop;
+        if (e.inside) { const hb = this.ents.get(e.inside); if (hb) hb.inside = Math.max(0, hb.inside - 1); e.inside = 0; }
         if (K && K !== P) {
           K.score.kills++; P.score.lost++;
+          if (e.isHero) { K.score.heroKills++; P.score.heroDeaths++; }
           if (K.commander === 'zara' && K.heroId) {
             const hero = this.ents.get(K.heroId);
             if (hero && !hero.dead && Math.hypot(hero.x - e.x, hero.y - e.y) <= AURA_RADIUS) {
@@ -1071,6 +1272,16 @@ export class Game {
         this.freeTiles(e);
         for (const it of e.q) if (it.k === 't') P.pending.delete(it.key);
         if (K && K !== P) { K.score.razed++; P.score.bldgLost++; }
+        if (e.inside > 0) {                        // the shelter fell: everyone inside spills out and runs for the next one
+          for (const u of this.units) {
+            if (u.inside !== e.id || u.dead) continue;
+            u.inside = 0; u.st = ST.IDLE; u.order = null;
+            u.x = e.x + (Math.random() - 0.5) * (e.size - 1); u.y = e.y + (Math.random() - 0.5) * (e.size - 1);
+            const next = P.alive && P.bell ? this.shelterFor(u) : null;
+            if (next && next !== e) this.beginOrder(u, { t: 'shelter', id: next.id }); else this.restore(u);
+          }
+          e.inside = 0;
+        }
       } else {
         dn = true;
         this.freeTiles(e);
@@ -1087,7 +1298,7 @@ export class Game {
 
   eliminate(P) {
     if (!P.alive) return;
-    P.alive = false;
+    P.alive = false; P.bell = false; P.score.outAt = this.tick;
     this.events.push(['elim', P.idx]);
     for (const e of this.ents.values()) if (e.owner === P.idx && !e.dead) this.killEntity(e, -1);
   }
@@ -1112,6 +1323,7 @@ export class Game {
     if (teams.size <= 1) {
       this.over = { team: teams.size ? [...teams][0] : -1, tick: this.tick };
       this.events.push(['over', this.over.team]);
+      this.sample(true);
     }
   }
 
@@ -1123,7 +1335,7 @@ export class Game {
     if (!Array.isArray(ids)) return out;
     for (let i = 0; i < ids.length && i < 400; i++) {
       const e = this.ents.get(ids[i]);
-      if (e && e.kind === K_UNIT && e.owner === pi && !e.dead) out.push(e);
+      if (e && e.kind === K_UNIT && e.owner === pi && !e.dead && !e.inside) out.push(e);
     }
     return out;
   }
@@ -1155,7 +1367,11 @@ export class Game {
     return true;
   }
 
-  groupMove(units, x, y, type, q) {
+  /**
+   * Move a group. form = index into FORMATIONS (0 = keep the current loose shape);
+   * face = optional {x,y} direction the formation should point (default: the way it is travelling).
+   */
+  groupMove(units, x, y, type, q, form = 0, face = null) {
     const n = units.length;
     if (!n) return;
     const cl = (v, max) => (v < 0.5 ? 0.5 : v > max - 0.5 ? max - 0.5 : v);
@@ -1165,6 +1381,46 @@ export class Game {
     let cx = 0, cy = 0;
     for (const u of units) { cx += u.x; cy += u.y; }
     cx /= n; cy /= n;
+    if (form > 0 && form < FORMATIONS.length) {
+      let dx = face ? face.x : x - cx, dy = face ? face.y : y - cy, d = Math.hypot(dx, dy);
+      if (!(d > 0.75)) { dx = 0; dy = -1; d = 1; }
+      dx /= d; dy /= d;
+      const px = -dy, py = dx;                                        // the formation's "right"
+      // who stands where: melee up front (toughest first), ranged behind, siege, healers and Prep Cooks at the back
+      const rank = (u) => (u.S.tags.includes('siege') ? 3 : !(u.S.atk > 0) || u.isCook ? 4 : u.S.range > 0 ? 2 : 0);
+      const list = units.slice().sort((a, b) => rank(a) - rank(b) || b.S.hp - a.S.hp || a.id - b.id);
+      const key = FORMATIONS[form].key, gap = key === 'spread' ? 1.9 : 0.95;
+      const slots = [], chunks = [];                                  // slot = [sideways, depth behind the front]; chunks = slots per rank
+      const row = (m, depth) => { for (let k = 0; k < m; k++) slots.push([(k - (m - 1) / 2) * gap, depth * gap]); chunks.push(m); };
+      if (key === 'wedge') {
+        const arm = Math.max(3, Math.ceil(Math.sqrt(n) * 1.1)), per = arm * 2 + 1;
+        for (let i = 0; i < n; i++) { const layer = (i / per) | 0, j = i % per, k = (j + 1) >> 1; slots.push([(j & 1 ? -1 : 1) * k * gap * 0.8, (k * 0.8 + layer * 1.4) * gap]); }
+        for (let left = n; left > 0; left -= per) chunks.push(Math.min(per, left));
+      } else if (key === 'line') {
+        // each kind of unit gets ranks of its own: infantry and vehicles, then ranged, then everything fragile
+        const wide = Math.max(5, Math.ceil(Math.sqrt(n) * 1.8)), groups = [0, 0, 0];
+        for (const u of list) { const r = rank(u); groups[r === 0 ? 0 : r === 2 ? 1 : 2]++; }
+        let d = 0;
+        for (const cnt of groups) for (let left = cnt; left > 0; left -= wide) row(Math.min(wide, left), d++);
+      } else {
+        const cols = Math.ceil(Math.sqrt(n));
+        for (let left = n, d = 0; left > 0; left -= cols) row(Math.min(cols, left), d++);
+      }
+      let depth = 0, slow = Infinity;
+      for (const s of slots) if (s[1] > depth) depth = s[1];
+      for (const u of list) if (u.S.speed < slow) slow = u.S.speed;
+      // fill rank by rank; inside a rank, the unit furthest left takes the slot furthest left (fewer crossed paths)
+      const side = (u) => (u.x - cx) * px + (u.y - cy) * py;
+      for (let i = 0, ci = 0; i < n; i += chunks[ci++]) {
+        const us = list.slice(i, i + chunks[ci]).sort((a, b) => side(a) - side(b));
+        const ss = slots.slice(i, i + chunks[ci]).sort((a, b) => a[0] - b[0]);
+        us.forEach((u, k) => {
+          const lat = ss[k][0], back = ss[k][1] - depth / 2;
+          this.setOrder(u, { t: kind(u), x: cl(x + px * lat - dx * back, this.w), y: cl(y + py * lat - dy * back, this.h), sp: slow }, q);
+        });
+      }
+      return;
+    }
     let rad = 0;
     for (const u of units) rad = Math.max(rad, Math.hypot(u.x - cx, u.y - cy));
     const maxR = 0.55 * Math.sqrt(n) + 0.4;
@@ -1179,8 +1435,62 @@ export class Game {
     switch (c.c) {
       case 'mv': case 'am':
         if (!Number.isFinite(c.x) || !Number.isFinite(c.y)) return;
-        this.groupMove(this.ownUnits(pi, c.ids), c.x, c.y, c.c === 'mv' ? 'move' : 'amove', q);
+        this.groupMove(this.ownUnits(pi, c.ids), c.x, c.y, c.c === 'mv' ? 'move' : 'amove', q, c.f | 0);
         break;
+
+      case 'fm': {                                  // form up on the spot, facing away from home
+        const units = this.ownUnits(pi, c.ids);
+        if (units.length < 2) return;
+        let cx = 0, cy = 0;
+        for (const u of units) { cx += u.x; cy += u.y; }
+        cx /= units.length; cy /= units.length;
+        this.groupMove(units, cx, cy, 'move', false, c.f | 0, { x: cx - P.home.x, y: cy - P.home.y });
+        break;
+      }
+
+      case 'sn': {                                  // stance: 0 aggressive, 1 hold the line, 2 stand down
+        const v = c.v | 0;
+        if (v < 0 || v > 2) return;
+        for (const u of this.ownUnits(pi, c.ids)) {
+          if (u.isCook) continue;
+          u.stance = v;
+          if (v > 0 && u.order && u.order.t === 'attack' && u.order.auto) this.endAttack(u, u.order, false);   // break off anything it picked by itself
+        }
+        break;
+      }
+
+      case 'dr': {                                  // drop what they carry at this station
+        const named = c.tid !== undefined;            // no station named: each cook picks its nearest drop-off
+        const d = named ? this.ownBldg(pi, c.tid) : null;
+        if (named && (!d || !d.done || !d.S.dropoff)) return;
+        for (const u of this.ownUnits(pi, c.ids)) {
+          const full = u.isCook && u.carryAmt > 0;
+          const to = d || (full ? this.findDropoff(u) : null);
+          if (!to) continue;
+          if (full) this.setOrder(u, { t: 'drop', id: to.id }, q);
+          else this.setOrder(u, { t: 'move', x: to.x + (Math.random() - 0.5) * to.size, y: to.y + to.size / 2 + 0.7 }, q);
+        }
+        break;
+      }
+
+      case 'bell': {                                // ring the HQ bell: Prep Cooks shelter; ring again: back to work
+        const on = !!c.on;
+        if (on === P.bell) return;
+        if (on) {
+          let any = false;
+          for (const u of this.units) if (u.owner === pi && !u.dead && u.isCook && this.shelter(u)) any = true;
+          if (!any) { this.events.push(['note', pi, 'bell']); return; }
+          P.bell = true;
+        } else {
+          P.bell = false;
+          for (const u of this.units) {
+            if (u.owner !== pi || u.dead || !u.isCook) continue;
+            if (u.inside || (u.order && u.order.t === 'shelter')) this.restore(u); else u.saved = null;
+          }
+        }
+        this.events.push(['bell', pi, on ? 1 : 0]);
+        break;
+      }
 
       case 'at': {
         const tg = this.ents.get(c.tid);
@@ -1208,12 +1518,12 @@ export class Game {
           const idx = c.tree | 0;
           if (idx < 0 || idx >= this.tiles.length || this.tiles[idx] !== TILE.TREE) return;
           const trees = this.treesNear(idx, Math.ceil(cooks.length / 2));
-          cooks.forEach((u, i) => this.setOrder(u, this.treeOrder(trees[((i / 2) | 0) % trees.length]), q));
+          cooks.forEach((u, i) => this.setOrder(u, this.bankFirst(u, this.treeOrder(trees[((i / 2) | 0) % trees.length]), q), q));
           return;
         }
         const e = this.ents.get(c.tid);
         if (!e || e.dead) return;
-        if (e.kind === K_NODE) { for (const u of cooks) this.setOrder(u, this.gatherOrder(e), q); return; }
+        if (e.kind === K_NODE) { for (const u of cooks) this.setOrder(u, this.bankFirst(u, this.gatherOrder(e), q), q); return; }
         if (e.kind !== K_BLDG || e.type !== 'garden' || e.owner !== pi) return;
         if (!e.done) { for (const u of cooks) this.setOrder(u, { t: 'build', id: e.id }, q); return; }
         const taken = new Set();
@@ -1221,13 +1531,14 @@ export class Game {
           const g = !taken.has(e.id) && (e.worker === u.id || !this.gardenBusy(e)) ? e : this.findGarden(u, e.x, e.y, 12, taken);
           if (!g) continue;
           taken.add(g.id);
-          this.setOrder(u, this.gatherOrder(g), q);
+          this.setOrder(u, this.bankFirst(u, this.gatherOrder(g), q), q);
           if (!q || u.order.gid === g.id) g.worker = u.id;
         }
         break;
       }
 
       case 'bp': {
+        if (typeof c.b !== 'string' || !Object.hasOwn(BUILDINGS, c.b)) return;
         const S = P.stats.bldgs[c.b];
         if (!S || S.age > P.age) return;
         const tx = c.tx | 0, ty = c.ty | 0;
@@ -1306,8 +1617,20 @@ export class Game {
       }
 
       case 'ab': this.useAbility(P); break;
+      case 'ul': this.useUltimate(P); break;
       case 'rg': this.eliminate(P); this.checkVictory(); break;
     }
+  }
+
+  /**
+   * A cook holding one ingredient is sent to gather another: instead of throwing the load away,
+   * it banks it at a nearby drop-off first and then starts the new job.
+   */
+  bankFirst(u, order, queued) {
+    if (queued || u.carryAmt <= 0 || u.carryType === order.res) return order;
+    const d = this.findDropoff(u);
+    if (d && rectDist(u.x, u.y, d) <= 16) { order.phase = 2; order.drop = d.id; }
+    return order;
   }
 
   cmdTrain(P, b, key) {
@@ -1337,7 +1660,7 @@ export class Game {
   //  Network state
   // ==========================================================================
   unitRec(u) {
-    return [u.id, 0, u.type, u.owner, u._qx, u._qy, u._hp, u.st, u.tgt, u._carry, u.bmask];
+    return [u.id, 0, u.type, u.owner, u._qx, u._qy, u._hp, u.st, u.tgt, u._carry, u.bmask, u.stance];
   }
   bldgRec(b) {
     const q = b.q;
@@ -1347,6 +1670,7 @@ export class Game {
       q.length ? Math.floor((q[0].t / q[0].total) * 100) : 0,
       q.map((it) => it.k + it.key),
       b.rally ? [Math.round(b.rally.x * POS_Q), Math.round(b.rally.y * POS_Q)] : 0,
+      b.inside,
     ];
   }
   nodeRec(n) { return [n.id, 2, n.type, -1, n.tx, n.ty, n.amount]; }
@@ -1354,7 +1678,7 @@ export class Game {
     return [
       P.idx, Math.floor(P.res.food), Math.floor(P.res.wood), Math.floor(P.res.spice), Math.floor(P.res.salt),
       P.pop, P.popCap, P.age, P.techs, P.alive ? 1 : 0, P.heroId, P.heroRespawn, P.abilityReady, P.lunchUntil,
-      [...P.pending], P.score.kills, P.score.lost, P.score.razed,
+      [...P.pending], P.score.kills, P.score.lost, P.score.razed, P.bell ? 1 : 0, P.ultReady, P.lockUntil,
     ];
   }
 
@@ -1366,8 +1690,8 @@ export class Game {
       const qx = Math.round(u.x * POS_Q), qy = Math.round(u.y * POS_Q);
       const moved = qx !== u._qx || qy !== u._qy;
       u._qx = qx; u._qy = qy;
-      if (u._new || hp !== u._hp || u.st !== u._st || u.tgt !== u._tgt || carry !== u._carry || u.bmask !== u._bm) {
-        u._new = false; u._hp = hp; u._st = u.st; u._tgt = u.tgt; u._carry = carry; u._bm = u.bmask;
+      if (u._new || hp !== u._hp || u.st !== u._st || u.tgt !== u._tgt || carry !== u._carry || u.bmask !== u._bm || u.stance !== u._sn) {
+        u._new = false; u._hp = hp; u._st = u.st; u._tgt = u.tgt; u._carry = carry; u._bm = u.bmask; u._sn = u.stance;
         e.push(this.unitRec(u));
       } else if (moved) m.push(u.id, qx, qy);
     }
@@ -1399,7 +1723,7 @@ export class Game {
     for (const u of this.units) {
       if (u.dead) continue;
       e.push([u.id, 0, u.type, u.owner, Math.round(u.x * POS_Q), Math.round(u.y * POS_Q), Math.ceil(u.hp), u.st, u.tgt,
-        u.carryAmt > 0 ? RES.indexOf(u.carryType) + 1 : 0, u.bmask]);
+        u.carryAmt > 0 ? RES.indexOf(u.carryType) + 1 : 0, u.bmask, u.stance]);
     }
     for (const b of this.bldgs) if (!b.dead) e.push(this.bldgRec(b));
     for (const n of this.nodes) if (!n.dead) e.push(this.nodeRec(n));
@@ -1417,9 +1741,59 @@ export class Game {
     };
   }
 
+  // ==========================================================================
+  //  Scoring
+  // ==========================================================================
+  /** The four score columns shown after a match (and their total). */
+  scoreOf(P) {
+    const s = P.score;
+    const military = s.kills * 12 + s.razed * 45 + s.heroKills * 60;
+    const economy = Math.round(s.gathered / 8);
+    const technology = P.techs.length * 35 + (P.age - 1) * 150;
+    const society = s.built * 12 + s.trained * 3 + s.peakPop * 2;
+    return { military, economy, technology, society, total: military + economy + technology + society };
+  }
+
+  /** Add one data point per player to the timeline behind the end-of-match graphs. */
+  sample(force) {
+    const tl = this.tl, n = this.players.length;
+    if (tl.t.length && tl.t[tl.t.length - 1] === this.tick) return;
+    const army = new Array(n).fill(0);
+    for (const u of this.units) if (!u.dead && !u.isCook && !u.isHero && u.S.atk > 0) army[u.owner]++;
+    tl.t.push(this.tick);
+    this.players.forEach((P, i) => {
+      const s = P.score, row = tl.s[i];
+      if (P.pop > s.peakPop) s.peakPop = P.pop;
+      if (army[i] > s.peakArmy) s.peakArmy = army[i];
+      row.score.push(this.scoreOf(P).total); row.army.push(army[i]); row.pop.push(P.pop); row.gathered.push(s.gathered); row.kills.push(s.kills);
+    });
+    // a very long match: halve the resolution instead of growing without bound
+    if (!force && tl.t.length >= 240) {
+      tl.every *= 2;
+      const keep = tl.t.map((t) => t % tl.every === 0);
+      tl.t = tl.t.filter((_, k) => keep[k]);
+      for (const row of tl.s) for (const key in row) row[key] = row[key].filter((_, k) => keep[k]);
+    }
+  }
+
+  /** Timeline for the client: { t: [seconds], series: { score: [[player0...], [player1...]], army, pop, gathered, kills } }. */
+  timeline() {
+    this.sample(true);
+    const series = {};
+    for (const key of ['score', 'army', 'pop', 'gathered', 'kills']) series[key] = this.tl.s.map((row) => row[key]);
+    return { t: this.tl.t.map((t) => Math.round(t / TICK_RATE)), series };
+  }
+
   summary() {
-    return this.players.map((P) => ({
-      idx: P.idx, name: P.name, commander: P.commander, team: P.team, color: P.color, alive: P.alive, age: P.age, ...P.score,
-    }));
+    return this.players.map((P) => {
+      const s = P.score;
+      return {
+        idx: P.idx, name: P.name, commander: P.commander, team: P.team, color: P.color, bot: P.bot, alive: P.alive, age: P.age,
+        kills: s.kills, lost: s.lost, razed: s.razed, bldgLost: s.bldgLost, gathered: s.gathered, res: { ...s.res }, trained: s.trained,
+        built: s.built, heroKills: s.heroKills, heroDeaths: s.heroDeaths, peakPop: Math.max(s.peakPop, P.pop), peakArmy: s.peakArmy,
+        techs: P.techs.filter((k) => !TECHS[k].setAge).length, outAt: s.outAt ? Math.round(s.outAt / TICK_RATE) : 0,
+        score: this.scoreOf(P),
+      };
+    });
   }
 }

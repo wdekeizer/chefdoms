@@ -7,6 +7,8 @@
 //   node tools/sim-test.js --series 12             many quick matches, prints win table
 import { Game } from '../game/sim.js';
 import { Bot } from '../game/ai.js';
+import { TacticsGame } from '../game/tactics.js';
+import { TacticsBot } from '../game/tactics-ai.js';
 import { COMMANDER_KEYS, TICK_RATE } from '../game/data.js';
 
 const args = process.argv.slice(2);
@@ -26,6 +28,29 @@ function parsePlayers(spec, n = 4, level = 'normal', shuffle = 0) {
     out.push({ name: cmd + (i + 1), commander: cmd, team: i, color: i, bot: level });
   }
   return out;
+}
+
+/** Turn-based match between bots. `rounds` = give up after this many rounds. */
+export function runTactics({ players, seed, rounds = 150, mapSize = 'auto', verbose = false, popCap = 100, startRes = 'standard' }) {
+  const g = new TacticsGame({ players, mapSize, startRes, popCap, seed });
+  for (const P of g.players) { P.ai = new TacticsBot(g, P, P.bot); P.ai.L = { ...P.ai.L, pace: 1 }; }
+  const t0 = Date.now();
+  let lastRound = 0, guard = 0;
+  while (!g.over && g.turn.n <= rounds && guard++ < 4e6) {
+    g.step(); g.delta();
+    if (verbose && g.turn.n !== lastRound && g.turn.n % 5 === 0) {
+      lastRound = g.turn.n;
+      console.log(`r${String(g.turn.n).padStart(3)}  ` + g.players.map((P) => {
+        if (!P.alive) return `${P.name}: out`;
+        let cooks = 0, army = 0, b = 0, st = 0;
+        for (const u of g.units) if (u.owner === P.idx) { if (u.isCook) cooks++; else if (!u.isHero) army++; }
+        for (const x of g.bldgs) if (x.owner === P.idx) { b++; if (x.pays) st++; }
+        const r = P.res, i = P.income;
+        return `${P.name} A${P.age} c${cooks} a${army} b${b}/${st} [${r.food} ${r.wood} ${r.spice} ${r.salt}] +[${i.food} ${i.wood} ${i.spice} ${i.salt}] ${P.ai.state[0]}${P.heroId ? '' : 'x'}`;
+      }).join(' | '));
+    }
+  }
+  return { game: g, over: g.over, rounds: g.turn.n, wall: Date.now() - t0, ticks: g.tick };
 }
 
 export function runMatch({ players, seed, minutes = 45, mapSize = 'medium', verbose = false, popCap = 100, startRes = 'standard' }) {
@@ -69,7 +94,31 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1].endsWith(
   const minutes = +arg('minutes', 45);
   const mapSize = arg('map', 'medium');
   const level = arg('level', 'normal');
-  if (series) {
+  if (arg('mode') === 'turn') {
+    // node tools/sim-test.js --mode turn [--series 8] [--n 2] [--level hard] [--rounds 150]
+    const rounds = +arg('rounds', 150), map = arg('map', 'auto');
+    if (series) {
+      const wins = {}, played = {};
+      let unfinished = 0, total = 0;
+      for (let i = 0; i < series; i++) {
+        const players = parsePlayers(arg('players'), +arg('n', 2), level, i);
+        const r = runTactics({ players, seed: 1000 + i * 7919, rounds, mapSize: map });
+        for (const p of players) played[p.commander] = (played[p.commander] || 0) + 1;
+        if (r.over) { const w = r.game.players.find((P) => P.team === r.over.team); wins[w.commander] = (wins[w.commander] || 0) + 1; total += r.rounds; console.log(`match ${i + 1}: ${w.name} wins in round ${r.rounds}  (${r.wall} ms)`); }
+        else { unfinished++; console.log(`match ${i + 1}: no winner after ${rounds} rounds`); }
+      }
+      console.log('\ncommander   wins / played');
+      for (const k of COMMANDER_KEYS) if (played[k]) console.log(`${k.padEnd(10)}  ${wins[k] || 0} / ${played[k]}`);
+      console.log(`unfinished: ${unfinished}, average length of finished matches: ${(total / Math.max(1, series - unfinished)).toFixed(0)} rounds`);
+    } else {
+      const players = parsePlayers(arg('players'), +arg('n', 2), level);
+      const r = runTactics({ players, seed: +arg('seed', 12345), rounds, mapSize: map, verbose: !flag('quiet') });
+      const g = r.game;
+      console.log(r.over ? `\nWinner: team ${r.over.team} (${g.players.filter((P) => P.team === r.over.team).map((P) => P.name).join(', ')}) in round ${r.rounds}` : `\nNo winner after ${rounds} rounds`);
+      console.table(g.summary().map((s) => ({ name: s.name, alive: s.alive, age: s.age, kills: s.kills, lost: s.lost, razed: s.razed, gathered: s.gathered, trained: s.trained, built: s.built, score: s.score.total })));
+      console.log(`${r.ticks} ticks simulated in ${r.wall} ms`);
+    }
+  } else if (series) {
     const wins = {}, played = {};
     let unfinished = 0, totalMin = 0;
     for (let i = 0; i < series; i++) {

@@ -1,8 +1,9 @@
 // ============================================================================
 //  Map generation. A seed fully determines the map.
 //  Every player gets the same guaranteed pantry around their Kitchen HQ
-//  (veggies, firewood, spice, salt); the middle of the map holds richer,
-//  contested deposits.
+//  (veggies, firewood, spice, two salt deposits and a fishing pond); the rest
+//  of the map holds richer, contested deposits. Every pond has Fishing Spots
+//  along its shore.
 // ============================================================================
 import { TILE, makeRng } from './data.js';
 
@@ -116,20 +117,24 @@ export function generateMap(size, nPlayers, seed) {
   }
   const putNode = (type) => (x, y) => { nodeAt[y * w + x] = 1; nodes.push({ type, tx: x, ty: y }); };
   const putTree = (x, y) => { tiles[y * w + x] = TILE.TREE; };
+  const putWater = (x, y) => { tiles[y * w + x] = TILE.WATER; };
 
   // --- each player's home pantry ----------------------------------------------
+  // [what, how many tiles, distance from the HQ]; each entry gets its own slice of the compass
   const PLAN = [
-    ['veg', 6, 6.6], ['tree', 16, 8.6], ['spice', 4, 9.0], ['tree', 16, 9.4],
-    ['salt', 3, 10.4], ['veg', 5, 13.5], ['spice', 4, 14.5], ['tree', 22, 13.0],
+    ['veg', 6, 6.6], ['tree', 16, 8.6], ['spice', 5, 9.0], ['tree', 16, 9.4], ['salt', 4, 10.2],
+    ['veg', 5, 13.5], ['spice', 5, 14.5], ['tree', 22, 13.0], ['salt', 4, 15.0], ['pond', 11, 12.6],
   ];
+  const NP = PLAN.length;
   for (const s of starts) {
     const base = rng() * Math.PI * 2;
-    const order = [0, 1, 2, 3, 4, 5, 6, 7];
-    for (let i = 7; i > 0; i--) { const j = (rng() * (i + 1)) | 0; [order[i], order[j]] = [order[j], order[i]]; }
+    const order = PLAN.map((_, i) => i);
+    for (let i = NP - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; [order[i], order[j]] = [order[j], order[i]]; }
     PLAN.forEach(([type, count, dist], k) => {
-      const ang = base + (order[k] * Math.PI * 2) / 8 + (rng() - 0.5) * 0.3;
+      const ang = base + (order[k] * Math.PI * 2) / NP + (rng() - 0.5) * 0.25;
       const x = s.x + Math.cos(ang) * dist, y = s.y + Math.sin(ang) * dist;
       if (type === 'tree') blob(x, y, count, putTree);
+      else if (type === 'pond') blob(x, y, count, putWater);
       else blob(x, y, count, putNode(type));
     });
   }
@@ -139,9 +144,10 @@ export function generateMap(size, nPlayers, seed) {
   const farFromAll = (x, y, d) => starts.every((s) => Math.hypot(x - s.x, y - s.y) >= d) && neutral.every((n) => Math.hypot(x - n[0], y - n[1]) >= 9);
   blob(c + (rng() - 0.5) * 6, c + (rng() - 0.5) * 6, 8, putNode('spice'));
   neutral.push([c, c]);
-  const want = nPlayers * 2 + 3;
-  const kinds = [['salt', 5], ['veg', 6], ['spice', 6]];
-  for (let k = 0, tries = 0; k < want && tries < 400; tries++) {
+  // more of them on bigger maps; salt and spice (which never grow back) make up most of them
+  const want = Math.round(nPlayers * 2.5 + 4 + (size * size) / 2600);
+  const kinds = [['salt', 6], ['spice', 7], ['veg', 6], ['salt', 5], ['spice', 6]];
+  for (let k = 0, tries = 0; k < want && tries < 1500; tries++) {
     const x = 6 + rng() * (w - 12), y = 6 + rng() * (h - 12);
     if (!farFromAll(x, y, 19)) continue;
     const [type, count] = kinds[k % kinds.length];
@@ -182,6 +188,44 @@ export function generateMap(size, nPlayers, seed) {
   if (starts.some((s) => !seen[(s.y + 3) * w + s.x])) {
     for (const s of starts) carve(s);
     nodes = nodes.filter((n) => nodeAt[n.ty * w + n.tx]);
+    seen = flood();
+  }
+
+  // --- fishing spots: on the water's edge of every pond, next to ground a cook can actually reach
+  {
+    const done = new Uint8Array(N);
+    const shore = (x, y) => {
+      for (let d = 0; d < 4; d++) {
+        const nx = x + DX4[d], ny = y + DY4[d];
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        if (seen[ny * w + nx]) return true;
+      }
+      return false;
+    };
+    for (let i = 0; i < N; i++) {
+      if (tiles[i] !== TILE.WATER || done[i]) continue;
+      const body = [i];
+      done[i] = 1;
+      for (let qi = 0; qi < body.length; qi++) {
+        const cur = body[qi], cx = cur % w, cy = (cur / w) | 0;
+        for (let d = 0; d < 4; d++) {
+          const nx = cx + DX4[d], ny = cy + DY4[d];
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const ni = ny * w + nx;
+          if (tiles[ni] === TILE.WATER && !done[ni]) { done[ni] = 1; body.push(ni); }
+        }
+      }
+      const edge = body.filter((t) => shore(t % w, (t / w) | 0));
+      if (!edge.length) continue;
+      const count = Math.max(body.length >= 8 ? 2 : 1, Math.min(4, Math.round(body.length / 12)));
+      const placed = [];
+      for (let k = 0, tries = 0; k < count && tries < 60; tries++) {
+        const t = edge[(rng() * edge.length) | 0], x = t % w, y = (t / w) | 0;
+        if (placed.some((p) => Math.max(Math.abs(p[0] - x), Math.abs(p[1] - y)) < 2)) continue;
+        placed.push([x, y]); k++;
+        nodeAt[t] = 1; nodes.push({ type: 'fish', tx: x, ty: y });
+      }
+    }
   }
 
   return { w, h, tiles, starts, nodes, seed };

@@ -288,6 +288,14 @@ function nextCalm() {
   return state.queue.shift();
 }
 
+/** Battle pieces take turns too, never the same one twice in a row. */
+function nextBattle() {
+  const all = byMood('battle'), others = all.filter((t) => t !== state.lastBattle);
+  const pick = (others.length ? others : all)[(Math.random() * (others.length || all.length)) | 0];
+  state.lastBattle = pick;
+  return pick;
+}
+
 function playDef(def, fadeIn = 1.5, fadeOut = 1.5) {
   const a = audio();
   if (!a) return;
@@ -329,13 +337,15 @@ function tick() {
   const mood = state.curDef ? state.curDef.mood : '';
   if (want === 'off') { if (state.cur) playDef(null, 0, 1.2); return; }
   if (want === 'lobby' && mood !== 'lobby') playDef(byMood('lobby')[0], 2, 1.5);
-  else if (want === 'battle' && mood !== 'battle') playDef(byMood('battle')[0], 0.6, 1.0);
+  else if (want === 'battle' && mood !== 'battle') playDef(nextBattle(), 0.6, 1.0);
   else if (want === 'calm' && mood !== 'calm' && mood !== 'ambient') playDef(nextCalm(), 2.5, 2.5);
   const v = state.cur;
   if (!v) return;
   v.schedule(a.ac.currentTime + 0.6);
-  // calm pieces hand over to the next one after their loops
-  if (want === 'calm' && v.loopsPlayed >= (v.def.loops || 2) - 1 && v.loopEnd() - a.ac.currentTime < 2.6) playDef(nextCalm(), 2.5, 3);
+  // a piece hands over to the next one in its rotation once it has played through
+  if ((want === 'calm' || want === 'battle') && v.loopsPlayed >= (v.def.loops || 2) - 1 && v.loopEnd() - a.ac.currentTime < 2.6) {
+    if (want === 'calm') playDef(nextCalm(), 2.5, 3); else if (byMood('battle').length > 1) playDef(nextBattle(), 1.2, 2.5);
+  }
 }
 
 function startFile() {
@@ -367,6 +377,14 @@ export const music = {
     v.start(a.ac.currentTime + 0.05, 0.02);
     v.schedule(Infinity, 1);
     setTimeout(() => v.stop(a.ac.currentTime, 1.5), (v.c.len * v.c.spb + 2) * 1000);
+  },
+  /** Jump to another piece of the current mood. */
+  skip() {
+    const a = audio();
+    if (!a || a.ac.state !== 'running') return;
+    if (state.elKind) { startFile(); return; }
+    if (state.want === 'calm') playDef(nextCalm(), 1.2, 1.2);
+    else if (state.want === 'battle') playDef(nextBattle(), 0.6, 1);
   },
   now: () => (state.elKind ? 'your files (' + state.elKind + ')' : state.curDef ? state.curDef.name : ''),
 };

@@ -3,11 +3,14 @@
 //   node tools/net-test.js        (needs Node 22+ for the built-in WebSocket client)
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3100 + Math.floor(Math.random() * 500);
-const srv = spawn(process.execPath, [path.join(ROOT, 'server.js'), '--port', String(PORT)], { stdio: ['ignore', 'pipe', 'pipe'] });
+const SCORES = path.join(os.tmpdir(), `chefdoms-scores-${PORT}.json`);      // keep the test out of the real Hall of Fame
+const srv = spawn(process.execPath, [path.join(ROOT, 'server.js'), '--port', String(PORT)], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CHEFDOMS_SCORES: SCORES, CHEFDOMS_SCORE_MIN: '0.01' } });
 let srvOut = '';
 srv.stdout.on('data', (d) => { srvOut += d; });
 srv.stderr.on('data', (d) => { srvOut += d; });
@@ -18,7 +21,7 @@ const ok = (cond, name, extra = '') => { console.log(`${cond ? 'PASS' : 'FAIL'} 
 
 function client(name, token) {
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
-  const c = { ws, msgs: [], bytes: 0, lobby: null, start: null, welcome: null, snaps: 0, ents: new Map(), players: [], chat: [], closed: false, over: null, paused: null };
+  const c = { ws, msgs: [], bytes: 0, lobby: null, start: null, welcome: null, snaps: 0, ents: new Map(), players: [], chat: [], closed: false, over: null, paused: null, pings: [], scores: null, tb: null, events: [] };
   ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name, token }));
   ws.onclose = () => { c.closed = true; };
   ws.onmessage = (ev) => {
@@ -30,12 +33,16 @@ function client(name, token) {
     else if (m.t === 'chat') c.chat.push(m);
     else if (m.t === 'paused') c.paused = m.v;
     else if (m.t === 'over') c.over = m;
+    else if (m.t === 'mp') c.pings.push(m);
+    else if (m.t === 'scores') c.scores = m.list;
     else if (m.t === 's') {
       c.snaps++; c.tick = m.k;
       if (m.e) for (const r of m.e) c.ents.set(r[0], r);
       if (m.m) for (let i = 0; i < m.m.length; i += 3) { const r = c.ents.get(m.m[i]); if (r) { r[4] = m.m[i + 1]; r[5] = m.m[i + 2]; } }
       if (m.r) for (const id of m.r) c.ents.delete(id);
       if (m.p) for (const p of m.p) c.players[p[0]] = p;
+      if (m.tb) c.tb = m.tb;
+      if (m.ev) for (const e of m.ev) c.events.push(e);
     }
   };
   c.send = (o) => ws.send(JSON.stringify(o));
@@ -82,7 +89,7 @@ try {
   a.send({ t: 'start' });
   await until(() => a.start && b.start && a.snaps > 5 && b.snaps > 5);
   ok(a.start && a.start.you === 0 && b.start && b.start.you === 1, 'match starts, each client knows its player');
-  ok(a.start.players.length === 3 && a.start.players[0].commander === 'nonna' && a.start.w === 72, 'start info has players and map');
+  ok(a.start.players.length === 3 && a.start.players[0].commander === 'nonna' && a.start.w === 96, 'start info has players and map');
   ok(a.ents.size > 50, 'full snapshot delivers the world', `${a.ents.size} entities`);
 
   const s0 = a.snaps, t0 = Date.now(), b0 = a.bytes;
@@ -111,6 +118,20 @@ try {
   await until(() => b.chat.some((m) => m.m === 'hello team'));
   ok(b.chat.some((m) => m.m === 'hello team' && m.team === 1), 'team chat reaches allies');
 
+  a.send({ t: 'mp', x: 10.5, y: 12 });
+  await until(() => b.pings.length > 0);
+  ok(b.pings.length === 1 && b.pings[0].p === 0 && b.pings[0].x === 10.5 && a.pings.length === 1, 'a map ping reaches the sender and their allies');
+  a.send({ t: 'mp', x: 'x' }); a.send({ t: 'mp', x: 1, y: 1 });
+  await sleep(200);
+  ok(b.pings.length === 1, 'bad or rapid-fire pings are dropped');
+
+  a.send({ t: 'c', c: 'bell', on: 1 });
+  await until(() => a.players[0][18] === 1 && a.ents.get(hq[0])[11] >= 4, 8000);
+  ok(a.players[0][18] === 1 && a.ents.get(hq[0])[11] >= 4, 'the bell shelters the Prep Cooks inside the Kitchen HQ', `inside: ${a.ents.get(hq[0])[11]}`);
+  a.send({ t: 'c', c: 'bell', on: 0 });
+  await until(() => a.players[0][18] === 0 && a.ents.get(hq[0])[11] === 0);
+  ok(a.ents.get(hq[0])[11] === 0, 'and the all-clear lets them out');
+
   b.send({ t: 'pause' });
   await sleep(200);
   ok(a.paused === null, 'non-host cannot pause');
@@ -138,8 +159,56 @@ try {
   a.send({ t: 'end' });
   await until(() => a.lobby && !a.start && b2.lobby && !b2.start);
   ok(a.lobby && a.lobby.slots[0] && a.lobby.slots[1] && a.lobby.slots[2].kind === 'bot', 'host returns everyone to the lobby with seats kept');
+
+  // a second match, played to the end: scores, timeline and the Hall of Fame
+  b2.send({ t: 'set', k: 'ready', v: true });
+  await until(() => a.lobby.slots[1] && a.lobby.slots[1].ready);
+  a.send({ t: 'start' });
+  await until(() => a.start && b2.start && a.snaps > 0);
+  await sleep(1500);
+  a.send({ t: 'c', c: 'rg' }); b2.send({ t: 'c', c: 'rg' });
+  await until(() => a.over && spec.over, 6000);
+  const o = a.over;
+  ok(o && o.summary.length === 3 && o.summary.every((s) => s.score && Number.isFinite(s.score.total)) && o.summary[2].team === o.team, 'the match ends with a score for every player');
+  ok(o && o.timeline && o.timeline.t.length >= 1 && o.timeline.series.score.length === 3 && o.timeline.series.pop[0].length === o.timeline.t.length, 'and a timeline for the graphs');
+  ok(o && o.hof.length === 2 && o.fresh.length === 2 && o.hof.every((e) => ['Alice', 'Bob'].includes(e.name) && !e.won && e.bots === 1), 'human players enter the Hall of Fame (bots do not)', JSON.stringify(o && o.hof.map((e) => e.name)));
+  spec.send({ t: 'scores' });
+  await until(() => spec.scores);
+  ok(spec.scores && spec.scores.length === 2 && JSON.parse(fs.readFileSync(SCORES, 'utf8')).length === 2, 'the Hall of Fame is saved and served on request');
+
+  // a third match, turn-based: one kitchen at a time
+  a.send({ t: 'end' });
+  await until(() => a.lobby && !a.start && b2.lobby && !b2.start);
+  a.send({ t: 'opt', k: 'mode', v: 'turn' });
+  a.send({ t: 'opt', k: 'turnLimit', v: '30' });
+  b2.send({ t: 'set', k: 'ready', v: true });
+  await until(() => a.lobby.opts.mode === 'turn' && a.lobby.slots[1] && a.lobby.slots[1].ready);
+  for (const c of [a, b2, spec]) { c.over = null; c.tb = null; c.events = []; }
+  a.send({ t: 'start' });
+  await until(() => a.start && b2.start && a.tb && b2.tb && a.snaps > 0);
+  ok(a.start.mode === 'turn' && a.start.w === 26 && a.start.opts.turnLimit === 30 && a.tb[0] === 1 && a.tb[1] === 0, 'a turn-based match starts on the small grid with player 1 to move', JSON.stringify(a.tb));
+  const unitsOf = (c, pi) => [...c.ents.values()].filter((r) => r[1] === 0 && r[3] === pi);
+  const bLine = unitsOf(b2, 1).find((r) => r[2] === 'line'), aLine = unitsOf(a, 0).find((r) => r[2] === 'line');
+  ok(aLine && (aLine[11] >> 8) >= 2 && (aLine[11] & 255) === 0, 'units report the movement they have left', aLine && String(aLine[11]));
+  b2.send({ t: 'c', c: 'twt', id: bLine[0] });
+  a.send({ t: 'c', c: 'twt', id: aLine[0] });
+  await until(() => (a.ents.get(aLine[0])[11] & 2) === 2);
+  ok((a.ents.get(aLine[0])[11] & 2) === 2 && (b2.ents.get(bLine[0])[11] & 2) === 0, 'orders count on your own turn only');
+  const foodT = a.players[0][1];
+  b2.send({ t: 'c', c: 'et' });
+  await sleep(200);
+  ok(a.tb[1] === 0, 'another player cannot end your turn');
+  a.send({ t: 'c', c: 'et' });
+  await until(() => b2.tb[1] === 1);
+  b2.send({ t: 'c', c: 'et' });
+  await until(() => a.tb[0] === 2 && a.tb[1] === 0, 15000);
+  ok(a.tb[0] === 2 && a.tb[1] === 0 && a.players[0][1] > foodT && Array.isArray(a.players[0][21]) && a.events.some((e) => e[0] === 'turn' && e[2] === 2), 'the turn goes round the table (the bot plays its own) and income arrives', JSON.stringify([a.tb, a.players[0][21]]));
+  a.send({ t: 'c', c: 'rg' }); b2.send({ t: 'c', c: 'rg' });
+  await until(() => a.over && spec.over, 6000);
+  ok(a.over && a.over.rounds >= 2 && a.over.timeline.unit === 'turn' && a.over.summary.length === 3, 'a turn-based match ends with rounds and a per-round timeline', a.over && `rounds ${a.over.rounds}`);
   for (const c of [a, b2, spec]) c.ws.close();
   await sleep(200);
+  try { fs.unlinkSync(SCORES); } catch { /* nothing written */ }
 } catch (e) { console.error(e); failed++; }
 srv.kill();
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

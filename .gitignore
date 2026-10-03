@@ -4,5 +4,6 @@ cloudflared
 cloudflared.exe
 Claude outputs/
 *.zip
+highscores.json
 .DS_Store
 Thumbs.db

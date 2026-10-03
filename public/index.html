@@ -50,7 +50,8 @@
         <h2>Chat</h2>
         <div id="lobby-chat-log"></div>
         <input id="lobby-chat-input" maxlength="200" autocomplete="off" placeholder="Say something…">
-        <button class="btn small ghost" id="btn-help">How to play</button>
+        <button class="btn small ghost" id="btn-help">Controls &amp; hotkeys</button>
+        <button class="btn small ghost" id="btn-hall">Hall of Fame</button>
         <button class="btn small ghost" id="btn-sound">Sound &amp; music</button>
         <button class="btn small ghost" id="btn-leave">Leave server</button>
       </section>
@@ -61,15 +62,16 @@
 <!-- ============ in-game HUD ============ -->
 <div id="hud" class="hidden">
   <div id="topbar"></div>
+  <div id="turnbar" class="hidden"></div>
   <div id="heropanel"></div>
   <div id="players"></div>
   <div id="msgs"></div>
   <div id="chatlog"></div>
   <div id="chatbox" class="hidden"><input id="chat-input" maxlength="200" autocomplete="off"></div>
   <div id="bottom">
-    <div id="mm-wrap"><canvas id="minimap"></canvas></div>
-    <div id="selpanel"></div>
     <div id="card"></div>
+    <div id="selpanel"></div>
+    <div id="mm-wrap"><canvas id="minimap"></canvas></div>
   </div>
   <div id="banner" class="hidden"></div>
 </div>

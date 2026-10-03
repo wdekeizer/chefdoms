@@ -3,16 +3,19 @@
 // ============================================================================
 import { G, K_UNIT, K_BLDG, canSee, isAlly, maxHp, statsOf, updateFog, isSpectator } from './state.js';
 import * as SPR from './sprites.js';
-import { BUILDINGS, RES, TILE, PLAYER_COLORS, AURA_RADIUS, COMMANDERS, BUFFS } from '/game/data.js';
+import { BUILDINGS, RES, TILE, PLAYER_COLORS, AURA_RADIUS, COMMANDERS, BUFFS, NODES, RES_INFO, TB } from '/game/data.js';
+import { T as TAC, flagsOf, F_DONE, myTurn, nodeIncome } from './tactics.js';
 
 export const ZOOMS = [16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96];   // device px per tile (sprite cache buckets)
 const ANIMS = ['idle', 'walk', 'attack', 'gather', 'build', 'heal'];
 const CHUNK = 16, BASE = 32;
+const MAX_CHUNKS = 72;                 // painted terrain pieces kept in memory (about 1 MB each); the least recently seen go first
 
 let canvas, ctx, W = 0, H = 0, dpr = 1;
 let fogCv = null, fogCtx = null, fogImg = null, lastFog = 0;
 let mmCv = null, mmCtx = null, mmBase = null, mmBaseCtx = null, mmTiles = -1, lastMini = 0;
 const chunks = new Map();
+let frameNo = 0;
 let ox = 0, oy = 0;          // screen px of world (0,0)
 
 export const view = { get W() { return W; }, get H() { return H; }, get dpr() { return dpr; } };
@@ -36,7 +39,7 @@ export function resize() {
 }
 
 export function defaultZoom() {
-  const want = 40 * dpr;
+  const want = (G.tb ? 60 : 40) * dpr;              // the tactics grid is small: look at it from closer
   return ZOOMS.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a));
 }
 
@@ -78,10 +81,11 @@ export function zoomBy(dir, sx, sy) {
 function chunkCanvas(cx, cy, budget) {
   const key = cy * 1024 + cx;
   let c = chunks.get(key);
-  if (c) return c;
+  if (c) { c.used = frameNo; return c; }
   if (budget.n <= 0) return null;
   budget.n--;
   c = document.createElement('canvas');
+  c.used = frameNo;
   c.width = c.height = CHUNK * BASE;
   const g = c.getContext('2d');
   const getTile = (tx, ty) => (tx < 0 || ty < 0 || tx >= G.w || ty >= G.h ? undefined : G.tiles[ty * G.w + tx]);
@@ -95,7 +99,7 @@ function chunkCanvas(cx, cy, budget) {
 }
 
 function drawTerrain(x0, y0, x1, y1) {
-  const s = G.cam.scale, budget = { n: 2 };
+  const s = G.cam.scale, budget = { n: 3 };
   const cx0 = Math.floor(x0 / CHUNK), cy0 = Math.floor(y0 / CHUNK), cx1 = Math.floor(x1 / CHUNK), cy1 = Math.floor(y1 / CHUNK);
   ctx.imageSmoothingEnabled = true;
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
@@ -103,6 +107,28 @@ function drawTerrain(x0, y0, x1, y1) {
     const c = chunkCanvas(cx, cy, budget);
     if (c) ctx.drawImage(c, px, py, size, size);
     else { ctx.fillStyle = '#7cc254'; ctx.fillRect(px, py, size, size); }
+  }
+  // Paint the terrain just outside the view ahead of time (first in the direction the camera is moving),
+  // so scrolling never has to wait for it.
+  if (budget.n > 0) {
+    const mx = Math.ceil(G.w / CHUNK) - 1, my = Math.ceil(G.h / CHUNK) - 1;
+    const vx = G.cam.vx || 0, vy = G.cam.vy || 0;
+    const ring = [];
+    for (let cy = cy0 - 1; cy <= cy1 + 1; cy++) for (let cx = cx0 - 1; cx <= cx1 + 1; cx++) {
+      if (cx < 0 || cy < 0 || cx > mx || cy > my) continue;
+      if (cx >= cx0 && cx <= cx1 && cy >= cy0 && cy <= cy1) continue;
+      const c = chunks.get(cy * 1024 + cx);
+      if (c) { c.used = frameNo; continue; }
+      const ahead = (vx > 0 && cx > cx1) || (vx < 0 && cx < cx0) || (vy > 0 && cy > cy1) || (vy < 0 && cy < cy0);
+      ring.push([ahead ? 0 : 1, cx, cy]);
+    }
+    ring.sort((a, b) => a[0] - b[0]);
+    const one = { n: 1 };
+    if (ring.length) chunkCanvas(ring[0][1], ring[0][2], one);
+  }
+  if (chunks.size > MAX_CHUNKS) {
+    const old = [...chunks.entries()].sort((a, b) => a[1].used - b[1].used);
+    for (let i = 0; i < old.length - MAX_CHUNKS + 8; i++) if (old[i][1].used < frameNo) chunks.delete(old[i][0]);
   }
 }
 
@@ -142,9 +168,135 @@ function ring(x, y, rx, ry, color, lw) {
 
 const selColor = (e) => (e.owner === G.me ? '#8dff6a' : isAlly(e.owner) ? '#ffe45c' : e.owner < 0 ? '#ffffff' : '#ff5a4d');
 
+/** Corner brackets around a rectangle: "this is what you are pointing at". */
+function brackets(x, y, w, h, color, lw) {
+  const k = Math.min(w, h) * 0.28;
+  const path = () => {
+    ctx.beginPath();
+    ctx.moveTo(x, y + k); ctx.lineTo(x, y); ctx.lineTo(x + k, y);
+    ctx.moveTo(x + w - k, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + k);
+    ctx.moveTo(x + w, y + h - k); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - k, y + h);
+    ctx.moveTo(x + k, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + h - k);
+  };
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  path(); ctx.lineWidth = lw + 2 * dpr; ctx.strokeStyle = 'rgba(20,12,10,0.7)'; ctx.stroke();
+  path(); ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.stroke();
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
+}
+
+function label(text, x, y, size, color = '#fff8ea') {
+  ctx.font = `800 ${Math.round(size)}px "Trebuchet MS", "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.lineWidth = Math.max(3, size / 4); ctx.strokeStyle = 'rgba(20,12,10,0.85)'; ctx.lineJoin = 'round';
+  ctx.strokeText(text, x, y); ctx.fillStyle = color; ctx.fillText(text, x, y);
+  ctx.lineJoin = 'miter';
+}
+
+/** Two crossed blades that drop onto the spot of an attack order. `a` runs 0..1. */
+function swordMark(x, y, s, a) {
+  const k = s * (0.75 - 0.2 * Math.min(1, a * 3)), drop = (1 - Math.min(1, a * 4)) * s * 0.5;
+  ctx.save();
+  ctx.translate(x, y - drop - s * 0.25);
+  ctx.globalAlpha = a < 0.6 ? 1 : Math.max(0, 1 - (a - 0.6) / 0.4);
+  ctx.lineCap = 'round';
+  for (const m of [-1, 1]) {
+    ctx.save(); ctx.rotate(m * 0.78);
+    for (const [col, w] of [['rgba(20,12,10,0.9)', 0.2], ['#f4f8fa', 0.1]]) {      // blade
+      ctx.strokeStyle = col; ctx.lineWidth = k * w; ctx.beginPath(); ctx.moveTo(0, k * 0.3); ctx.lineTo(0, -k * 0.62); ctx.stroke();
+    }
+    for (const [col, w] of [['rgba(20,12,10,0.9)', 0.2], ['#e2403a', 0.1]]) {      // guard and grip
+      ctx.strokeStyle = col; ctx.lineWidth = k * w; ctx.beginPath(); ctx.moveTo(-k * 0.17, k * 0.3); ctx.lineTo(k * 0.17, k * 0.3); ctx.moveTo(0, k * 0.3); ctx.lineTo(0, k * 0.52); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/** Where and how big to draw a station: on its real footprint, or (turn-based) squeezed onto its one tile. Returns [x, y, scale]. */
+function stationBox(type, tx, ty, s) {
+  if (!G.tb) return [ox + tx * s, oy + ty * s, s];
+  const N = BUILDINGS[type] ? BUILDINGS[type].size : 2, wide = type === 'garden' ? 1 : 1 + 0.1 * (N - 1);
+  return [ox + (tx + 0.5 - wide / 2) * s, oy + (ty + 1 - wide) * s, (s * wide) / N];
+}
+const drawStation = (type, owner, tx, ty, s, o) => { const b = stationBox(type, tx, ty, s); SPR.drawBuilding(ctx, type, colorOf(owner), b[0], b[1], b[2], o); };
+const FOOT = 0.3;            // turn-based: units stand lower on their tile, so the sprite sits inside it
+
+function tileFill(i, s, fill, stroke, inset = 0.06) {
+  const x = ox + ((i % G.w) + inset) * s, y = oy + (((i / G.w) | 0) + inset) * s, k = (1 - inset * 2) * s;
+  if (fill) { ctx.fillStyle = fill; ctx.fillRect(x, y, k, k); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = Math.max(1, s / 28); ctx.strokeRect(x + 0.5, y + 0.5, k - 1, k - 1); }
+}
+
+/** Turn-based: the grid, where the selected unit can go, whom it can hit, and the route under the pointer. Drawn on the ground. */
+function drawTacticsGround(now, x0, y0, x1, y1, s) {
+  const w = G.w, t = now / 1000;
+  ctx.strokeStyle = 'rgba(30,50,20,0.13)'; ctx.lineWidth = Math.max(1, dpr);
+  ctx.beginPath();
+  for (let x = x0; x <= x1 + 1; x++) { ctx.moveTo(ox + x * s + 0.5, oy + y0 * s); ctx.lineTo(ox + x * s + 0.5, oy + (y1 + 1) * s); }
+  for (let y = y0; y <= y1 + 1; y++) { ctx.moveTo(ox + x0 * s, oy + y * s + 0.5); ctx.lineTo(ox + (x1 + 1) * s, oy + y * s + 0.5); }
+  ctx.stroke();
+  const P = TAC.plan, hov = TAC.hov, pulse = 0.5 + 0.5 * Math.sin(t * 5);
+  if (P) {
+    const placing = G.mode && G.mode.type === 'tplace' ? G.mode : null;
+    if (placing) {
+      if (placing.b === 'pantry') for (const n of P.nodes.values()) tileFill(n.ent.ty * w + n.ent.tx, s, `rgba(255,228,92,${0.28 + 0.14 * pulse})`, 'rgba(255,240,150,0.95)');
+      else for (const i of P.sites.keys()) tileFill(i, s, `rgba(120,255,140,${0.2 + 0.1 * pulse})`, 'rgba(150,255,160,0.8)');
+    } else {
+      for (const i of P.stops) tileFill(i, s, 'rgba(70,150,255,0.30)', 'rgba(150,205,255,0.75)');
+      for (const n of P.targets.values()) { const [tx, ty] = n.ent.kind === K_UNIT ? [Math.floor(n.ent.x), Math.floor(n.ent.y)] : [n.ent.tx, n.ent.ty]; tileFill(ty * w + tx, s, `rgba(255,70,55,${0.3 + 0.18 * pulse})`, 'rgba(255,130,115,0.95)'); }
+      for (const n of P.heals.values()) tileFill(Math.floor(n.ent.y) * w + Math.floor(n.ent.x), s, 'rgba(110,255,140,0.28)', 'rgba(150,255,170,0.9)');
+      for (const n of P.repairs.values()) tileFill(n.ent.ty * w + n.ent.tx, s, 'rgba(110,255,140,0.22)', 'rgba(150,255,170,0.85)');
+      for (const n of P.nodes.values()) tileFill(n.ent.ty * w + n.ent.tx, s, null, `rgba(255,228,92,${0.55 + 0.3 * pulse})`, 0.03);
+    }
+    tileFill(P.start, s, null, 'rgba(255,255,255,0.85)', 0.03);
+  }
+  if (hov) {
+    if (P && hov.stand >= 0 && hov.kind && hov.kind !== 'nosite') {          // the route the unit would take, and where it would stand
+      const pts = [P.start, ...hov.path];
+      if (pts.length > 1) {
+        const path = () => { ctx.beginPath(); pts.forEach((i, k) => { const x = ox + ((i % w) + 0.5) * s, y = oy + (((i / w) | 0) + 0.5) * s; if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y); }); };
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        path(); ctx.lineWidth = s * 0.2; ctx.strokeStyle = 'rgba(20,12,10,0.55)'; ctx.stroke();
+        path(); ctx.lineWidth = s * 0.11; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+        ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
+        const e = pts[pts.length - 1];
+        ctx.fillStyle = '#ffffff'; ctx.strokeStyle = 'rgba(20,12,10,0.7)'; ctx.lineWidth = Math.max(1, s / 24);
+        ctx.beginPath(); ctx.arc(ox + ((e % w) + 0.5) * s, oy + (((e / w) | 0) + 0.5) * s, s * 0.16, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+    }
+    tileFill(hov.i, s, null, hov.kind === 'attack' ? '#ff5a4d' : hov.kind === 'nosite' ? 'rgba(255,90,80,0.9)' : 'rgba(255,255,255,0.9)', 0.02);
+  }
+}
+
+/** Turn-based: the damage forecast and the little prompts next to the pointer. Drawn above everything. */
+function drawTacticsTop(now, s) {
+  const P = TAC.plan, hov = TAC.hov;
+  if (!hov) return;
+  const fs = Math.max(12 * dpr, s * 0.3), cx = ox + (hov.tx + 0.5) * s, top = oy + (hov.ty - 0.18) * s;
+  const placing = G.mode && G.mode.type === 'tplace' ? G.mode : null;
+  if (placing) {
+    if (hov.kind === 'site') { const b = stationBox(placing.b, hov.tx, hov.ty, s); SPR.drawBuilding(ctx, placing.b, colorOf(G.me), b[0], b[1], b[2], { progress: 1, t: 0, hpFrac: 1, ghost: 'ok' }); }
+    return;
+  }
+  if (P && hov.kind === 'attack' && hov.fc) {
+    const f = hov.fc;
+    label(f.kills ? `−${f.dmg}  KO!` : `−${f.dmg}`, cx, top, fs * 1.15, '#ff8a7a');
+    const sx = hov.stand % G.w, sy = (hov.stand / G.w) | 0;
+    if (f.counter > 0) label(`−${f.counter}`, ox + (sx + 0.5) * s, oy + (sy - 0.18) * s, fs, f.counter >= P.unit.hp ? '#ff5a4d' : '#ffd27a');
+    else if (!f.kills && hov.ent && hov.ent.kind === K_UNIT) label('no counter', ox + (sx + 0.5) * s, oy + (sy - 0.18) * s, fs * 0.8, '#c9ffbf');
+  } else if (P && hov.kind === 'heal') label('Right-click: top up', cx, top, fs * 0.85, '#c9ffbf');
+  else if (P && hov.kind === 'repair') label(hov.ent.prog < 100 ? 'Right-click: help build' : 'Right-click: repair', cx, top, fs * 0.85, '#c9ffbf');
+  else if (hov.ent && hov.ent.amount !== undefined && canSee(hov.ent)) {
+    const N = NODES[hov.ent.type];
+    if (N) label(`${N.name} · +${nodeIncome(hov.ent.type)} ${RES_INFO[N.res].name} a turn`, cx, top, fs * 0.85);
+    if (P && hov.kind === 'pantry') label('Right-click: build a Pantry here', cx, top - fs, fs * 0.85, '#ffe45c');
+  }
+}
+
 // --------------------------------------------------------------------- main
 export function render(now) {
   const s = G.cam.scale, t = now / 1000;
+  frameNo++;
   clampCamera();
   ox = Math.round(W / 2 - G.cam.x * s); oy = Math.round(H / 2 - G.cam.y * s);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -155,6 +307,8 @@ export function render(now) {
   const x1 = Math.min(G.w - 1, Math.floor((W - ox) / s)), y1 = Math.min(G.h - 1, Math.floor((H - oy) / s) + 1);
   if (x1 < x0 || y1 < y0) return;
   drawTerrain(x0, y0, x1, y1);
+  const tac = !!G.tb, foot = tac ? FOOT : 0;
+  if (tac) drawTacticsGround(now, x0, y0, x1, y1, s);
 
   const sel = G.sel, lw = Math.max(2, s / 14);
 
@@ -163,7 +317,7 @@ export function render(now) {
     if (b.type !== 'garden' || !canSee(b)) continue;
     if (b.tx > x1 + 1 || b.ty > y1 + 1 || b.tx + b.size < x0 - 1 || b.ty + b.size < y0 - 1) continue;
     const vis = isAlly(b.owner) || b.vis;
-    SPR.drawBuilding(ctx, b.type, colorOf(b.owner), ox + b.tx * s, oy + b.ty * s, s, { progress: (vis ? b.prog : b.gprog) / 100, t, hpFrac: 1, ghost: false });
+    drawStation(b.type, b.owner, b.tx, b.ty, s, { progress: (vis ? b.prog : b.gprog) / 100, t, hpFrac: 1, ghost: false });
     if (sel.has(b.id)) { ctx.strokeStyle = selColor(b); ctx.lineWidth = lw; ctx.strokeRect(ox + b.tx * s + 1, oy + b.ty * s + 1, b.size * s - 2, b.size * s - 2); }
   }
   for (const id of sel) {
@@ -177,6 +331,14 @@ export function render(now) {
       ctx.fillStyle = colorOf(e.owner); ctx.beginPath(); ctx.moveTo(rx + s * 0.03, ry - s * 0.7); ctx.lineTo(rx + s * 0.45, ry - s * 0.55); ctx.lineTo(rx + s * 0.03, ry - s * 0.38); ctx.fill();
     }
     const S = statsOf(e);
+    if (tac) {
+      if (e.kind === K_UNIT && e.type.startsWith('hero_') && e.owner === G.me) {          // the aura reaches this far
+        const R = TB.auraRange, hx = Math.floor(e.x), hy = Math.floor(e.y);
+        ctx.setLineDash([s * 0.12, s * 0.22]); ctx.lineWidth = Math.max(1, s / 22); ctx.strokeStyle = 'rgba(255,214,90,0.6)';
+        ctx.strokeRect(ox + (hx - R) * s, oy + (hy - R) * s, (R * 2 + 1) * s, (R * 2 + 1) * s); ctx.setLineDash([]);
+      }
+      continue;
+    }
     if (S && sel.size === 1 && S.range > 1 && e.owner === G.me) {
       const rr = (S.range + (e.kind === K_BLDG ? e.size / 2 : 0)) * s;
       ctx.beginPath(); ctx.arc(ox + e.rx * s, oy + e.ry * s, rr, 0, Math.PI * 2);
@@ -196,7 +358,11 @@ export function render(now) {
     if (row < 0) return; if (row >= rows) row = rows - 1;
     (buckets[row] || (buckets[row] = [])).push(e);
   };
-  for (const e of G.nodes) if (e.tx >= x0 - 1 && e.tx <= x1 + 1 && e.ty >= y0 - 1 && e.ty <= y1 + 1 && canSee(e)) put(e.ty, e);
+  for (const e of G.nodes) {
+    if (e.tx < x0 - 1 || e.tx > x1 + 1 || e.ty < y0 - 1 || e.ty > y1 + 1 || !canSee(e)) continue;
+    if (tac) { const on = G.ents.get(G.occ[e.ty * G.w + e.tx]); if (on && on !== e && canSee(on)) continue; }      // a Pantry stands on it
+    put(e.ty, e);
+  }
   for (const e of G.bldgs) {
     if (e.type === 'garden') continue;
     if (e.tx > x1 + 1 || e.ty > y1 + 2 || e.tx + e.size < x0 - 1 || e.ty + e.size < y0 - 1) continue;
@@ -211,7 +377,7 @@ export function render(now) {
     if (canSee(e)) put(Math.floor(e.ry), e);
   }
 
-  const bars = [];
+  const bars = [], badges = [], stationBadges = [];
   const tiles = G.tiles, exp = G.fogExp, w = G.w;
   for (let row = y0 - 1; row <= y1 + 1; row++) {
     // trees and stumps of this row
@@ -230,32 +396,64 @@ export function render(now) {
     list.sort((a, b) => (a.kind === K_UNIT ? a.ry : a.y) - (b.kind === K_UNIT ? b.ry : b.y) || a.id - b.id);
     for (const e of list) {
       if (e.kind === K_UNIT) {
-        const sx = ox + e.rx * s, sy = oy + e.ry * s;
+        const sx = ox + e.rx * s, sy = oy + (e.ry + foot) * s;
         const hero = e.type.startsWith('hero_');
+        const spent = tac && e.owner === G.tb.cur && (flagsOf(e) & F_DONE) && !G.over;        // has finished for this turn: drawn faded
         if (sel.has(e.id)) ring(sx, sy, e.r * s * 1.25, e.r * s * 0.75, selColor(e), lw);
         else if (e.id === G.hover) { ctx.globalAlpha = 0.55; ring(sx, sy, e.r * s * 1.25, e.r * s * 0.75, '#ffffff', lw * 0.7); ctx.globalAlpha = 1; }
         if (e.bm) {
           let col = null;
-          for (const k in BUFFS) if (e.bm & BUFFS[k].bit && !k.startsWith('a_')) col = k === 'mangia' ? '#7dff8a' : k === 'lowslow' ? '#c9c9c9' : k === 'sugar' ? '#ff9ad5' : '#ffb347';
+          for (const k in BUFFS) if (e.bm & BUFFS[k].bit && !k.startsWith('a_')) col = k === 'mangia' ? '#7dff8a' : k === 'lowslow' ? '#c9c9c9' : k === 'sugar' ? '#ff9ad5' : k === 'feast' ? '#fff0a8' : k === 'stun' ? '#d98a1c' : '#ffb347';
           if (col) { ctx.globalAlpha = 0.35 + 0.2 * Math.sin(t * 8 + e.id); ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(sx, sy, e.r * s * 1.1, e.r * s * 0.65, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; }
         }
-        SPR.drawUnit(ctx, e.type, colorOf(e.owner), sx, sy, s, { face: e.face, anim: ANIMS[e.st] || 'idle', t: t + e.id * 0.37, carry: e.carry ? RES[e.carry - 1] : null });
+        if (spent) ctx.globalAlpha = 0.5;
+        SPR.drawUnit(ctx, e.type, colorOf(e.owner), sx, sy, s, { face: e.face, anim: e.bm & 2048 ? 'idle' : ANIMS[e.st] || 'idle', t: e.bm & 2048 ? 0 : t + e.id * 0.37, carry: e.carry ? RES[e.carry - 1] : null });
+        ctx.globalAlpha = 1;
+        if (e.bm & 2048) {                             // stuck in caramel: an amber shell
+          ctx.globalAlpha = 0.45; ctx.fillStyle = '#e8a23a'; ctx.beginPath(); ctx.ellipse(sx, sy - s * 0.42, e.r * s * 1.25, s * 0.62, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 0.9; ctx.strokeStyle = '#fff3c4'; ctx.lineWidth = Math.max(1, s / 30); ctx.beginPath(); ctx.ellipse(sx, sy - s * 0.42, e.r * s * 1.25, s * 0.62, 0, 3.6, 4.9); ctx.stroke(); ctx.globalAlpha = 1;
+        }
+        if (tac && e.owner === G.me && !spent && myTurn() && !sel.has(e.id)) {       // still has something to do this turn
+          const bob = Math.sin(t * 5 + e.id) * s * 0.04, px = sx + e.r * s * 0.95, py = sy - s * (hero ? 1.25 : 0.95) + bob, k = Math.max(4, s * 0.1);
+          ctx.beginPath(); ctx.arc(px, py, k, 0, Math.PI * 2); ctx.fillStyle = '#ffe45c'; ctx.fill(); ctx.lineWidth = Math.max(1, dpr); ctx.strokeStyle = 'rgba(20,12,10,0.9)'; ctx.stroke();
+        }
         const mh = maxHp(e);
         if (sel.has(e.id) || e.hp < mh || hero) bars.push(sx, sy - (hero ? 1.45 : e.r > 0.45 ? 1.0 : 1.02) * s, (hero ? 1.0 : 0.62) * s, e.hp / mh, s / (hero ? 9 : 12));
+        if (e.sn && e.owner === G.me && !tac) {        // stance marker: a small shield (hold the line) or a white flag (stand down)
+          const px = sx + e.r * s * 1.05, py = sy - s * 0.12, k = Math.max(4, s * 0.13);
+          ctx.beginPath();
+          if (e.sn === 1) { ctx.moveTo(px - k, py - k); ctx.lineTo(px + k, py - k); ctx.lineTo(px + k, py + k * 0.2); ctx.lineTo(px, py + k * 1.2); ctx.lineTo(px - k, py + k * 0.2); ctx.closePath(); ctx.fillStyle = '#6fb7ff'; }
+          else { ctx.rect(px - k, py - k, k * 2, k * 1.5); ctx.fillStyle = '#f2ede2'; }
+          ctx.fill(); ctx.lineWidth = Math.max(1, dpr); ctx.strokeStyle = 'rgba(20,12,10,0.9)'; ctx.stroke();
+        }
         if (now - e.hitAt < 120) SPR.drawEffect(ctx, 'hit', sx, sy - 0.45 * s, s, (now - e.hitAt) / 120, '#fff');
       } else if (e.kind === K_BLDG) {
         const vis = isAlly(e.owner) || e.vis;
         const mh = maxHp(e);
-        SPR.drawBuilding(ctx, e.type, colorOf(e.owner), ox + e.tx * s, oy + e.ty * s, s, { progress: (vis ? e.prog : e.gprog) / 100, t: t + e.id, hpFrac: vis && e.prog >= 100 ? e.hp / mh : 1, ghost: false });
+        drawStation(e.type, e.owner, e.tx, e.ty, s, { progress: (vis ? e.prog : e.gprog) / 100, t: t + e.id, hpFrac: vis && e.prog >= 100 ? e.hp / mh : 1, ghost: false });
+        if (G.ps[e.owner].lockUntil > (tac ? 0 : G.tick) && vis) {                         // Lockdown: steel shutters
+          ctx.globalAlpha = 0.28 + 0.08 * Math.sin(t * 4); ctx.fillStyle = '#9fc4e8'; ctx.fillRect(ox + e.tx * s, oy + (e.ty - 0.2) * s, e.size * s, (e.size + 0.2) * s);
+          ctx.globalAlpha = 0.9; ctx.strokeStyle = '#dff0ff'; ctx.lineWidth = lw * 0.6; ctx.strokeRect(ox + e.tx * s + 1, oy + (e.ty - 0.2) * s, e.size * s - 2, (e.size + 0.2) * s - 1); ctx.globalAlpha = 1;
+        }
+        if (tac && vis) stationBadges.push(e);
         if (sel.has(e.id)) { ctx.strokeStyle = selColor(e); ctx.lineWidth = lw; ctx.strokeRect(ox + e.tx * s + 1, oy + e.ty * s + 1, e.size * s - 2, e.size * s - 2); }
         else if (e.id === G.hover) { ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = lw * 0.7; ctx.strokeRect(ox + e.tx * s + 1, oy + e.ty * s + 1, e.size * s - 2, e.size * s - 2); }
-        if (vis && (sel.has(e.id) || e.hp < mh)) bars.push(ox + e.x * s, oy + (e.ty - 0.55) * s, e.size * s * 0.7, e.hp / mh, s / 10);
+        if (vis && (sel.has(e.id) || e.hp < mh)) bars.push(ox + e.x * s, oy + (e.ty - (tac ? 0.5 : 0.55)) * s, e.size * s * (tac ? 0.9 : 0.7), e.hp / mh, s / 10);
+        if (e.inside > 0 && isAlly(e.owner)) badges.push(e);
         if (vis && e.qpct > 0 && e.owner === G.me) { ctx.fillStyle = 'rgba(20,12,10,0.8)'; ctx.fillRect(ox + (e.tx + 0.15) * s, oy + (e.ty + e.size) * s - s * 0.2, (e.size - 0.3) * s, s * 0.1); ctx.fillStyle = '#6fd3ff'; ctx.fillRect(ox + (e.tx + 0.15) * s, oy + (e.ty + e.size) * s - s * 0.2, (e.size - 0.3) * s * e.qpct / 100, s * 0.1); }
       } else if (e.amount !== undefined) {
         SPR.drawNode(ctx, e.type, ox + e.tx * s, oy + e.ty * s, s, Math.max(0.05, e.amount / e.max), e.id);
+        if (e.type === 'fish' && G.fogVis[e.ty * w + e.tx]) {            // ripples spreading on the water
+          for (const off of [0, 0.5]) {
+            const ph = (t * 0.55 + e.id * 0.37 + off) % 1;
+            ctx.globalAlpha = (1 - ph) * 0.55; ctx.strokeStyle = '#f2ffff'; ctx.lineWidth = Math.max(1, s / 30);
+            ctx.beginPath(); ctx.ellipse(ox + e.x * s, oy + (e.y + 0.08) * s, s * (0.12 + 0.34 * ph), s * (0.06 + 0.17 * ph), 0, 0, Math.PI * 2); ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        }
         if (sel.has(e.id)) ring(ox + e.x * s, oy + (e.y + 0.25) * s, s * 0.55, s * 0.32, '#ffffff', lw);
       } else {
-        SPR.drawBuilding(ctx, e.type, colorOf(e.owner), ox + e.tx * s, oy + e.ty * s, s, { progress: e.prog / 100, t: 0, hpFrac: 1, ghost: false });   // remembered in the fog
+        drawStation(e.type, e.owner, e.tx, e.ty, s, { progress: e.prog / 100, t: 0, hpFrac: 1, ghost: false });   // remembered in the fog
       }
     }
   }
@@ -286,13 +484,82 @@ export function render(now) {
     const a = (now - f.t0) / f.dur;
     if (a >= 1) { G.fx.splice(i, 1); continue; }
     if (a < 0) continue;
+    if (f.kind === 'atkmark' || f.kind === 'num') continue;    // drawn above the fog, further down
     SPR.drawEffect(ctx, f.kind, ox + f.x * s, oy + f.y * s, s * (f.k || 1), a, f.color);
   }
 
   // ---- health bars on top of everything
   for (let i = 0; i < bars.length; i += 5) hpBar(bars[i], bars[i + 1], bars[i + 2], bars[i + 3], bars[i + 4]);
+  for (const e of badges) {                                    // "12 inside" on a sheltering Kitchen HQ
+    const fs = Math.max(11 * dpr, s * 0.36), text = '\u{1F514} ' + e.inside;
+    ctx.font = `800 ${Math.round(fs)}px "Trebuchet MS", "Segoe UI", sans-serif`;
+    const tw = ctx.measureText(text).width + fs, bx = ox + e.x * s - tw / 2, by = oy + (e.ty - 1.25) * s;
+    ctx.fillStyle = 'rgba(27,20,17,0.88)'; ctx.strokeStyle = '#f0b41c'; ctx.lineWidth = Math.max(1, dpr * 1.5);
+    ctx.beginPath(); ctx.roundRect(bx, by, tw, fs * 1.5, fs * 0.75); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fbf1dc'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, ox + e.x * s, by + fs * 0.8);
+  }
+
+  for (const e of stationBadges) {                             // turn-based: what a station pays, and how long it is busy
+    const k = Math.max(14 * dpr, s * 0.34);
+    if (e.pays && e.prog >= 100) ctx.drawImage(SPR.icon('res', RES[e.pays - 1], 48), ox + (e.tx + 0.02) * s, oy + (e.ty + 0.98) * s - k, k, k);
+    if (!isAlly(e.owner)) continue;
+    const left = e.prog < 100 ? e.left : e.q && e.q.length ? e.qleft : 0;
+    if (!left) continue;
+    const fs = Math.max(11 * dpr, s * 0.24), text = left + (left === 1 ? ' turn' : ' turns');
+    ctx.font = `800 ${Math.round(fs)}px "Trebuchet MS", "Segoe UI", sans-serif`;
+    const tw = ctx.measureText(text).width + fs * 0.8, bx = ox + (e.tx + 0.5) * s - tw / 2, by = oy + (e.ty + 1) * s - fs * 1.35;
+    ctx.fillStyle = 'rgba(27,20,17,0.88)'; ctx.strokeStyle = e.prog < 100 ? '#f0b41c' : '#6fd3ff'; ctx.lineWidth = Math.max(1, dpr);
+    ctx.beginPath(); ctx.roundRect(bx, by, tw, fs * 1.3, fs * 0.65); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fbf1dc'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, ox + (e.tx + 0.5) * s, by + fs * 0.7);
+  }
 
   drawFog(now);
+  if (tac) {
+    drawTacticsTop(now, s);
+    for (const f of G.fx) {                                    // damage and healing numbers float up from where they happened
+      if (f.kind !== 'num') continue;
+      const a = (now - f.t0) / f.dur;
+      if (a < 0 || a >= 1) continue;
+      ctx.globalAlpha = a > 0.7 ? (1 - a) / 0.3 : 1;
+      label(f.text, ox + f.x * s, oy + (f.y - 0.55 - a * 0.7) * s, Math.max(13 * dpr, s * (f.big ? 0.42 : 0.34)), f.color);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ---- what the mouse is pointing at (resources get brackets and a name, so it is clear what a click will do)
+  if (G.hoverTree >= 0) {
+    const tx = G.hoverTree % w, ty = (G.hoverTree / w) | 0, pulse = 0.75 + 0.25 * Math.sin(t * 7);
+    ctx.globalAlpha = pulse; brackets(ox + (tx - 0.08) * s, oy + (ty - 0.85) * s, s * 1.16, s * 1.9, '#ffe45c', lw); ctx.globalAlpha = 1;
+    label(RES_INFO.wood.name, ox + (tx + 0.5) * s, oy + (ty - 0.95) * s, Math.max(11 * dpr, s * 0.3));
+  } else if (G.hover && !tac) {
+    const e = G.ents.get(G.hover);
+    if (e && e.amount !== undefined && canSee(e)) {
+      const N = NODES[e.type], gather = G.hoverKind === 'gather', pulse = 0.75 + 0.25 * Math.sin(t * 7);
+      ctx.globalAlpha = gather ? pulse : 0.7; brackets(ox + (e.tx - 0.06) * s, oy + (e.ty - 0.12) * s, s * 1.12, s * 1.18, gather ? '#ffe45c' : '#ffffff', lw * (gather ? 1 : 0.7)); ctx.globalAlpha = 1;
+      if (N) label(`${N.name} · ${e.amount}`, ox + (e.tx + 0.5) * s, oy + (e.ty - 0.22) * s, Math.max(11 * dpr, s * 0.3));
+    }
+  }
+
+  // ---- attack orders and team pings (visible through the fog)
+  for (const f of G.fx) if (f.kind === 'atkmark') { const a = (now - f.t0) / f.dur; if (a >= 0 && a < 1) swordMark(ox + f.x * s, oy + f.y * s, s, a); }
+  for (let i = G.teamPings.length - 1; i >= 0; i--) {
+    const p = G.teamPings[i], a = (now - p.t0) / 4500;
+    if (a >= 1) { G.teamPings.splice(i, 1); continue; }
+    const px = ox + p.x * s, py = oy + p.y * s, fade = a > 0.75 ? (1 - a) * 4 : 1;
+    for (let k = 0; k < 3; k++) {
+      const ph = ((now - p.t0) / 900 + k / 3) % 1;
+      ctx.globalAlpha = (1 - ph) * fade; ctx.lineWidth = Math.max(2, s / 12); ctx.strokeStyle = p.color;
+      ctx.beginPath(); ctx.ellipse(px, py, s * (0.3 + 1.5 * ph), s * (0.18 + 0.9 * ph), 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = fade;
+    const bob = Math.abs(Math.sin((now - p.t0) / 180)) * s * 0.18, k = Math.max(14 * dpr, s * 0.5);
+    ctx.fillStyle = 'rgba(20,12,10,0.9)'; ctx.beginPath(); ctx.moveTo(px, py - bob); ctx.lineTo(px - k * 0.42, py - k * 0.9 - bob); ctx.lineTo(px + k * 0.42, py - k * 0.9 - bob); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py - k * 1.25 - bob, k * 0.62, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(px, py - k * 1.25 - bob, k * 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = `900 ${Math.round(k * 0.8)}px "Trebuchet MS", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('!', px, py - k * 1.22 - bob);
+    if (p.name) label(p.name, px, py - k * 2 - bob, Math.max(11 * dpr, s * 0.28));
+    ctx.globalAlpha = 1;
+  }
 
   // ---- command feedback, placement preview, drag box
   for (let i = G.marks.length - 1; i >= 0; i--) {
@@ -351,7 +618,7 @@ function drawMinimap(now, x0, y0, x1, y1) {
   mmCtx.drawImage(mmBase, 0, 0, S, S);
   for (const e of G.nodes) {
     if (!canSee(e)) continue;
-    mmCtx.fillStyle = e.type === 'veg' ? '#ff9a3c' : e.type === 'spice' ? '#e23a2e' : '#eef6ff';
+    mmCtx.fillStyle = e.type === 'veg' ? '#ff9a3c' : e.type === 'spice' ? '#e23a2e' : e.type === 'fish' ? '#b8f1ff' : e.type === 'wood' ? '#a8713c' : '#eef6ff';
     mmCtx.fillRect(e.tx * k, e.ty * k, Math.max(2, k), Math.max(2, k));
   }
   for (const g of G.ghosts.values()) { mmCtx.fillStyle = colorOf(g.owner); mmCtx.fillRect(g.tx * k, g.ty * k, g.size * k, g.size * k); }
@@ -369,9 +636,11 @@ function drawMinimap(now, x0, y0, x1, y1) {
   }
   if (!(G.opts.fog === 'off' || isSpectator()) && fogCv) { mmCtx.imageSmoothingEnabled = true; mmCtx.drawImage(fogCv, 0, 0, S, S); }
   for (let i = G.pings.length - 1; i >= 0; i--) {
-    const p = G.pings[i], a = (now - p.t0) / 3000;
+    const p = G.pings[i], a = (now - p.t0) / (p.color ? 4500 : 3000);
     if (a >= 1) { G.pings.splice(i, 1); continue; }
     const rr = (4 + ((now - p.t0) % 700) / 700 * 14) * (S / 200);
+    mmCtx.strokeStyle = '#1b1411'; mmCtx.lineWidth = 4 * (S / 200); mmCtx.globalAlpha = (1 - a * 0.6) * 0.7;
+    mmCtx.beginPath(); mmCtx.arc(p.x * k, p.y * k, rr, 0, Math.PI * 2); mmCtx.stroke();
     mmCtx.strokeStyle = p.color || '#ff3b30'; mmCtx.lineWidth = 2 * (S / 200); mmCtx.globalAlpha = 1 - a * 0.6;
     mmCtx.beginPath(); mmCtx.arc(p.x * k, p.y * k, rr, 0, Math.PI * 2); mmCtx.stroke(); mmCtx.globalAlpha = 1;
   }

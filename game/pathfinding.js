@@ -165,7 +165,7 @@ export class Pathfinder {
         if (seen[ni] !== gen || ng < g[ni]) {
           g[ni] = ng; parent[ni] = cur; seen[ni] = gen;
           const hh = H(nx, ny);
-          f[ni] = ng + hh;
+          f[ni] = ng + hh * 1.2;                 // slightly greedy: far fewer tiles searched on big maps, paths at most a touch longer
           if (hh < bestH) { bestH = hh; best = ni; }
           this._push(ni);
         }

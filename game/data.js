@@ -7,7 +7,7 @@
 //  (Restart the server afterwards; everyone must reload the page.)
 // ============================================================================
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.0.3';
 export const TICK_RATE = 20;            // simulation ticks per second
 export const DT = 1 / TICK_RATE;
 export const MAX_PLAYERS = 8;
@@ -39,14 +39,17 @@ export const AGE_SHORT = [null, 'I', 'II', 'III', 'IV'];
 
 // Lobby options ---------------------------------------------------------------
 export const OPTIONS = {
+  mode:     { label: 'Game mode', def: 'rt', choices: { rt: 'Real-time (classic)', turn: 'Turn-based (tactics)' } },
   mapSize:  { label: 'Map size', def: 'auto', choices: { auto: 'Auto (fits the players)', small: 'Small (cozy)', medium: 'Medium', large: 'Large', huge: 'Huge' } },
   startRes: { label: 'Starting pantry', def: 'standard', choices: { standard: 'Standard', rich: 'Well stocked', feast: 'Feast' } },
   popCap:   { label: 'Staff limit', def: '100', choices: { '60': '60', '100': '100', '150': '150' } },
   speed:    { label: 'Game speed', def: '1', choices: { '1': 'Normal', '1.5': 'Fast', '2': 'Turbo' } },
   fog:      { label: 'Fog of war', def: 'on', choices: { on: 'On', explored: 'Map revealed', off: 'Off' } },
   victory:  { label: 'Victory', def: 'hq', choices: { hq: 'Destroy the Kitchen HQ', conquest: 'Conquest (every station)' } },
+  turnTime: { label: 'Turn timer (turn-based)', def: '0', choices: { '0': 'No limit', '60': '1 minute', '90': '90 seconds', '120': '2 minutes', '180': '3 minutes' } },
+  turnLimit: { label: 'Round limit (turn-based)', def: '0', choices: { '0': 'Play to the end', '30': '30 rounds, best score wins', '50': '50 rounds, best score wins', '80': '80 rounds, best score wins' } },
 };
-export const MAP_SIZES = { small: 72, medium: 96, large: 120, huge: 152 };
+export const MAP_SIZES = { small: 96, medium: 128, large: 160, huge: 200 };
 const SIZE_ORDER = ['small', 'medium', 'large', 'huge'];
 /** The map actually used: 'auto' picks by head count, and a too-small choice is bumped up so bases fit. */
 export function mapSizeFor(choice, nPlayers) {
@@ -67,9 +70,27 @@ export const BOT_NOTES = { extreme: 'Extreme bots also gather 25% faster.' };
 // Resource nodes that sit on the map (trees are stored in the tile grid) -------
 export const NODES = {
   veg:   { name: 'Veggie Patch', res: 'food',  amount: 220 },
-  spice: { name: 'Spice Mound',  res: 'spice', amount: 800 },
-  salt:  { name: 'Salt Rock',    res: 'salt',  amount: 650 },
+  spice: { name: 'Spice Mound',  res: 'spice', amount: 900 },
+  salt:  { name: 'Salt Rock',    res: 'salt',  amount: 800 },
+  fish:  { name: 'Fishing Spot', res: 'food',  amount: 350 },   // sits on a pond's edge; cooks fish from the shore
+  wood:  { name: 'Timber Stand', res: 'wood',  amount: 400 },   // turn-based maps only (real-time cooks chop the trees themselves)
 };
+
+// Military behaviour (unit stance) and group formations. The index is what goes over the network.
+export const STANCES = [
+  { key: 'aggressive', name: 'Aggressive', desc: 'Chase and attack any enemy that comes into view. The default.' },
+  { key: 'defensive', name: 'Hold the Line', desc: 'Stay put and only fight enemies that come within reach. Never chases.' },
+  { key: 'passive', name: 'Stand Down', desc: 'Never picks a fight, even when hit. Units only attack when you order it.' },
+];
+export const FORMATIONS = [
+  { key: 'free', name: 'Loose', desc: 'No formation: everyone keeps their place in the crowd.' },
+  { key: 'line', name: 'Service Line', desc: 'Wide ranks: infantry in front, ranged behind, siege and Baristas at the back.' },
+  { key: 'box', name: 'Square', desc: 'A compact block. Good for marching through narrow gaps.' },
+  { key: 'wedge', name: 'V Wedge', desc: 'An arrowhead with your toughest units at the tip.' },
+  { key: 'spread', name: 'Spread Out', desc: 'Wide spacing, so Meatball Catapults and Mortars hit fewer of you.' },
+];
+export const GARRISON_PER_SHOT = 5;       // every 5 sheltered Prep Cooks add one plate to a Kitchen HQ's volley
+export const GARRISON_MAX_SHOTS = 4;
 
 // ----------------------------------------------------------------------------
 //  UNITS
@@ -90,7 +111,7 @@ export const UNITS = {
     desc: 'Gathers ingredients, builds and repairs stations.',
     tags: ['cook'], hp: 35, atk: 3, reload: 1.5, speed: 2.0, sight: 5,
     cost: { food: 50 }, time: 13, carry: 10,
-    gather: { food: 0.60, garden: 0.50, wood: 0.55, spice: 0.55, salt: 0.50 },
+    gather: { food: 0.60, garden: 0.50, fish: 0.56, wood: 0.55, spice: 0.55, salt: 0.50 },
   }),
   line: U({
     name: 'Line Cook', role: 'Frying-pan infantry',
@@ -212,15 +233,15 @@ export const UNITS = {
 const B = (o) => Object.assign({
   size: 3, hp: 1000, armor: 2, parmor: 8, cost: {}, time: 30, age: 1, pop: 0,
   dropoff: false, walkable: false, atk: 0, range: 0, reload: 1.5, proj: null, bonus: {},
-  sight: 5, trains: [], techs: [], tags: ['bldg'],
+  shots: 1, garrison: 0, sight: 5, trains: [], techs: [], tags: ['bldg'],
 }, o);
 
 export const BUILDINGS = {
   hq: B({
-    name: 'Kitchen HQ', desc: 'Heart of your operation. Trains Prep Cooks, advances the age, accepts all ingredients, and flings plates at intruders.',
+    name: 'Kitchen HQ', desc: 'Heart of your operation. Trains Prep Cooks, advances the age, accepts all ingredients, and flings plates at intruders. Ring its bell to shelter your Prep Cooks inside.',
     size: 4, hp: 3000, armor: 4, parmor: 9, cost: { wood: 275, salt: 150 }, time: 90, age: 3, pop: 10,
-    dropoff: true, atk: 12, range: 7, reload: 1.5, proj: 'plate', bonus: { hero: 2 }, sight: 9,
-    trains: ['cook', 'barista'], techs: ['age2', 'age3', 'age4', 'mitts'],
+    dropoff: true, atk: 12, range: 7, reload: 1.5, proj: 'plate', bonus: { hero: 2 }, sight: 9, garrison: 30,
+    trains: ['cook', 'barista'], techs: ['age2', 'age3', 'age4', 'mitts', 'mise'], tags: ['bldg', 'def'],
   }),
   house: B({
     name: 'Break Room', desc: 'Every brigade needs somewhere to sit down. Raises your staff limit.',
@@ -237,7 +258,7 @@ export const BUILDINGS = {
   }),
   grill: B({
     name: 'Grill Station', desc: 'Trains infantry: Line Cooks and Butchers.',
-    size: 3, hp: 1100, cost: { wood: 125 }, time: 28, age: 1, trains: ['line', 'butcher'],
+    size: 3, hp: 1100, cost: { wood: 125 }, time: 28, age: 1, trains: ['line', 'butcher'], techs: ['pans'],
   }),
   sauce: B({
     name: 'Sauce Station', desc: 'Trains Sauciers, your ranged line.',
@@ -250,7 +271,8 @@ export const BUILDINGS = {
   lab: B({
     name: 'Test Kitchen', desc: 'Researches weapon, armour and station upgrades.',
     size: 3, hp: 1000, cost: { wood: 150 }, time: 30, age: 2,
-    techs: ['knives1', 'knives2', 'knives3', 'aprons1', 'aprons2', 'aprons3', 'sauce1', 'sauce2', 'sauce3', 'bumper1', 'bumper2', 'ovens', 'meatballs'],
+    techs: ['knives1', 'knives2', 'knives3', 'aprons1', 'aprons2', 'aprons3', 'sauce1', 'sauce2', 'sauce3', 'bumper1', 'bumper2', 'ovens', 'meatballs',
+      'clogs', 'meals1', 'meals2', 'kds', 'grinders', 'veteran'],
   }),
   workshop: B({
     name: 'Catering Workshop', desc: 'Builds siege: Meatball Catapults and Battering Baguettes.',
@@ -259,20 +281,21 @@ export const BUILDINGS = {
   tower: B({
     name: 'Pepper Mill Tower', desc: 'Defensive tower. Grinds peppercorns at anything hostile in range.',
     size: 2, hp: 850, armor: 3, parmor: 9, cost: { wood: 50, salt: 110 }, time: 32, age: 2,
-    atk: 8, range: 7, reload: 1.5, proj: 'pepper', sight: 9, tags: ['bldg', 'tower'],
+    atk: 8, range: 7, reload: 1.5, proj: 'pepper', sight: 9, tags: ['bldg', 'tower', 'def'],
   }),
   restaurant: B({
-    name: 'Signature Restaurant', desc: 'Your flagship. Trains your commander\'s unique unit and defends itself with flying crockery.',
+    name: 'Signature Restaurant', desc: 'Your flagship and your strongest defence: hurls three plates per volley at anything hostile. Trains your commander\'s unique unit.',
     size: 4, hp: 2800, armor: 4, parmor: 10, cost: { wood: 250, salt: 350 }, time: 60, age: 3,
-    atk: 11, range: 8, reload: 1.6, proj: 'plate', sight: 10, trains: ['unique'], techs: ['elite'],
+    atk: 11, range: 8, reload: 1.6, proj: 'plate', shots: 3, sight: 10, trains: ['unique'], techs: ['elite', 'cheftable'], tags: ['bldg', 'def'],
   }),
 };
 
 // ----------------------------------------------------------------------------
 //  TECHS (upgrades).  mods: {sel, stat, add|mul}
 //    sel  = unit key, building key, or a tag ('inf', 'bldg', ...)
-//    stat = any unit/building stat; g_food/g_garden/g_wood/g_spice/g_salt for
-//           gather rates; 'cost' and 'time' multiply cost / train time.
+//    stat = any unit/building stat; g_food/g_garden/g_fish/g_wood/g_spice/g_salt
+//           for gather rates; 'cost' multiplies cost; 'shots' = projectiles per volley.
+//    tags: 'mil' = every soldier, 'def' = armed stations (HQ, tower, restaurant).
 // ----------------------------------------------------------------------------
 export const TECHS = {
   age2: { name: 'Advance to the Diner Age', desc: 'Unlocks Butchers, Sauciers, Scooters, towers and the Test Kitchen.', cost: { food: 400 }, time: 40, age: 1, setAge: 2 },
@@ -280,12 +303,14 @@ export const TECHS = {
   age4: { name: 'Advance to the Five-Star Age', desc: 'Unlocks the final upgrades. Your hero reaches full power.', cost: { food: 1000, spice: 700 }, time: 70, age: 3, setAge: 4 },
   mitts: { name: 'Oven Mitts', desc: 'Prep Cooks +15 HP and +1 armour.', cost: { spice: 50 }, time: 15, age: 1,
     mods: [{ sel: 'cook', stat: 'hp', add: 15 }, { sel: 'cook', stat: 'armor', add: 1 }, { sel: 'cook', stat: 'parmor', add: 1 }] },
+  mise: { name: 'Mise en Place', desc: 'Everything in its place: all units train 15% faster.', cost: { food: 150, wood: 100 }, time: 30, age: 2,
+    mods: [{ misc: 'trainMul', mul: 0.85 }] },
 
   // Pantry — economy
   peeler1: { name: 'Sharp Peelers', desc: 'Produce gathered 15% faster.', cost: { food: 75, wood: 75 }, time: 20, age: 1,
-    mods: [{ sel: 'cook', stat: 'g_food', mul: 1.15 }, { sel: 'cook', stat: 'g_garden', mul: 1.15 }] },
+    mods: [{ sel: 'cook', stat: 'g_food', mul: 1.15 }, { sel: 'cook', stat: 'g_garden', mul: 1.15 }, { sel: 'cook', stat: 'g_fish', mul: 1.15 }] },
   peeler2: { name: 'Mandoline Slicers', desc: 'Produce gathered a further 15% faster.', cost: { food: 150, wood: 125 }, time: 30, age: 2, req: 'peeler1',
-    mods: [{ sel: 'cook', stat: 'g_food', mul: 1.15 }, { sel: 'cook', stat: 'g_garden', mul: 1.15 }] },
+    mods: [{ sel: 'cook', stat: 'g_food', mul: 1.15 }, { sel: 'cook', stat: 'g_garden', mul: 1.15 }, { sel: 'cook', stat: 'g_fish', mul: 1.15 }] },
   hatchet1: { name: 'Kindling Hatchets', desc: 'Firewood gathered 15% faster.', cost: { food: 100, wood: 50 }, time: 20, age: 1,
     mods: [{ sel: 'cook', stat: 'g_wood', mul: 1.15 }] },
   hatchet2: { name: 'Two-Chef Saws', desc: 'Firewood gathered a further 15% faster.', cost: { food: 150, wood: 100 }, time: 30, age: 2, req: 'hatchet1',
@@ -327,9 +352,27 @@ export const TECHS = {
   meatballs: { name: 'Extra-Firm Meatballs', desc: 'Siege +25% attack; Catapults +1 range.', cost: { food: 250, spice: 250 }, time: 45, age: 4,
     mods: [{ sel: 'siege', stat: 'atk', mul: 1.25 }, { sel: 'catapult', stat: 'range', add: 1 }] },
 
+  // General military upgrades, one or two per age
+  pans: { name: 'Cast-Iron Pans', desc: 'Line Cooks +1 attack and +10 HP. Available from the very first age.', cost: { food: 100, wood: 50 }, time: 22, age: 1,
+    mods: [{ sel: 'line', stat: 'atk', add: 1 }, { sel: 'line', stat: 'hp', add: 10 }] },
+  clogs: { name: 'Non-Slip Clogs', desc: 'All military units move 8% faster.', cost: { food: 125, wood: 75 }, time: 25, age: 2,
+    mods: [{ sel: 'mil', stat: 'speed', mul: 1.08 }] },
+  meals1: { name: 'Family Meal', desc: 'A fed brigade is a tough brigade: all military units +10% HP.', cost: { food: 175, spice: 50 }, time: 30, age: 2,
+    mods: [{ sel: 'mil', stat: 'hp', mul: 1.1 }] },
+  meals2: { name: 'Staff Banquet', desc: 'All military units a further +10% HP.', cost: { food: 300, spice: 150 }, time: 40, age: 3, req: 'meals1',
+    mods: [{ sel: 'mil', stat: 'hp', mul: 1.1 }] },
+  kds: { name: 'Order Tickets', desc: 'Everyone knows what is coming: military units see 2 tiles further and armed stations gain +1 range.', cost: { food: 100, spice: 100 }, time: 30, age: 2,
+    mods: [{ sel: 'mil', stat: 'sight', add: 2 }, { sel: 'def', stat: 'range', add: 1 }, { sel: 'def', stat: 'sight', add: 1 }] },
+  grinders: { name: 'Twin Grinders', desc: 'Pepper Mill Towers, Kitchen HQs and Signature Restaurants fire one more projectile per volley.', cost: { wood: 200, salt: 200 }, time: 45, age: 3,
+    mods: [{ sel: 'def', stat: 'shots', add: 1 }] },
+  veteran: { name: 'Michelin Discipline', desc: 'Star-level drill: all military units +1 armour (melee and ranged) and attack 8% faster.', cost: { food: 350, spice: 300 }, time: 50, age: 4,
+    mods: [{ sel: 'mil', stat: 'armor', add: 1 }, { sel: 'mil', stat: 'parmor', add: 1 }, { sel: 'mil', stat: 'reload', mul: 0.92 }] },
+
   // Signature Restaurant
   elite: { name: 'Signature Dish', desc: 'Your unique unit becomes Elite: +25% HP and +20% attack.', cost: { food: 400, spice: 350 }, time: 45, age: 4,
     mods: [{ sel: 'unique', stat: 'hp', mul: 1.25 }, { sel: 'unique', stat: 'atk', mul: 1.2 }] },
+  cheftable: { name: "Chef's Table", desc: 'The boss cooks for the regulars: your commander gains +20% HP and +15% attack.', cost: { food: 250, spice: 200 }, time: 40, age: 3,
+    mods: [{ sel: 'hero', stat: 'hp', mul: 1.2 }, { sel: 'hero', stat: 'atk', mul: 1.15 }] },
 };
 
 // ----------------------------------------------------------------------------
@@ -346,7 +389,10 @@ export const BUFFS = {
   a_ryo:   { bit: 128, reloadMul: 0.91 },
   a_odile: { bit: 256, speedMul: 1.12 },
   a_zara:  { bit: 512 },                              // marker: kills nearby pay Spice
+  feast:   { bit: 1024, regenFrac: 0.6 / 8, dmgTakenMul: 0.7 },
+  stun:    { bit: 2048, stun: true },                 // stuck in caramel: cannot move or attack
 };
+export const ULT_AGE = 3;                 // ultimates unlock in the Bistro Age
 export const AURA_RADIUS = 6.5;
 export const ZARA_TIP = 12;               // spice per enemy defeated near Zara
 export const HERO_RESPAWN = [0, 35, 45, 55, 65];   // seconds, by age
@@ -369,9 +415,13 @@ export const COMMANDERS = {
       'Upgrades research 30% faster',
     ],
     mods: [{ sel: 'mil', stat: 'reload', mul: 0.91 }, { misc: 'ageCostMul', mul: 0.85 }, { misc: 'techTimeMul', mul: 0.7 }],
-    aura: { key: 'a_flint', name: 'Fear of the Chef', desc: 'Units near Flint deal +10% damage.' },
+    aura: { key: 'a_flint', name: 'Fear of the Chef', desc: 'Units near Flint deal +10% damage.', tb: 'Units within 2 tiles of Flint deal +10% damage.' },
     ability: { key: 'service', name: 'SERVICE!', cd: 75, dur: 12, radius: 9,
-      desc: 'Flint bellows across the pass. Your units near him attack 25% faster and move 15% faster for 12s.' },
+      desc: 'Flint bellows across the pass. Your units near him attack 25% faster and move 15% faster for 12s.',
+      tb: 'Your units within 3 tiles of Flint deal 25% more damage this turn; those that have not moved yet get +1 movement.' },
+    ultimate: { key: 'flambe', name: 'Full Flambé', cd: 160, dur: 0, radius: 7, dmg: 70, dmgPerAge: 25, bldg: 250, bldgPerAge: 50,
+      desc: 'Flint sets the whole pass alight. Every enemy unit within 7 tiles takes heavy damage and every enemy station there is scorched, armour or not.',
+      tb: 'Every enemy unit within 3 tiles of Flint takes heavy damage and every enemy station there is scorched, armour or not.' },
     quotes: ['This kitchen runs on fear and butter!', 'Faster! The plates are getting cold!', 'I have seen better knife work from a spoon!'],
   },
   nonna: {
@@ -385,9 +435,13 @@ export const COMMANDERS = {
       'Break Rooms house +3 staff',
     ],
     mods: [{ sel: 'cook', stat: 'cost', mul: 0.9 }, { sel: 'cook', stat: 'g_garden', mul: 1.25 }, { sel: 'house', stat: 'pop', add: 3 }],
-    aura: { key: 'a_nonna', name: 'Comfort Food', desc: 'Units near Nonna regenerate 1.5 HP per second.' },
+    aura: { key: 'a_nonna', name: 'Comfort Food', desc: 'Units near Nonna regenerate 1.5 HP per second.', tb: 'Units within 2 tiles of Nonna heal 12 HP at the start of each of your turns.' },
     ability: { key: 'mangia', name: 'Mangia!', cd: 80, dur: 6, radius: 9,
-      desc: 'Seconds for everyone. Your units near Nonna heal 40% of their HP over 6s.' },
+      desc: 'Seconds for everyone. Your units near Nonna heal 40% of their HP over 6s.',
+      tb: 'Your units within 3 tiles of Nonna heal 40% of their HP at once.' },
+    ultimate: { key: 'feast', name: 'Sunday Feast', cd: 180, dur: 8, radius: 0,
+      desc: 'The whole family sits down. ALL your units, wherever they are, heal 60% of their HP over 8s and take 30% less damage while they eat.',
+      tb: 'ALL your units, wherever they are, heal 60% of their HP at once and take 30% less damage until your next turn.' },
     quotes: ['You look thin. Eat!', 'In this family, we finish our plates.', 'Who taught you to stir like that?'],
   },
   hank: {
@@ -401,9 +455,13 @@ export const COMMANDERS = {
       'Infantry have +15% HP',
     ],
     mods: [{ sel: 'cook', stat: 'g_wood', mul: 1.2 }, { sel: 'bldg', stat: 'hp', mul: 1.2 }, { sel: 'inf', stat: 'hp', mul: 1.15 }],
-    aura: { key: 'a_hank', name: 'Thick Bark', desc: 'Units near Hank take 18% less damage.' },
+    aura: { key: 'a_hank', name: 'Thick Bark', desc: 'Units near Hank take 18% less damage.', tb: 'Units within 2 tiles of Hank take 18% less damage.' },
     ability: { key: 'lowslow', name: 'Smoke Ring', cd: 85, dur: 10, radius: 9,
-      desc: 'A wall of hickory smoke. Your units near Hank take 50% less damage for 10s.' },
+      desc: 'A wall of hickory smoke. Your units near Hank take 50% less damage for 10s.',
+      tb: 'Your units within 3 tiles of Hank take 50% less damage until your next turn.' },
+    ultimate: { key: 'lockdown', name: 'Lockdown', cd: 170, dur: 15, radius: 0,
+      desc: 'Shutters down, smokers up. For 15s ALL your stations take 75% less damage and your armed stations fire twice as fast.',
+      tb: 'Until your next turn ALL your stations take 75% less damage, and your armed stations fire a second volley right now.' },
     quotes: ['Low and slow, friends. Low and slow.', 'If it ain\'t smokin\', it ain\'t cookin\'.', 'That\'ll leave a bark.'],
   },
   ryo: {
@@ -417,9 +475,13 @@ export const COMMANDERS = {
       'Prep Cooks carry +4',
     ],
     mods: [{ sel: 'inf', stat: 'atk', mul: 1.10 }, { sel: 'ranged', stat: 'range', add: 1 }, { sel: 'bldg', stat: 'range', add: 1 }, { sel: 'cook', stat: 'carry', add: 4 }],
-    aura: { key: 'a_ryo', name: 'Focus', desc: 'Units near Ryo attack 10% faster.' },
+    aura: { key: 'a_ryo', name: 'Focus', desc: 'Units near Ryo attack 10% faster.', tb: 'Units within 2 tiles of Ryo deal +10% damage.' },
     ability: { key: 'cuts', name: 'Thousand Cuts', cd: 70, dur: 0, radius: 4.5, dmg: 38, dmgPerAge: 12,
-      desc: 'A blur of steel. Deals heavy damage to every enemy unit around Ryo (stronger each age).' },
+      desc: 'A blur of steel. Deals heavy damage to every enemy unit around Ryo (stronger each age).',
+      tb: 'Deals heavy damage to every enemy unit within 2 tiles of Ryo (stronger each age).' },
+    ultimate: { key: 'perfectcut', name: 'The Perfect Cut', cd: 150, dur: 0, radius: 8, dmg: 500, dmgPerAge: 100,
+      desc: 'One cut, thirty years in the making. The toughest enemy unit within 8 tiles (or, with no unit about, the toughest station) takes enormous damage that ignores armour; commanders take half. If it falls, Thousand Cuts is ready again at once.',
+      tb: 'The toughest enemy unit within 3 tiles (or, with no unit about, the toughest station) takes enormous damage that ignores armour; commanders take half. If it falls, Thousand Cuts is ready again at once.' },
     quotes: ['One cut. No more.', 'Patience is the sharpest knife.', 'The rice knows when you are rushing.'],
   },
   odile: {
@@ -433,9 +495,13 @@ export const COMMANDERS = {
       'Stations are built 30% faster',
     ],
     mods: [{ sel: 'cook', stat: 'g_spice', mul: 1.25 }, { misc: 'techCostMul', mul: 0.67 }, { misc: 'buildMul', mul: 1.3 }],
-    aura: { key: 'a_odile', name: 'Sweet Tooth', desc: 'Units near Odile move 12% faster.' },
+    aura: { key: 'a_odile', name: 'Sweet Tooth', desc: 'Units near Odile move 12% faster.', tb: 'Units within 2 tiles of Odile at the start of your turn get +1 movement.' },
     ability: { key: 'sugar', name: 'Sugar Rush', cd: 90, dur: 15, radius: 0,
-      desc: 'Everyone gets dessert first. ALL your units move 40% faster and Prep Cooks gather 40% faster for 15s.' },
+      desc: 'Everyone gets dessert first. ALL your units move 40% faster and Prep Cooks gather 40% faster for 15s.',
+      tb: 'ALL your units that have not moved yet get +2 movement this turn, and your stations pay 40% more at the start of your next turn.' },
+    ultimate: { key: 'glass', name: 'Sugar Glass', cd: 170, dur: 6, radius: 8,
+      desc: 'A wave of molten caramel. Every enemy unit within 8 tiles is stuck fast for 6s (commanders for 3s): it cannot move or attack.',
+      tb: 'Every enemy unit within 3 tiles of Odile is stuck in caramel and misses its next turn (commanders can still move, but not attack).' },
     quotes: ['Precision, darling. This is not a stew.', 'Butter is not an ingredient. It is a philosophy.', 'Let them eat cake. Quickly.'],
   },
   zara: {
@@ -449,9 +515,13 @@ export const COMMANDERS = {
       'Pantries cost 50% less; Prep Cooks move 10% faster',
     ],
     mods: [{ misc: 'trainMul', mul: 0.75 }, { sel: 'veh', stat: 'cost', mul: 0.8 }, { sel: 'pantry', stat: 'cost', mul: 0.5 }, { sel: 'cook', stat: 'speed', mul: 1.1 }],
-    aura: { key: 'a_zara', name: 'Tip Jar', desc: `Every enemy unit defeated near Zara pays you ${ZARA_TIP} Spice.` },
+    aura: { key: 'a_zara', name: 'Tip Jar', desc: `Every enemy unit defeated near Zara pays you ${ZARA_TIP} Spice.`, tb: `Every enemy unit defeated within 2 tiles of Zara pays you ${ZARA_TIP} Spice.` },
     ability: { key: 'lunch', name: 'Lunch Rush', cd: 90, dur: 15, radius: 0,
-      desc: 'The queue is around the block. ALL your stations train and research 3x faster for 15s.' },
+      desc: 'The queue is around the block. ALL your stations train and research 3x faster for 15s.',
+      tb: 'Everything your stations are training or researching is finished right now.' },
+    ultimate: { key: 'swarm', name: 'Delivery Swarm', cd: 180, dur: 45, radius: 0, count: 4,
+      desc: 'Zara calls in every rider she knows. Four Delivery Scooters (one more each age) roar in around her and fight for 45s before heading home. They cost nothing and need no staff room.',
+      tb: 'Four Delivery Scooters (one more each age) arrive next to Zara, ready to act, and stay for 3 of your turns. They cost nothing and need no staff room.' },
     quotes: ['Line\'s out the door. Move it!', 'Fresh, fast, and half the price.', 'You snooze, you lose the corner.'],
   },
 };
@@ -476,7 +546,7 @@ function applyStat(obj, m) {
     return;
   }
   if (obj[m.stat] === undefined) return;
-  if ((m.stat === 'atk' || m.stat === 'range') && !obj.atk) return;   // only armed things get attack/range upgrades
+  if ((m.stat === 'atk' || m.stat === 'range' || m.stat === 'shots') && !obj.atk) return;   // only armed things get attack/range upgrades
   if (m.mul !== undefined) obj[m.stat] *= m.mul; else obj[m.stat] += m.add;
 }
 
@@ -528,6 +598,105 @@ export function techTime(key, misc) {
 export function trainList(bkey, cmdKey) {
   return BUILDINGS[bkey].trains.map((u) => (u === 'unique' ? COMMANDERS[cmdKey].unique : u));
 }
+
+// ----------------------------------------------------------------------------
+//  TURN-BASED MODE ("tactics")
+//  The same units, stations, upgrades and commanders, played on a grid one
+//  player at a time. Everything here is derived from the real-time numbers, so
+//  a balance change above carries over. Shared by the server and the browser.
+// ----------------------------------------------------------------------------
+export const TB = {
+  mapSizes: { small: 26, medium: 34, large: 42, huge: 50 },   // tiles across
+  strikeSeconds: 6.5,      // one attack does as much as this many seconds of real-time fighting
+  counter: 0.6,            // a counterattack is weaker than an attack
+  forestCover: 0.75,       // damage taken by a unit standing among trees
+  bldgHp: 0.1,             // stations have this share of their real-time HP
+  secondsPerTurn: 25,      // converts cooldowns and respawn times into turns
+  auraRange: 2,            // hero auras reach this many tiles (diagonals count)
+  abilityRange: 3,
+  cutsRange: 2,
+  hqIncome: { food: 25, wood: 25, spice: 15, salt: 0 },
+  income: { veg: 20, wood: 20, spice: 20, salt: 10, fish: 20, garden: 8 },   // per station per turn
+  popShare: 0.2,           // the lobby's staff limit is scaled down to suit a grid (100 -> 20)
+  healAction: 30,          // HP a Barista restores per action
+  repairShare: 0.07,       // share of a station's HP a Prep Cook repairs per action
+  swarmTurns: 3,
+  desc: {
+    pantry: 'Build it ON a Veggie Patch, Timber Stand, Spice Mound, Salt Rock or Fishing Spot: it pays that ingredient at the start of each of your turns. Also researches the ingredient upgrades.',
+    garden: 'A small plot on open ground that pays a little Produce every turn.',
+    house: 'Raises your staff limit.',
+    hq: 'Heart of your operation: pays a basic income every turn, trains Prep Cooks, advances the age, and throws plates at the nearest intruder at the start of each of your turns.',
+    restaurant: 'Your flagship and your strongest defence: three plates at the start of each of your turns, each at a different target. Trains your commander\'s unique unit.',
+    tower: 'Shoots the nearest enemy unit in range at the start of each of your turns.',
+  },
+};
+/** Movement, reach and sight of a unit on the grid, from its real-time stats. */
+export function tbUnit(S) {
+  return {
+    mv: Math.max(1, Math.round(S.speed * 1.5)),
+    rng: S.range > 0 ? Math.max(2, Math.round(S.range / 2.5)) : 1,
+    minRng: S.minRange > 0 ? 2 : 1,
+    sight: Math.max(2, Math.round(S.sight * 0.75)),
+  };
+}
+/** HP, reach and sight of a station on the grid. */
+export function tbBldg(S) {
+  return {
+    hp: Math.max(20, Math.round((S.hp * TB.bldgHp) / 5) * 5),
+    rng: S.atk > 0 ? Math.max(2, Math.round(S.range / 2.5)) : 0,
+    sight: Math.max(2, Math.round(S.sight * 0.5)),
+    pop: Math.ceil(S.pop / 2),
+  };
+}
+/** How many of the owner's turns something that takes `seconds` in real time takes. */
+export const tbTurns = (seconds) => Math.max(1, Math.min(3, Math.round(seconds / 22)));
+export const tbCooldown = (seconds) => Math.max(2, Math.round(seconds / TB.secondsPerTurn));
+/**
+ * Damage of one attack by a unit/station with stats AS on a target with stats DS.
+ *   hpFrac  = the attacker's HP as a fraction (wounded units hit less hard)
+ *   ranged  = thrown (uses the target's ranged armour)
+ *   counter = it is a counterattack;  cover = terrain multiplier;  mult = buffs
+ */
+export function tbDamage(AS, DS, { hpFrac = 1, ranged = false, counter = false, cover = 1, mult = 1 } = {}) {
+  let m = 1;
+  for (const t of DS.tags) if (AS.bonus[t] !== undefined) m *= AS.bonus[t];
+  const per = Math.max(1, AS.atk * m - (ranged ? DS.parmor : DS.armor));
+  const strikes = TB.strikeSeconds / AS.reload;
+  return Math.max(1, Math.round(per * strikes * (0.5 + 0.5 * hpFrac) * (counter ? TB.counter : 1) * cover * mult));
+}
+/**
+ * Every tile a unit can reach from (sx,sy) with `mv` movement points.
+ * cost(tileIndex) = movement points to enter that tile, or Infinity if it cannot be entered.
+ * Returns { best: Map(tile -> points spent), from: Map(tile -> previous tile) }.
+ */
+export function tbReach(w, h, sx, sy, mv, cost) {
+  const start = sy * w + sx, best = new Map([[start, 0]]), from = new Map();
+  let frontier = [start];
+  while (frontier.length) {
+    const next = [];
+    for (const i of frontier) {
+      const c = best.get(i), x = i % w, y = (i / w) | 0;
+      for (let d = 0; d < 4; d++) {
+        const nx = x + (d === 0 ? 1 : d === 1 ? -1 : 0), ny = y + (d === 2 ? 1 : d === 3 ? -1 : 0);
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const ni = ny * w + nx, k = cost(ni);
+        if (!(k < Infinity)) continue;
+        const nc = c + k;
+        if (nc > mv || (best.has(ni) && best.get(ni) <= nc)) continue;
+        best.set(ni, nc); from.set(ni, i); next.push(ni);
+      }
+    }
+    frontier = next;
+  }
+  return { best, from };
+}
+/** The tiles walked from the start of a tbReach search to `goal` (start excluded). */
+export function tbPath(from, goal) {
+  const out = [];
+  for (let i = goal; from.has(i); i = from.get(i)) out.push(i);
+  return out.reverse();
+}
+export const tbDist = (ax, ay, bx, by) => Math.abs(ax - bx) + Math.abs(ay - by);
 
 // Deterministic PRNG (mulberry32) — used by map generation so a seed fully
 // describes a map.

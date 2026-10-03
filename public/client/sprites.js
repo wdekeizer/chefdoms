@@ -907,14 +907,43 @@ const NODE_ART = dict({
     if (L === 2 && n > 1) { c.fillStyle = '#fff'; for (const [sx, sy, r] of [[0.3, 0.34, 0.07], [0.73, 0.5, 0.055]]) { c.beginPath(); c.moveTo(sx, sy - r);
       c.quadraticCurveTo(sx, sy, sx + r, sy); c.quadraticCurveTo(sx, sy, sx, sy + r); c.quadraticCurveTo(sx, sy, sx - r, sy); c.quadraticCurveTo(sx, sy, sx, sy - r); c.fill(); } }
   },
+  fish(c, n, v) {                                      // a shoal in a patch of deeper water; fewer fish as it is fished out
+    const m = v === 1 ? -1 : 1, X = (d) => 0.5 + d * m;
+    ell(c, 0.5, 0.6, 0.42, 0.24, '#49a7d6', 0, 0); ell(c, 0.5, 0.61, 0.3, 0.15, '#3c93c6', 0, 0);
+    const fishAt = (x, y, k, rot, col) => scaled(c, x, y, k, () => {
+      poly(c, [-0.17, 0, -0.34, -0.12, -0.3, 0, -0.34, 0.12], col); ell(c, 0, 0, 0.21, 0.1, col);
+      poly(c, [-0.04, -0.09, 0.06, -0.17, 0.09, -0.08], dk(col, 0.12)); dot(c, 0.12, -0.02, 0.022, '#1d2a33'); glint(c, 0.0, -0.035, 0.1, 0.025, 0.45);
+    }, rot);
+    const spots = [[-0.13, 0.63, 0.78, 0.15, '#f2a444'], [0.15, 0.56, 0.7, PI - 0.25, '#dfe7ea'], [0.03, 0.72, 0.66, 0.05, '#f2a444']];
+    for (let i = 0; i < Math.min(n, 3); i++) { const q = spots[i]; fishAt(X(q[0]), q[1], q[2], m > 0 ? q[3] : PI - q[3], q[4]); }
+    if (n >= 4) {                                      // a full spot: one fish leaps clear of the water
+      fishAt(X(0.04), 0.27, 0.95, m > 0 ? -0.95 : PI + 0.95, '#f2a444');
+      for (const [dx, dy, r] of [[-0.12, 0.42, 0.028], [0.17, 0.4, 0.022], [0.03, 0.47, 0.03], [-0.03, 0.36, 0.018]]) dot(c, X(dx), dy, r, '#eefcff');
+    }
+  },
+  wood(c, n, v) {                                      // Timber Stand (turn-based maps): a stack of logs with an axe; the stack shrinks as it is used
+    const m = v === 1 ? -1 : 1, X = (d) => 0.5 + d * m;
+    ell(c, 0.5, 0.86, 0.43, 0.11, '#c9b48a');
+    for (const [dx, dy] of [[-0.34, 0.9], [0.36, 0.92], [0.04, 0.95]]) box(c, X(dx) - 0.035, dy - 0.012, 0.07, 0.024, 0.01, WOOD_L, LW * 0.6);
+    const ends = [[-0.24, 0.78], [-0.01, 0.78], [0.22, 0.78], [-0.125, 0.585], [0.105, 0.585], [-0.01, 0.39]];
+    for (let i = 0, count = [2, 3, 5, 6][n - 1]; i < count; i++) {
+      const x = X(ends[i][0]), y = ends[i][1];
+      ell(c, x, y, 0.118, 0.118, WOOD_D); ell(c, x, y, 0.082, 0.082, WOOD_L, 0, LW * 0.7); ell(c, x, y, 0.036, 0.036, lt(WOOD_L, 0.3), 0, LW * 0.6);
+    }
+    const ax = X(0.37);
+    limb(c, ax + 0.03 * m, 0.9, ax - 0.03 * m, 0.52, 0.04, WOOD);
+    poly(c, [ax - 0.13 * m, 0.46, ax + 0.03 * m, 0.48, ax + 0.03 * m, 0.6, ax - 0.13 * m, 0.64], STEEL);
+  },
   _none(c) { ell(c, 0.5, 0.7, 0.3, 0.2, STONE); },
 });
-const NODE_ID = dict({ veg: 0, spice: 1, salt: 2, _none: 3 });
+const NODE_ID = dict({ veg: 0, spice: 1, salt: 2, _none: 3, fish: 4, wood: 5 });
 /** Resource node ('veg' | 'spice' | 'salt') on the tile at (x,y). `frac` = fraction remaining (4 visible depletion steps), `seed` = variation. */
 export function drawNode(ctx, type, x, y, scale, frac, seed) {
   const n = frac >= 0.75 ? 4 : frac >= 0.5 ? 3 : frac >= 0.25 ? 2 : 1, v = (hash2(seed, 37) * 3) | 0, k = NODE_ART[type] ? type : '_none';
   const key = K_NODE + ((NODE_ID[k] * 4 + n - 1) * 4 + v) * 32 + bucketIdx(scale);
-  blit(ctx, cache.get(key) || miss(key, (s) => bake(s, [0.3, 0.7, 1.3, 1.25], (c) => { shadow(c, 0.5, 0.84, 0.42, 0.12, 0.2); NODE_ART[k](c, n, v); })), x, y, scale);
+  blit(ctx, cache.get(key) || miss(key, (s) => (k === 'fish'
+    ? bake(s, [0.3, 0.7, 1.3, 1.25], (c) => NODE_ART.fish(c, n, v), { outline: false, bevel: false })
+    : bake(s, [0.3, 0.7, 1.3, 1.25], (c) => { shadow(c, 0.5, 0.84, 0.42, 0.12, 0.2); NODE_ART[k](c, n, v); }))), x, y, scale);
 }
 
 // ================================================================ PROJECTILES
@@ -1565,6 +1594,40 @@ const TECH_ART = dict({
     poly(c, [0, -0.5, 0.28, -0.2, 0.12, -0.2, 0.12, 0.16, -0.12, 0.16, -0.12, -0.2, -0.28, -0.2], '#4fc46a');
     for (let i = 0; i < t; i++) star(c, (i - (t - 1) / 2) * 0.2, 0.4, 0.095, GOLD, LW * 0.8);
   },
+  pans(c) { c.save(); c.rotate(-PI / 5); limb(c, 0.18, 0, 0.56, 0, 0.1, '#3a2c28'); ell(c, -0.14, 0, 0.36, 0.36, '#4b4f5a'); ell(c, -0.14, 0, 0.27, 0.27, '#30333b', 0, LW * 0.8); glint(c, -0.26, -0.12, 0.08, 0.05, 0.35, 0.6); c.restore(); },
+  clogs(c) {
+    for (const [ox, oy, col] of [[0.08, -0.16, '#d8833a'], [-0.08, 0.14, '#e79a4b']]) {
+      c.beginPath(); c.moveTo(ox - 0.4, oy + 0.14); c.lineTo(ox - 0.4, oy - 0.06); c.bezierCurveTo(ox - 0.3, oy - 0.2, ox - 0.02, oy - 0.2, ox + 0.08, oy - 0.08);
+      c.bezierCurveTo(ox + 0.3, oy - 0.1, ox + 0.44, oy + 0.02, ox + 0.42, oy + 0.14); c.closePath(); ink(c, col);
+      box(c, ox - 0.42, oy + 0.12, 0.86, 0.08, 0.03, '#3a2c28'); ell(c, ox - 0.2, oy - 0.05, 0.12, 0.06, dk(col, 0.35), 0, 0);
+    }
+  },
+  meals(c) {
+    for (const x of [-0.16, 0.02, 0.2]) { c.beginPath(); c.moveTo(x, -0.2); c.bezierCurveTo(x - 0.1, -0.3, x + 0.1, -0.38, x, -0.5); pen(c, '#fff8ea', 0.05); }
+    ell(c, 0, -0.06, 0.4, 0.1, '#e8b04a'); c.beginPath(); c.moveTo(-0.46, -0.06); c.bezierCurveTo(-0.42, 0.44, 0.42, 0.44, 0.46, -0.06); c.closePath(); ink(c, '#fdfbf4');
+    pen(c, '#4f9a5a', 0.045, [-0.36, 0.08, 0.36, 0.08]); box(c, -0.16, 0.36, 0.32, 0.08, 0.03, '#e2ddd0');
+  },
+  kds(c) {
+    box(c, -0.5, -0.44, 1.0, 0.1, 0.04, STEEL);
+    for (const [x, h, r] of [[-0.42, 0.62, -0.05], [-0.12, 0.74, 0.03], [0.18, 0.56, -0.02]]) {
+      c.save(); c.translate(x + 0.12, -0.38); c.rotate(r); box(c, -0.12, 0, 0.25, h, 0.02, '#fffaf0'); for (let y = 0.12; y < h - 0.06; y += 0.1) pen(c, '#9a8f80', LW * 1.3, [-0.07, y, 0.08, y]); c.restore();
+    }
+    for (const x of [-0.3, 0, 0.3]) dot(c, x, -0.39, 0.035, '#e2403a');
+  },
+  mise(c) {
+    for (const [x, y, col] of [[-0.26, -0.14, '#e5402e'], [0.26, -0.14, '#8ccf5a'], [0, 0.22, '#f2c230']]) {
+      ell(c, x, y, 0.22, 0.1, col); c.beginPath(); c.moveTo(x - 0.24, y); c.bezierCurveTo(x - 0.22, y + 0.26, x + 0.22, y + 0.26, x + 0.24, y); c.closePath(); ink(c, '#fdfbf4');
+    }
+  },
+  veteran(c) { poly(c, [-0.2, -0.5, 0.2, -0.5, 0.12, -0.06, -0.12, -0.06], '#c8452e'); pen(c, '#fff8ea', 0.05, [0, -0.48, 0, -0.08]); ell(c, 0, 0.16, 0.3, 0.3, GOLD); star(c, 0, 0.17, 0.2, '#fff8ea', LW * 0.8); },
+  cheftable(c) { scaled(c, 0, 0.3, 2.1, () => toque(c, 0, 0, 0.36, '#d8cfbd')); star(c, 0.32, -0.3, 0.17, GOLD, LW * 0.9); },
+  grinders(c) {
+    for (const [x, k] of [[-0.2, 1], [0.22, 0.86]]) scaled(c, x, 0.44, k, () => {
+      box(c, -0.13, -0.22, 0.26, 0.22, 0.05, WOOD); box(c, -0.1, -0.52, 0.2, 0.3, 0.07, WOOD_L); box(c, -0.14, -0.6, 0.28, 0.1, 0.04, WOOD_D);
+      ell(c, 0, -0.68, 0.06, 0.06, STEEL); pen(c, dk(WOOD, 0.3), LW * 1.3, [-0.12, -0.22, 0.12, -0.22]);
+    });
+    for (const [x, y] of [[-0.02, 0.36], [0.44, 0.3], [0.02, 0.48], [-0.42, 0.4]]) dot(c, x, y, 0.03, '#2b2420');
+  },
   _(c) { ell(c, 0, 0, 0.3, 0.3, STEEL); ell(c, 0, 0, 0.12, 0.12, dk(STEEL, 0.3)); },
 });
 const ABIL_ART = dict({
@@ -1598,6 +1661,39 @@ const ABIL_ART = dict({
     pen(c, '#3a2c28', 0.05, [0.06, 0.04, 0.06, -0.17]); pen(c, '#e8452f', 0.05, [0.06, 0.04, 0.22, 0.1]); dot(c, 0.06, 0.04, 0.04, '#3a2c28');
     for (const [y, w] of [[-0.14, 0.2], [0.04, 0.26], [0.22, 0.18]]) pen(c, '#fff', 0.055, [-0.52, y, -0.52 + w, y]);
   },
+  // --- ultimates
+  flambe(c) {                                          // a pan swallowed by a tall flame
+    limb(c, 0.2, 0.34, 0.56, 0.4, 0.09, '#3a2c28'); ell(c, -0.06, 0.32, 0.38, 0.12, '#4b4f5a'); ell(c, -0.06, 0.3, 0.3, 0.075, '#30333b', 0, LW * 0.8);
+    flame(c, -0.27, 0.3, 1.3, 1); flame(c, 0.17, 0.3, 1.2, 2); flame(c, -0.05, 0.32, 2.3, 0);
+  },
+  feast(c) {                                           // a roast on a platter, with love
+    ell(c, 0, 0.3, 0.5, 0.14, '#fdfbf4'); ell(c, 0, 0.28, 0.4, 0.09, '#ebe5d6', 0, LW * 0.8);
+    limb(c, 0.24, 0.12, 0.44, -0.06, 0.07, '#f4e6cf'); ell(c, 0.47, -0.09, 0.06, 0.06, '#fdfbf4');
+    c.beginPath(); c.moveTo(-0.3, 0.27); c.bezierCurveTo(-0.36, -0.2, 0.26, -0.24, 0.3, 0.27); c.closePath(); ink(c, '#c8793a'); glint(c, -0.1, -0.02, 0.1, 0.05, 0.4, -0.4);
+    heart(c, -0.3, -0.3, 0.42, '#f0527a'); heart(c, 0.14, -0.4, 0.3, '#f0527a');
+  },
+  lockdown(c) {                                        // a roller shutter with a padlock
+    box(c, -0.44, -0.42, 0.88, 0.84, 0.06, '#8fa0ad'); for (const y of [-0.26, -0.1, 0.06, 0.22]) pen(c, dk('#8fa0ad', 0.28), LW * 1.4, [-0.42, y, 0.42, y]);
+    c.beginPath(); c.arc(0, 0.0, 0.13, PI, 0); pen(c, OUTLINE, 0.13); pen(c, STEEL, 0.07);
+    box(c, -0.19, 0.0, 0.38, 0.3, 0.05, GOLD); ell(c, 0, 0.12, 0.045, 0.045, '#3a2c28'); pen(c, '#3a2c28', 0.04, [0, 0.13, 0, 0.22]);
+  },
+  perfectcut(c) {                                      // one long stroke of light, and the knife that made it
+    c.save(); c.rotate(-PI / 4.5); poly(c, [-0.64, 0, 0, -0.07, 0.64, 0, 0, 0.07], '#f4f8fa'); c.restore();
+    c.save(); c.translate(-0.04, 0.1); c.rotate(PI * 0.78); scaled(c, 0, 0, 0.8, () => knife(c)); c.restore();
+    star(c, 0.34, -0.34, 0.14, '#fff8ea', LW * 0.8);
+  },
+  glass(c) {                                           // amber shards of set caramel
+    ell(c, 0, 0.38, 0.46, 0.1, '#b8651a');
+    crystal(c, -0.24, 0.4, 0.24, 0.5, -0.3, '#f0a53a'); crystal(c, 0.26, 0.4, 0.22, 0.44, 0.32, '#f0a53a'); crystal(c, 0, 0.42, 0.32, 0.86, 0.03, '#f7b955');
+    star(c, 0.32, -0.36, 0.1, '#fff8ea', LW * 0.8);
+  },
+  swarm(c) {                                           // delivery boxes on wheels, racing
+    for (const [x, y, k] of [[-0.14, -0.28, 0.72], [0.2, -0.02, 0.86], [-0.08, 0.28, 1]]) scaled(c, x, y, k, () => {
+      for (const yy of [-0.1, 0.0, 0.1]) pen(c, '#fff', 0.04, [-0.44, yy, -0.28, yy]);
+      box(c, -0.2, -0.16, 0.38, 0.26, 0.05, '#e8663c'); box(c, -0.2, -0.16, 0.38, 0.08, 0.03, '#fff8ea', LW * 0.8);
+      wheel(c, -0.11, 0.14, 0.085, 0.3); wheel(c, 0.1, 0.14, 0.085, 0.9);
+    });
+  },
 });
 const UI_ART = dict({
   attack(c) { star(c, 0, 0, 0.5, '#e8452f'); c.save(); c.rotate(-PI / 4); scaled(c, 0, 0, 0.9, () => knife(c)); c.restore(); },
@@ -1618,8 +1714,53 @@ const UI_ART = dict({
     c.beginPath(); c.arc(0.3, 0, 0.21, 0.55, TAU - 0.55); c.lineTo(0.26, -0.07); c.lineTo(0.26, 0.07); c.closePath(); ink(c, STEEL); dot(c, -0.38, 0, 0.035, dk(STEEL, 0.4)); c.restore();
   },
   build(c) { c.save(); c.rotate(-PI / 4); limb(c, -0.46, 0, 0.2, 0, 0.1, WOOD); box(c, 0.12, -0.26, 0.24, 0.44, 0.04, '#9aa7b0'); poly(c, [0.14, 0.16, 0.34, 0.16, 0.3, 0.34, 0.18, 0.34], '#7d8992'); c.restore(); },
+  bell(c) {
+    for (const m of [-1, 1]) for (const r of [0.5, 0.62]) { c.beginPath(); c.arc(0, -0.02, r, m > 0 ? -0.75 : PI - 0.25, m > 0 ? 0.25 : PI + 0.75); pen(c, '#fff8ea', 0.05); }
+    bellShape(c, GOLD);
+  },
+  allclear(c) {
+    bellShape(c, '#b9c4cb');
+    pen(c, OUTLINE, 0.2, [-0.12, 0.16, 0.08, 0.36, 0.46, -0.1]); pen(c, '#57d657', 0.12, [-0.12, 0.16, 0.08, 0.36, 0.46, -0.1]);
+  },
+  drop(c) {
+    poly(c, [-0.1, -0.5, 0.1, -0.5, 0.1, -0.24, 0.24, -0.24, 0, 0.02, -0.24, -0.24, -0.1, -0.24], '#57d657');
+    poly(c, [-0.42, 0.06, 0.42, 0.06, 0.32, 0.46, -0.32, 0.46], '#cf9f58'); for (const y of [0.2, 0.33]) pen(c, '#a5743a', LW * 1.3, [-0.38, y, 0.38, y]); box(c, -0.45, 0.02, 0.9, 0.09, 0.04, '#b98443');
+  },
+  ping(c, col) { ell(c, 0, 0, 0.47, 0.47, col || '#f0b41c'); ell(c, 0, 0, 0.36, 0.36, '#2a1d17', 0, LW * 0.8); box(c, -0.07, -0.26, 0.14, 0.32, 0.05, '#fff8ea'); ell(c, 0, 0.2, 0.075, 0.075, '#fff8ea'); },
+  st_aggressive(c) { star(c, 0, 0, 0.5, '#e8452f'); c.save(); c.rotate(-PI / 4); scaled(c, 0, 0, 0.9, () => knife(c)); c.restore(); },
+  st_defensive(c) {
+    c.beginPath(); c.moveTo(-0.4, -0.42); c.lineTo(0.4, -0.42); c.lineTo(0.4, 0.02); c.bezierCurveTo(0.4, 0.3, 0.14, 0.44, 0, 0.5); c.bezierCurveTo(-0.14, 0.44, -0.4, 0.3, -0.4, 0.02); c.closePath(); ink(c, '#4a8fe0');
+    pen(c, '#fff8ea', 0.07, [0, -0.3, 0, 0.34]); pen(c, '#fff8ea', 0.07, [-0.26, -0.06, 0.26, -0.06]);
+  },
+  st_passive(c) { limb(c, -0.3, 0.48, -0.3, -0.46, 0.07, WOOD_D); c.beginPath(); c.moveTo(-0.26, -0.44); c.bezierCurveTo(-0.02, -0.56, 0.16, -0.3, 0.46, -0.4); c.lineTo(0.46, 0.0); c.bezierCurveTo(0.16, 0.1, -0.02, -0.16, -0.26, -0.04); c.closePath(); ink(c, '#fbf5e6'); },
+  endturn(c) {                                         // a turning arrow
+    c.beginPath(); c.arc(0, 0.04, 0.34, -PI * 0.3, PI * 1.25); pen(c, OUTLINE, 0.2); pen(c, '#57d657', 0.12);
+    poly(c, [0.06, -0.5, 0.46, -0.34, 0.14, -0.1], '#57d657');
+  },
+  done(c) { ell(c, 0, 0, 0.46, 0.46, '#3f9a52'); pen(c, OUTLINE, 0.2, [-0.22, 0.02, -0.06, 0.2, 0.24, -0.18]); pen(c, '#fff8ea', 0.11, [-0.22, 0.02, -0.06, 0.2, 0.24, -0.18]); },
+  next(c, col) {                                       // "the next one": a unit dot and a double chevron
+    ell(c, -0.26, 0.02, 0.2, 0.2, col || '#e2403a');
+    for (const x of [0.02, 0.26]) { pen(c, OUTLINE, 0.17, [x, -0.3, x + 0.22, 0, x, 0.3]); pen(c, '#fff8ea', 0.09, [x, -0.3, x + 0.22, 0, x, 0.3]); }
+  },
+  lock(c) { c.beginPath(); c.arc(0, -0.08, 0.2, PI, 0); pen(c, OUTLINE, 0.17); pen(c, STEEL, 0.09); box(c, -0.3, -0.08, 0.6, 0.46, 0.07, '#8fa0ad'); ell(c, 0, 0.1, 0.06, 0.06, '#3a2c28'); pen(c, '#3a2c28', 0.05, [0, 0.12, 0, 0.26]); },
+  f_free(c, col) { formDots(c, col, [[-0.3, -0.22], [0.06, -0.34], [0.34, -0.08], [-0.1, 0.02], [-0.36, 0.26], [0.2, 0.3], [0.0, 0.4]]); },
+  f_line(c, col) { formDots(c, col, [[-0.4, -0.14], [-0.2, -0.14], [0, -0.14], [0.2, -0.14], [0.4, -0.14], [-0.3, 0.16], [-0.1, 0.16], [0.1, 0.16], [0.3, 0.16]], true); },
+  f_box(c, col) { const p = []; for (const y of [-0.26, 0, 0.26]) for (const x of [-0.26, 0, 0.26]) p.push([x, y]); formDots(c, col, p, true); },
+  f_wedge(c, col) { formDots(c, col, [[0, -0.36], [-0.17, -0.16], [0.17, -0.16], [-0.34, 0.04], [0.34, 0.04], [-0.5, 0.24], [0.5, 0.24]], true); },
+  f_spread(c, col) { formDots(c, col, [[-0.4, -0.36], [0, -0.36], [0.4, -0.36], [-0.4, 0.02], [0, 0.02], [0.4, 0.02], [-0.4, 0.4], [0, 0.4], [0.4, 0.4]], false, 0.06); },
 });
-const ABIL_BG = dict({ service: '#c8452e', mangia: '#3f9a52', lowslow: '#6b5b52', cuts: '#3f4a78', sugar: '#c95a94', lunch: '#d98a1c' });
+function bellShape(c, col) {
+  box(c, -0.05, -0.5, 0.1, 0.1, 0.03, dk(col, 0.3));
+  c.beginPath(); c.moveTo(-0.38, 0.24); c.bezierCurveTo(-0.2, 0.08, -0.3, -0.42, 0, -0.42); c.bezierCurveTo(0.3, -0.42, 0.2, 0.08, 0.38, 0.24); c.closePath(); ink(c, col);
+  box(c, -0.42, 0.2, 0.84, 0.1, 0.05, dk(col, 0.14)); ell(c, 0, 0.38, 0.09, 0.09, dk(col, 0.32)); glint(c, -0.13, -0.12, 0.05, 0.17, 0.55, 0.25);
+}
+/** Little formation diagram: dots for units; `front` puts an arrow above to show which way it faces. */
+function formDots(c, col, pts, front, r = 0.085) {
+  if (front) poly(c, [0, -0.56, 0.1, -0.44, -0.1, -0.44], '#fff8ea', LW * 0.8);
+  pts.forEach(([x, y], i) => ell(c, x, y + 0.06, r, r, i === 0 && front ? '#fff8ea' : col || '#e2403a', 0, LW * 0.9));
+}
+const ABIL_BG = dict({ service: '#c8452e', mangia: '#3f9a52', lowslow: '#6b5b52', cuts: '#3f4a78', sugar: '#c95a94', lunch: '#d98a1c',
+  flambe: '#8f2318', feast: '#2c7a55', lockdown: '#3d4852', perfectcut: '#262f5c', glass: '#8a4a14', swarm: '#a8650f' });
 const CMD_BG = dict({ flint: '#d9532b', nonna: '#4f9a5a', hank: '#8a5a3c', ryo: '#46507a', odile: '#d77aa6', zara: '#e0a020' });
 
 const icons = new Map();
