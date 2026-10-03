@@ -1,0 +1,543 @@
+// ============================================================================
+//  CHEFDOMS — shared game data
+//  Loaded by BOTH the Node server and the browser client. Keep it pure:
+//  plain data + pure functions, no Node or DOM APIs.
+//
+//  Want to rebalance or rename something? This is the file to edit.
+//  (Restart the server afterwards; everyone must reload the page.)
+// ============================================================================
+
+export const VERSION = '1.0.0';
+export const TICK_RATE = 20;            // simulation ticks per second
+export const DT = 1 / TICK_RATE;
+export const MAX_PLAYERS = 8;
+
+export const RES = ['food', 'wood', 'spice', 'salt'];
+export const RES_INFO = {
+  food:  { name: 'Produce',  color: '#f08a24' },
+  wood:  { name: 'Firewood', color: '#a8733f' },
+  spice: { name: 'Spice',    color: '#e0402f' },
+  salt:  { name: 'Salt',     color: '#cfe6f5' },
+};
+
+export const TILE = { GRASS: 0, TREE: 1, WATER: 2, STUMP: 3 };
+export const TREE_WOOD = 125;
+
+export const PLAYER_COLORS = [
+  { name: 'Tomato',    hex: '#e2403a' },
+  { name: 'Blueberry', hex: '#3d7fe6' },
+  { name: 'Basil',     hex: '#2fa44f' },
+  { name: 'Saffron',   hex: '#f0b41c' },
+  { name: 'Eggplant',  hex: '#9a52d8' },
+  { name: 'Carrot',    hex: '#f07d1e' },
+  { name: 'Mint',      hex: '#25b9a7' },
+  { name: 'Bubblegum', hex: '#ea62a6' },
+];
+
+export const AGE_NAMES = [null, 'Food Cart Age', 'Diner Age', 'Bistro Age', 'Five-Star Age'];
+export const AGE_SHORT = [null, 'I', 'II', 'III', 'IV'];
+
+// Lobby options ---------------------------------------------------------------
+export const OPTIONS = {
+  mapSize:  { label: 'Map size', def: 'auto', choices: { auto: 'Auto (fits the players)', small: 'Small (cozy)', medium: 'Medium', large: 'Large', huge: 'Huge' } },
+  startRes: { label: 'Starting pantry', def: 'standard', choices: { standard: 'Standard', rich: 'Well stocked', feast: 'Feast' } },
+  popCap:   { label: 'Staff limit', def: '100', choices: { '60': '60', '100': '100', '150': '150' } },
+  speed:    { label: 'Game speed', def: '1', choices: { '1': 'Normal', '1.5': 'Fast', '2': 'Turbo' } },
+  fog:      { label: 'Fog of war', def: 'on', choices: { on: 'On', explored: 'Map revealed', off: 'Off' } },
+  victory:  { label: 'Victory', def: 'hq', choices: { hq: 'Destroy the Kitchen HQ', conquest: 'Conquest (every station)' } },
+};
+export const MAP_SIZES = { small: 72, medium: 96, large: 120, huge: 152 };
+const SIZE_ORDER = ['small', 'medium', 'large', 'huge'];
+/** The map actually used: 'auto' picks by head count, and a too-small choice is bumped up so bases fit. */
+export function mapSizeFor(choice, nPlayers) {
+  const auto = nPlayers <= 2 ? 0 : nPlayers <= 4 ? 1 : nPlayers <= 6 ? 2 : 3;
+  const min = nPlayers <= 4 ? 0 : nPlayers <= 6 ? 1 : 2;
+  const i = SIZE_ORDER.indexOf(choice);
+  return SIZE_ORDER[i < 0 ? auto : Math.max(i, min)];
+}
+export const START_RES = {
+  standard: { food: 200, wood: 200, spice: 100, salt: 100 },
+  rich:     { food: 500, wood: 500, spice: 300, salt: 250 },
+  feast:    { food: 1500, wood: 1500, spice: 1000, salt: 800 },
+};
+
+export const BOT_LEVELS = { easy: 'Easy', normal: 'Normal', hard: 'Hard', extreme: 'Extreme' };
+export const BOT_NOTES = { extreme: 'Extreme bots also gather 25% faster.' };
+
+// Resource nodes that sit on the map (trees are stored in the tile grid) -------
+export const NODES = {
+  veg:   { name: 'Veggie Patch', res: 'food',  amount: 220 },
+  spice: { name: 'Spice Mound',  res: 'spice', amount: 800 },
+  salt:  { name: 'Salt Rock',    res: 'salt',  amount: 650 },
+};
+
+// ----------------------------------------------------------------------------
+//  UNITS
+//  atk/armor: damage = max(1, atk * bonus - armor). Ranged hits use `parmor`.
+//  range 0 = melee.  speed in tiles/second.  reload in seconds.
+//  tags drive counters and upgrades: cook, inf, ranged, veh, siege, support,
+//  hero, unique, mil (anything that counts as army).
+// ----------------------------------------------------------------------------
+const U = (o) => Object.assign({
+  hp: 50, atk: 0, range: 0, minRange: 0, reload: 1.5, speed: 2, armor: 0, parmor: 0,
+  sight: 5.5, pop: 1, cost: {}, time: 10, age: 1, tags: [], bonus: {}, radius: 0.32,
+  splash: 0, proj: null, heal: 0, carry: 0, gather: null, onlyBldg: false,
+}, o);
+
+export const UNITS = {
+  cook: U({
+    name: 'Prep Cook', role: 'Worker',
+    desc: 'Gathers ingredients, builds and repairs stations.',
+    tags: ['cook'], hp: 35, atk: 3, reload: 1.5, speed: 2.0, sight: 5,
+    cost: { food: 50 }, time: 13, carry: 10,
+    gather: { food: 0.60, garden: 0.50, wood: 0.55, spice: 0.55, salt: 0.50 },
+  }),
+  line: U({
+    name: 'Line Cook', role: 'Frying-pan infantry',
+    desc: 'Dependable all-rounder. Hits stations hard.',
+    tags: ['inf', 'mil'], hp: 60, atk: 7, reload: 1.3, speed: 2.1, armor: 1, parmor: 1,
+    cost: { food: 50, spice: 20 }, time: 12, age: 1, bonus: { bldg: 1.5 },
+  }),
+  butcher: U({
+    name: 'Butcher', role: 'Anti-vehicle infantry',
+    desc: 'Cheap cleaver crew. Carves up Scooters and Food Trucks.',
+    tags: ['inf', 'mil'], hp: 50, atk: 4, reload: 1.4, speed: 2.2, armor: 0, parmor: 1,
+    cost: { food: 35, wood: 25 }, time: 11, age: 2, bonus: { veh: 3.2 },
+  }),
+  saucier: U({
+    name: 'Saucier', role: 'Ranged',
+    desc: 'Hurls ladles of scalding sauce. Melts infantry, folds to vehicles.',
+    tags: ['ranged', 'mil'], hp: 38, atk: 6, range: 5, reload: 1.7, speed: 2.2, sight: 6.5,
+    cost: { wood: 30, spice: 40 }, time: 13, age: 2, proj: 'sauce', bonus: { inf: 1.25 },
+  }),
+  scooter: U({
+    name: 'Delivery Scooter', role: 'Fast vehicle',
+    desc: 'Quick raider. Runs down Sauciers and siege; avoid Butchers.',
+    tags: ['veh', 'mil'], hp: 85, atk: 8, reload: 1.4, speed: 3.6, armor: 1, parmor: 2, sight: 6.5,
+    cost: { food: 70, spice: 45 }, time: 15, age: 2, bonus: { ranged: 1.5, siege: 2.5 }, radius: 0.38,
+  }),
+  truck: U({
+    name: 'Food Truck', role: 'Heavy vehicle',
+    desc: 'Armoured bruiser that shrugs off sauce and pans alike, and rams stations.',
+    tags: ['veh', 'mil'], hp: 180, atk: 14, reload: 1.7, speed: 2.8, armor: 3, parmor: 3, pop: 2,
+    cost: { food: 90, spice: 95 }, time: 22, age: 3, bonus: { ranged: 1.3, siege: 2, bldg: 1.4 }, radius: 0.5,
+  }),
+  catapult: U({
+    name: 'Meatball Catapult', role: 'Siege artillery',
+    desc: 'Lobs giant meatballs. Splash damage, flattens stations. Helpless up close.',
+    tags: ['siege', 'mil'], hp: 75, atk: 32, range: 8, minRange: 2.5, reload: 5, speed: 1.4, parmor: 6, sight: 8.5, pop: 2,
+    cost: { wood: 150, spice: 120 }, time: 28, age: 3, proj: 'meatball', splash: 1.3, bonus: { bldg: 3.5 }, radius: 0.5,
+  }),
+  ram: U({
+    name: 'Battering Baguette', role: 'Siege ram',
+    desc: 'A very stale, very large baguette. Only attacks stations; ignores ranged fire.',
+    tags: ['siege', 'mil'], hp: 230, atk: 4, reload: 2.5, speed: 1.7, armor: -2, parmor: 30, pop: 2,
+    cost: { wood: 140, spice: 60 }, time: 22, age: 3, bonus: { bldg: 18 }, onlyBldg: true, radius: 0.5,
+  }),
+  barista: U({
+    name: 'Barista', role: 'Healer',
+    desc: 'Revives the wounded with espresso shots. Cannot attack.',
+    tags: ['support'], hp: 40, heal: 5, range: 3.5, speed: 2.2,
+    cost: { food: 40, spice: 80 }, time: 18, age: 2,
+  }),
+
+  // --- Unique units (one per commander, trained at the Signature Restaurant) ---
+  flambadier: U({
+    name: 'Flambadier', role: 'Unique · short-range splash',
+    desc: 'Torch-wielding specialist. Short range, splash fire, scorches stations.',
+    tags: ['ranged', 'mil', 'unique'], hp: 55, atk: 9, range: 3.2, reload: 1.9, speed: 2.1, armor: 1, parmor: 1,
+    cost: { food: 60, spice: 60 }, time: 16, age: 3, proj: 'flame', splash: 0.9, bonus: { bldg: 2.5 },
+  }),
+  pinroller: U({
+    name: 'Pin Roller', role: 'Unique · armoured infantry',
+    desc: 'Family muscle with a rolling pin. Heavily armoured.',
+    tags: ['inf', 'mil', 'unique'], hp: 110, atk: 9, reload: 1.4, speed: 2.0, armor: 3, parmor: 2,
+    cost: { food: 70, spice: 45 }, time: 15, age: 3, bonus: { bldg: 1.5 },
+  }),
+  brute: U({
+    name: 'Brisket Brute', role: 'Unique · heavy infantry',
+    desc: 'Slow, enormous, and swinging a meat tenderizer. Wrecks stations.',
+    tags: ['inf', 'mil', 'unique'], hp: 180, atk: 13, reload: 1.8, speed: 1.95, armor: 2, parmor: 2,
+    cost: { food: 85, spice: 60 }, time: 18, age: 3, bonus: { bldg: 2 }, radius: 0.42,
+  }),
+  dancer: U({
+    name: 'Blade Dancer', role: 'Unique · fast striker',
+    desc: 'Lightning-fast knife work. Devastating damage, very little padding.',
+    tags: ['inf', 'mil', 'unique'], hp: 62, atk: 13, reload: 0.95, speed: 2.9, armor: 0, parmor: 1,
+    cost: { food: 65, spice: 70 }, time: 14, age: 3,
+  }),
+  mortar: U({
+    name: 'Macaron Mortar', role: 'Unique · light artillery',
+    desc: 'Long-range pastry bombardment with a small splash. Chips away at stations too.',
+    tags: ['ranged', 'mil', 'unique'], hp: 48, atk: 13, range: 7, minRange: 1, reload: 2.6, speed: 1.9, sight: 8,
+    cost: { wood: 50, spice: 75 }, time: 17, age: 3, proj: 'macaron', splash: 1.1, bonus: { inf: 1.25, bldg: 2.2 },
+  }),
+  skewer: U({
+    name: 'Skewer Rider', role: 'Unique · lancer scooter',
+    desc: 'The fastest thing on two wheels. Skewers ranged units and siege.',
+    tags: ['veh', 'mil', 'unique'], hp: 110, atk: 11, reload: 1.3, speed: 3.9, armor: 1, parmor: 2, sight: 6.5,
+    cost: { food: 65, spice: 55 }, time: 15, age: 3, bonus: { ranged: 1.75, siege: 2.5 }, radius: 0.38,
+  }),
+
+  // --- Heroes (the commander in person; free, respawns at the Kitchen HQ) ---
+  hero_flint: U({
+    name: 'Chef Magnus Flint', role: 'Hero', desc: 'Leads from the front with a cleaver the size of a door.',
+    tags: ['hero'], hp: 400, atk: 15, reload: 1.2, speed: 2.5, armor: 2, parmor: 3, sight: 7.5, pop: 0, radius: 0.42, bonus: { cook: 0.6 },
+  }),
+  hero_nonna: U({
+    name: 'Nonna Rosalia', role: 'Hero', desc: 'Armed with a wooden spoon and unconditional love.',
+    tags: ['hero'], hp: 440, atk: 11, reload: 1.3, speed: 2.3, armor: 2, parmor: 3, sight: 7.5, pop: 0, radius: 0.42, bonus: { cook: 0.6 },
+  }),
+  hero_hank: U({
+    name: 'Big Hank Dawson', role: 'Hero', desc: 'A walking smokehouse with a meat hammer.',
+    tags: ['hero'], hp: 500, atk: 16, reload: 1.6, speed: 2.2, armor: 3, parmor: 3, sight: 7.5, pop: 0, radius: 0.46, bonus: { cook: 0.6 },
+  }),
+  hero_ryo: U({
+    name: 'Master Ryo Tanabe', role: 'Hero', desc: 'One knife. Never needs a second cut.',
+    tags: ['hero'], hp: 340, atk: 12, reload: 0.8, speed: 2.8, armor: 2, parmor: 2, sight: 7.5, pop: 0, radius: 0.42, bonus: { cook: 0.6 },
+  }),
+  hero_odile: U({
+    name: 'Madame Odile Fontaine', role: 'Hero', desc: 'Pipes frosting with sniper precision.',
+    tags: ['hero'], hp: 310, atk: 13, range: 5, reload: 1.5, speed: 2.5, armor: 1, parmor: 2, sight: 7.5, pop: 0, radius: 0.42, proj: 'frosting', bonus: { cook: 0.6 },
+  }),
+  hero_zara: U({
+    name: 'Zara Okoye', role: 'Hero', desc: 'Always moving, always selling, never missing with a skewer.',
+    tags: ['hero'], hp: 360, atk: 11, range: 4.5, reload: 1.2, speed: 2.9, armor: 1, parmor: 2, sight: 7.5, pop: 0, radius: 0.42, proj: 'skewer', bonus: { cook: 0.6 },
+  }),
+};
+
+// ----------------------------------------------------------------------------
+//  BUILDINGS ("stations")
+// ----------------------------------------------------------------------------
+const B = (o) => Object.assign({
+  size: 3, hp: 1000, armor: 2, parmor: 8, cost: {}, time: 30, age: 1, pop: 0,
+  dropoff: false, walkable: false, atk: 0, range: 0, reload: 1.5, proj: null, bonus: {},
+  sight: 5, trains: [], techs: [], tags: ['bldg'],
+}, o);
+
+export const BUILDINGS = {
+  hq: B({
+    name: 'Kitchen HQ', desc: 'Heart of your operation. Trains Prep Cooks, advances the age, accepts all ingredients, and flings plates at intruders.',
+    size: 4, hp: 3000, armor: 4, parmor: 9, cost: { wood: 275, salt: 150 }, time: 90, age: 3, pop: 10,
+    dropoff: true, atk: 12, range: 7, reload: 1.5, proj: 'plate', bonus: { hero: 2 }, sight: 9,
+    trains: ['cook', 'barista'], techs: ['age2', 'age3', 'age4', 'mitts'],
+  }),
+  house: B({
+    name: 'Break Room', desc: 'Every brigade needs somewhere to sit down. Raises your staff limit.',
+    size: 2, hp: 500, cost: { wood: 30 }, time: 18, pop: 8, sight: 3, tags: ['bldg', 'house'],
+  }),
+  pantry: B({
+    name: 'Pantry', desc: 'Drop-off point for every ingredient. Build one next to distant resources. Researches gathering upgrades.',
+    size: 2, hp: 550, cost: { wood: 80 }, time: 20, dropoff: true, sight: 4,
+    techs: ['peeler1', 'peeler2', 'hatchet1', 'hatchet2', 'sifter1', 'sifter2', 'basket', 'carts'],
+  }),
+  garden: B({
+    name: 'Garden Plot', desc: 'An endless supply of Produce. One Prep Cook per plot.',
+    size: 2, hp: 250, cost: { wood: 50 }, time: 10, walkable: true, sight: 2, tags: ['bldg', 'garden'],
+  }),
+  grill: B({
+    name: 'Grill Station', desc: 'Trains infantry: Line Cooks and Butchers.',
+    size: 3, hp: 1100, cost: { wood: 125 }, time: 28, age: 1, trains: ['line', 'butcher'],
+  }),
+  sauce: B({
+    name: 'Sauce Station', desc: 'Trains Sauciers, your ranged line.',
+    size: 3, hp: 1000, cost: { wood: 140 }, time: 28, age: 2, trains: ['saucier'],
+  }),
+  garage: B({
+    name: 'Delivery Garage', desc: 'Trains vehicles: Delivery Scooters and Food Trucks.',
+    size: 3, hp: 1100, cost: { wood: 150 }, time: 30, age: 2, trains: ['scooter', 'truck'],
+  }),
+  lab: B({
+    name: 'Test Kitchen', desc: 'Researches weapon, armour and station upgrades.',
+    size: 3, hp: 1000, cost: { wood: 150 }, time: 30, age: 2,
+    techs: ['knives1', 'knives2', 'knives3', 'aprons1', 'aprons2', 'aprons3', 'sauce1', 'sauce2', 'sauce3', 'bumper1', 'bumper2', 'ovens', 'meatballs'],
+  }),
+  workshop: B({
+    name: 'Catering Workshop', desc: 'Builds siege: Meatball Catapults and Battering Baguettes.',
+    size: 3, hp: 1100, cost: { wood: 180, spice: 60 }, time: 34, age: 3, trains: ['catapult', 'ram'],
+  }),
+  tower: B({
+    name: 'Pepper Mill Tower', desc: 'Defensive tower. Grinds peppercorns at anything hostile in range.',
+    size: 2, hp: 850, armor: 3, parmor: 9, cost: { wood: 50, salt: 110 }, time: 32, age: 2,
+    atk: 8, range: 7, reload: 1.5, proj: 'pepper', sight: 9, tags: ['bldg', 'tower'],
+  }),
+  restaurant: B({
+    name: 'Signature Restaurant', desc: 'Your flagship. Trains your commander\'s unique unit and defends itself with flying crockery.',
+    size: 4, hp: 2800, armor: 4, parmor: 10, cost: { wood: 250, salt: 350 }, time: 60, age: 3,
+    atk: 11, range: 8, reload: 1.6, proj: 'plate', sight: 10, trains: ['unique'], techs: ['elite'],
+  }),
+};
+
+// ----------------------------------------------------------------------------
+//  TECHS (upgrades).  mods: {sel, stat, add|mul}
+//    sel  = unit key, building key, or a tag ('inf', 'bldg', ...)
+//    stat = any unit/building stat; g_food/g_garden/g_wood/g_spice/g_salt for
+//           gather rates; 'cost' and 'time' multiply cost / train time.
+// ----------------------------------------------------------------------------
+export const TECHS = {
+  age2: { name: 'Advance to the Diner Age', desc: 'Unlocks Butchers, Sauciers, Scooters, towers and the Test Kitchen.', cost: { food: 400 }, time: 40, age: 1, setAge: 2 },
+  age3: { name: 'Advance to the Bistro Age', desc: 'Unlocks Food Trucks, siege, extra Kitchen HQs and your Signature Restaurant.', cost: { food: 700, spice: 400 }, time: 55, age: 2, setAge: 3 },
+  age4: { name: 'Advance to the Five-Star Age', desc: 'Unlocks the final upgrades. Your hero reaches full power.', cost: { food: 1000, spice: 700 }, time: 70, age: 3, setAge: 4 },
+  mitts: { name: 'Oven Mitts', desc: 'Prep Cooks +15 HP and +1 armour.', cost: { spice: 50 }, time: 15, age: 1,
+    mods: [{ sel: 'cook', stat: 'hp', add: 15 }, { sel: 'cook', stat: 'armor', add: 1 }, { sel: 'cook', stat: 'parmor', add: 1 }] },
+
+  // Pantry — economy
+  peeler1: { name: 'Sharp Peelers', desc: 'Produce gathered 15% faster.', cost: { food: 75, wood: 75 }, time: 20, age: 1,
+    mods: [{ sel: 'cook', stat: 'g_food', mul: 1.15 }, { sel: 'cook', stat: 'g_garden', mul: 1.15 }] },
+  peeler2: { name: 'Mandoline Slicers', desc: 'Produce gathered a further 15% faster.', cost: { food: 150, wood: 125 }, time: 30, age: 2, req: 'peeler1',
+    mods: [{ sel: 'cook', stat: 'g_food', mul: 1.15 }, { sel: 'cook', stat: 'g_garden', mul: 1.15 }] },
+  hatchet1: { name: 'Kindling Hatchets', desc: 'Firewood gathered 15% faster.', cost: { food: 100, wood: 50 }, time: 20, age: 1,
+    mods: [{ sel: 'cook', stat: 'g_wood', mul: 1.15 }] },
+  hatchet2: { name: 'Two-Chef Saws', desc: 'Firewood gathered a further 15% faster.', cost: { food: 150, wood: 100 }, time: 30, age: 2, req: 'hatchet1',
+    mods: [{ sel: 'cook', stat: 'g_wood', mul: 1.15 }] },
+  sifter1: { name: 'Spice Sifters', desc: 'Spice and Salt gathered 15% faster.', cost: { food: 100, wood: 75 }, time: 25, age: 2,
+    mods: [{ sel: 'cook', stat: 'g_spice', mul: 1.15 }, { sel: 'cook', stat: 'g_salt', mul: 1.15 }] },
+  sifter2: { name: 'Mortar & Pestle', desc: 'Spice and Salt gathered a further 15% faster.', cost: { food: 200, wood: 150 }, time: 35, age: 3, req: 'sifter1',
+    mods: [{ sel: 'cook', stat: 'g_spice', mul: 1.15 }, { sel: 'cook', stat: 'g_salt', mul: 1.15 }] },
+  basket: { name: 'Bigger Baskets', desc: 'Prep Cooks carry +5.', cost: { food: 125, wood: 75 }, time: 25, age: 2,
+    mods: [{ sel: 'cook', stat: 'carry', add: 5 }] },
+  carts: { name: 'Rolling Carts', desc: 'Prep Cooks carry another +5 and move 10% faster.', cost: { food: 200, wood: 150 }, time: 35, age: 3, req: 'basket',
+    mods: [{ sel: 'cook', stat: 'carry', add: 5 }, { sel: 'cook', stat: 'speed', mul: 1.1 }] },
+
+  // Test Kitchen — military
+  knives1: { name: 'Honed Knives', desc: 'Infantry and vehicles +1 attack.', cost: { food: 100, spice: 50 }, time: 25, age: 2,
+    mods: [{ sel: 'inf', stat: 'atk', add: 1 }, { sel: 'veh', stat: 'atk', add: 1 }] },
+  knives2: { name: 'Carbon Steel', desc: 'Infantry and vehicles +1 attack.', cost: { food: 200, spice: 120 }, time: 35, age: 3, req: 'knives1',
+    mods: [{ sel: 'inf', stat: 'atk', add: 1 }, { sel: 'veh', stat: 'atk', add: 1 }] },
+  knives3: { name: 'Damascus Edge', desc: 'Infantry and vehicles +2 attack.', cost: { food: 300, spice: 250 }, time: 45, age: 4, req: 'knives2',
+    mods: [{ sel: 'inf', stat: 'atk', add: 2 }, { sel: 'veh', stat: 'atk', add: 2 }] },
+  aprons1: { name: 'Padded Aprons', desc: 'Infantry and ranged units +1 armour (melee and ranged).', cost: { food: 100 }, time: 25, age: 2,
+    mods: [{ sel: 'inf', stat: 'armor', add: 1 }, { sel: 'inf', stat: 'parmor', add: 1 }, { sel: 'ranged', stat: 'armor', add: 1 }, { sel: 'ranged', stat: 'parmor', add: 1 }] },
+  aprons2: { name: 'Leather Aprons', desc: 'Infantry and ranged units +1 armour.', cost: { food: 200, spice: 100 }, time: 35, age: 3, req: 'aprons1',
+    mods: [{ sel: 'inf', stat: 'armor', add: 1 }, { sel: 'inf', stat: 'parmor', add: 1 }, { sel: 'ranged', stat: 'armor', add: 1 }, { sel: 'ranged', stat: 'parmor', add: 1 }] },
+  aprons3: { name: 'Chainmail Aprons', desc: 'Infantry and ranged units +1 armour, +2 vs ranged.', cost: { food: 300, spice: 200 }, time: 45, age: 4, req: 'aprons2',
+    mods: [{ sel: 'inf', stat: 'armor', add: 1 }, { sel: 'inf', stat: 'parmor', add: 2 }, { sel: 'ranged', stat: 'armor', add: 1 }, { sel: 'ranged', stat: 'parmor', add: 2 }] },
+  sauce1: { name: 'Hotter Sauce', desc: 'Ranged units and defensive stations +1 attack.', cost: { food: 100, spice: 50 }, time: 25, age: 2,
+    mods: [{ sel: 'ranged', stat: 'atk', add: 1 }, { sel: 'bldg', stat: 'atk', add: 1 }] },
+  sauce2: { name: 'Ghost Pepper Extract', desc: 'Ranged units and defensive stations +1 attack and +1 range.', cost: { food: 200, spice: 150 }, time: 35, age: 3, req: 'sauce1',
+    mods: [{ sel: 'ranged', stat: 'atk', add: 1 }, { sel: 'ranged', stat: 'range', add: 1 }, { sel: 'bldg', stat: 'atk', add: 1 }, { sel: 'bldg', stat: 'range', add: 1 }] },
+  sauce3: { name: 'Pure Capsaicin', desc: 'Ranged units and defensive stations +2 attack.', cost: { food: 300, spice: 300 }, time: 45, age: 4, req: 'sauce2',
+    mods: [{ sel: 'ranged', stat: 'atk', add: 2 }, { sel: 'bldg', stat: 'atk', add: 2 }] },
+  bumper1: { name: 'Reinforced Bumpers', desc: 'Vehicles +1 armour and +10% HP.', cost: { food: 150, spice: 100 }, time: 30, age: 3,
+    mods: [{ sel: 'veh', stat: 'armor', add: 1 }, { sel: 'veh', stat: 'parmor', add: 1 }, { sel: 'veh', stat: 'hp', mul: 1.1 }] },
+  bumper2: { name: 'Turbo Engines', desc: 'Vehicles move 10% faster and gain +10% HP.', cost: { food: 250, spice: 200 }, time: 40, age: 4, req: 'bumper1',
+    mods: [{ sel: 'veh', stat: 'speed', mul: 1.1 }, { sel: 'veh', stat: 'hp', mul: 1.1 }] },
+  ovens: { name: 'Brick Ovens', desc: 'All stations +20% HP and +1 armour.', cost: { wood: 200, salt: 150 }, time: 40, age: 3,
+    mods: [{ sel: 'bldg', stat: 'hp', mul: 1.2 }, { sel: 'bldg', stat: 'armor', add: 1 }] },
+  meatballs: { name: 'Extra-Firm Meatballs', desc: 'Siege +25% attack; Catapults +1 range.', cost: { food: 250, spice: 250 }, time: 45, age: 4,
+    mods: [{ sel: 'siege', stat: 'atk', mul: 1.25 }, { sel: 'catapult', stat: 'range', add: 1 }] },
+
+  // Signature Restaurant
+  elite: { name: 'Signature Dish', desc: 'Your unique unit becomes Elite: +25% HP and +20% attack.', cost: { food: 400, spice: 350 }, time: 45, age: 4,
+    mods: [{ sel: 'unique', stat: 'hp', mul: 1.25 }, { sel: 'unique', stat: 'atk', mul: 1.2 }] },
+};
+
+// ----------------------------------------------------------------------------
+//  BUFFS (temporary effects from hero auras and abilities)
+// ----------------------------------------------------------------------------
+export const BUFFS = {
+  service: { bit: 1,   reloadMul: 0.8, speedMul: 1.15 },
+  mangia:  { bit: 2,   regenFrac: 0.4 / 6 },          // fraction of max HP per second
+  lowslow: { bit: 4,   dmgTakenMul: 0.5 },
+  sugar:   { bit: 8,   speedMul: 1.4, gatherMul: 1.4 },
+  a_flint: { bit: 16,  atkMul: 1.10 },
+  a_nonna: { bit: 32,  regen: 1.5 },                  // HP per second
+  a_hank:  { bit: 64,  dmgTakenMul: 0.82 },
+  a_ryo:   { bit: 128, reloadMul: 0.91 },
+  a_odile: { bit: 256, speedMul: 1.12 },
+  a_zara:  { bit: 512 },                              // marker: kills nearby pay Spice
+};
+export const AURA_RADIUS = 6.5;
+export const ZARA_TIP = 12;               // spice per enemy defeated near Zara
+export const HERO_RESPAWN = [0, 35, 45, 55, 65];   // seconds, by age
+export const HERO_AGE_HP = [0, 1, 1.25, 1.5, 1.8];
+export const HERO_AGE_ATK = [0, 1, 1.2, 1.4, 1.65];
+
+// ----------------------------------------------------------------------------
+//  COMMANDERS  (your "civilization")
+//  All commanders are original characters. Edit freely!
+// ----------------------------------------------------------------------------
+export const COMMANDERS = {
+  flint: {
+    name: 'Chef Magnus Flint', title: 'The Inferno', brigade: 'Fine Dining Brigade',
+    blurb: 'A perfectionist whose temper runs hotter than his stoves. His brigade works fast because the alternative is being shouted at.',
+    style: 'Aggressive · fast attacks · quick tech',
+    hero: 'hero_flint', unique: 'flambadier',
+    bonuses: [
+      'Military units attack 10% faster',
+      'Age advances cost 15% less',
+      'Upgrades research 30% faster',
+    ],
+    mods: [{ sel: 'mil', stat: 'reload', mul: 0.91 }, { misc: 'ageCostMul', mul: 0.85 }, { misc: 'techTimeMul', mul: 0.7 }],
+    aura: { key: 'a_flint', name: 'Fear of the Chef', desc: 'Units near Flint deal +10% damage.' },
+    ability: { key: 'service', name: 'SERVICE!', cd: 75, dur: 12, radius: 9,
+      desc: 'Flint bellows across the pass. Your units near him attack 25% faster and move 15% faster for 12s.' },
+    quotes: ['This kitchen runs on fear and butter!', 'Faster! The plates are getting cold!', 'I have seen better knife work from a spoon!'],
+  },
+  nonna: {
+    name: 'Nonna Rosalia Bianchi', title: 'The Matriarch', brigade: 'Trattoria Famiglia',
+    blurb: 'Nobody leaves her table hungry and nobody leaves her kitchen unpunished. Her family grows faster than anyone can count.',
+    style: 'Economy · big population · healing',
+    hero: 'hero_nonna', unique: 'pinroller',
+    bonuses: [
+      'Prep Cooks cost 10% less',
+      'Garden Plots are 25% more productive',
+      'Break Rooms house +3 staff',
+    ],
+    mods: [{ sel: 'cook', stat: 'cost', mul: 0.9 }, { sel: 'cook', stat: 'g_garden', mul: 1.25 }, { sel: 'house', stat: 'pop', add: 3 }],
+    aura: { key: 'a_nonna', name: 'Comfort Food', desc: 'Units near Nonna regenerate 1.5 HP per second.' },
+    ability: { key: 'mangia', name: 'Mangia!', cd: 80, dur: 6, radius: 9,
+      desc: 'Seconds for everyone. Your units near Nonna heal 40% of their HP over 6s.' },
+    quotes: ['You look thin. Eat!', 'In this family, we finish our plates.', 'Who taught you to stir like that?'],
+  },
+  hank: {
+    name: 'Pitmaster "Big Hank" Dawson', title: 'The Smoke', brigade: 'Smokehouse Syndicate',
+    blurb: 'Low and slow wins the war. Hank builds things to last and smokes out anyone who gets too close.',
+    style: 'Defensive · tough units · sturdy stations',
+    hero: 'hero_hank', unique: 'brute',
+    bonuses: [
+      'Firewood gathered 20% faster',
+      'All stations have +20% HP',
+      'Infantry have +15% HP',
+    ],
+    mods: [{ sel: 'cook', stat: 'g_wood', mul: 1.2 }, { sel: 'bldg', stat: 'hp', mul: 1.2 }, { sel: 'inf', stat: 'hp', mul: 1.15 }],
+    aura: { key: 'a_hank', name: 'Thick Bark', desc: 'Units near Hank take 18% less damage.' },
+    ability: { key: 'lowslow', name: 'Smoke Ring', cd: 85, dur: 10, radius: 9,
+      desc: 'A wall of hickory smoke. Your units near Hank take 50% less damage for 10s.' },
+    quotes: ['Low and slow, friends. Low and slow.', 'If it ain\'t smokin\', it ain\'t cookin\'.', 'That\'ll leave a bark.'],
+  },
+  ryo: {
+    name: 'Master Ryo Tanabe', title: 'The Blade', brigade: 'Omakase Order',
+    blurb: 'Thirty years of practice for a single perfect cut. His order values precision over numbers.',
+    style: 'Precision · strong infantry · long range',
+    hero: 'hero_ryo', unique: 'dancer',
+    bonuses: [
+      'Infantry deal +10% damage',
+      'Ranged units and defensive stations +1 range',
+      'Prep Cooks carry +4',
+    ],
+    mods: [{ sel: 'inf', stat: 'atk', mul: 1.10 }, { sel: 'ranged', stat: 'range', add: 1 }, { sel: 'bldg', stat: 'range', add: 1 }, { sel: 'cook', stat: 'carry', add: 4 }],
+    aura: { key: 'a_ryo', name: 'Focus', desc: 'Units near Ryo attack 10% faster.' },
+    ability: { key: 'cuts', name: 'Thousand Cuts', cd: 70, dur: 0, radius: 4.5, dmg: 38, dmgPerAge: 12,
+      desc: 'A blur of steel. Deals heavy damage to every enemy unit around Ryo (stronger each age).' },
+    quotes: ['One cut. No more.', 'Patience is the sharpest knife.', 'The rice knows when you are rushing.'],
+  },
+  odile: {
+    name: 'Madame Odile Fontaine', title: 'The Pastry Queen', brigade: 'Pâtisserie Royale',
+    blurb: 'Sugar is power, and she controls the supply. Her empire is built quickly, cheaply and with impeccable lamination.',
+    style: 'Economy · cheap upgrades · speed',
+    hero: 'hero_odile', unique: 'mortar',
+    bonuses: [
+      'Spice gathered 25% faster',
+      'Upgrades cost a third less',
+      'Stations are built 30% faster',
+    ],
+    mods: [{ sel: 'cook', stat: 'g_spice', mul: 1.25 }, { misc: 'techCostMul', mul: 0.67 }, { misc: 'buildMul', mul: 1.3 }],
+    aura: { key: 'a_odile', name: 'Sweet Tooth', desc: 'Units near Odile move 12% faster.' },
+    ability: { key: 'sugar', name: 'Sugar Rush', cd: 90, dur: 15, radius: 0,
+      desc: 'Everyone gets dessert first. ALL your units move 40% faster and Prep Cooks gather 40% faster for 15s.' },
+    quotes: ['Precision, darling. This is not a stew.', 'Butter is not an ingredient. It is a philosophy.', 'Let them eat cake. Quickly.'],
+  },
+  zara: {
+    name: 'Zara Okoye', title: 'The Street Food Mogul', brigade: 'Night Market Crew',
+    blurb: 'Started with one cart, now runs every corner in town. Her crew is fast, cheap and everywhere at once.',
+    style: 'Tempo · fast production · vehicles',
+    hero: 'hero_zara', unique: 'skewer',
+    bonuses: [
+      'Units train 25% faster',
+      'Vehicles cost 20% less',
+      'Pantries cost 50% less; Prep Cooks move 10% faster',
+    ],
+    mods: [{ misc: 'trainMul', mul: 0.75 }, { sel: 'veh', stat: 'cost', mul: 0.8 }, { sel: 'pantry', stat: 'cost', mul: 0.5 }, { sel: 'cook', stat: 'speed', mul: 1.1 }],
+    aura: { key: 'a_zara', name: 'Tip Jar', desc: `Every enemy unit defeated near Zara pays you ${ZARA_TIP} Spice.` },
+    ability: { key: 'lunch', name: 'Lunch Rush', cd: 90, dur: 15, radius: 0,
+      desc: 'The queue is around the block. ALL your stations train and research 3x faster for 15s.' },
+    quotes: ['Line\'s out the door. Move it!', 'Fresh, fast, and half the price.', 'You snooze, you lose the corner.'],
+  },
+};
+export const COMMANDER_KEYS = Object.keys(COMMANDERS);
+
+// ----------------------------------------------------------------------------
+//  Stat computation: base data + commander bonuses + researched techs.
+//  Returns { units, bldgs, misc } — fresh objects, safe to mutate/cache.
+// ----------------------------------------------------------------------------
+function matches(key, def, sel) {
+  return sel === key || sel === 'all' || def.tags.includes(sel);
+}
+function applyStat(obj, m) {
+  if (m.stat === 'cost') {
+    for (const r in obj.cost) obj.cost[r] = Math.max(1, Math.round(obj.cost[r] * m.mul));
+    return;
+  }
+  if (m.stat.startsWith('g_')) {
+    if (!obj.gather) return;
+    const r = m.stat.slice(2);
+    if (m.mul !== undefined) obj.gather[r] *= m.mul; else obj.gather[r] += m.add;
+    return;
+  }
+  if (obj[m.stat] === undefined) return;
+  if ((m.stat === 'atk' || m.stat === 'range') && !obj.atk) return;   // only armed things get attack/range upgrades
+  if (m.mul !== undefined) obj[m.stat] *= m.mul; else obj[m.stat] += m.add;
+}
+
+export function computeStats(cmdKey, age, techs) {
+  const C = COMMANDERS[cmdKey] || COMMANDERS.flint;
+  const units = {}, bldgs = {};
+  for (const k in UNITS) {
+    const u = UNITS[k];
+    units[k] = { ...u, cost: { ...u.cost }, bonus: { ...u.bonus }, gather: u.gather ? { ...u.gather } : null };
+  }
+  for (const k in BUILDINGS) {
+    const b = BUILDINGS[k];
+    bldgs[k] = { ...b, cost: { ...b.cost }, bonus: { ...b.bonus } };
+  }
+  const misc = { trainMul: 1, techCostMul: 1, techTimeMul: 1, buildMul: 1, ageCostMul: 1 };
+  const apply = (m) => {
+    if (m.misc) { misc[m.misc] *= m.mul; return; }
+    for (const k in units) if (matches(k, units[k], m.sel)) applyStat(units[k], m);
+    for (const k in bldgs) if (matches(k, bldgs[k], m.sel)) applyStat(bldgs[k], m);
+  };
+  for (const m of C.mods) apply(m);
+  for (const t of techs || []) { const T = TECHS[t]; if (T && T.mods) for (const m of T.mods) apply(m); }
+  // heroes grow with the age
+  const a = Math.max(1, Math.min(4, age || 1));
+  for (const k in units) {
+    const u = units[k];
+    if (u.tags.includes('hero')) { u.hp *= HERO_AGE_HP[a]; u.atk *= HERO_AGE_ATK[a]; u.armor += a - 1; u.parmor += a - 1; }
+    u.hp = Math.round(u.hp);
+    u.atk = Math.round(u.atk * 10) / 10;
+  }
+  for (const k in bldgs) bldgs[k].hp = Math.round(bldgs[k].hp);
+  return { units, bldgs, misc };
+}
+
+/** Cost of a tech for a player with the given misc multipliers. */
+export function techCost(key, misc) {
+  const T = TECHS[key];
+  const mul = T.setAge ? misc.ageCostMul : misc.techCostMul;
+  const out = {};
+  for (const r in T.cost) out[r] = Math.round(T.cost[r] * mul / 5) * 5;
+  return out;
+}
+export function techTime(key, misc) {
+  const T = TECHS[key];
+  return T.setAge ? T.time : T.time * misc.techTimeMul;
+}
+
+/** Resolve the 'unique' placeholder in a building's train list for a commander. */
+export function trainList(bkey, cmdKey) {
+  return BUILDINGS[bkey].trains.map((u) => (u === 'unique' ? COMMANDERS[cmdKey].unique : u));
+}
+
+// Deterministic PRNG (mulberry32) — used by map generation so a seed fully
+// describes a map.
+export function makeRng(seed) {
+  let a = seed >>> 0;
+  return function rng() {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}

@@ -1,0 +1,5 @@
+# Keep line endings right for every way of getting the game (clone or ZIP, Windows or Linux)
+* text=auto
+*.bat text eol=crlf
+*.sh text eol=lf
+*.js text eol=lf

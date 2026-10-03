@@ -1,0 +1,8 @@
+# things that should not go into the repository
+node_modules/
+cloudflared
+cloudflared.exe
+Claude outputs/
+*.zip
+.DS_Store
+Thumbs.db

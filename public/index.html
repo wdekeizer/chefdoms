@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chefdoms</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body data-phase="join">
+<canvas id="game"></canvas>
+
+<!-- ============ join ============ -->
+<div id="screen-join" class="screen">
+  <div class="join-card">
+    <h1 class="logo">Chef<span>doms</span></h1>
+    <p class="tagline">Build your brigade. Rule the kitchen.</p>
+    <div id="join-faces" class="faces"></div>
+    <label class="field">Your chef name
+      <input id="name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. Clyde">
+    </label>
+    <label class="field">Server address <span class="opt-tag">optional</span>
+      <input id="server" class="small" maxlength="120" autocomplete="off" spellcheck="false" placeholder="e.g. 203.0.113.5:3000 or a trycloudflare.com link">
+      <span id="server-hint" class="hint"></span>
+    </label>
+    <button id="btn-join" class="btn primary big">Enter the kitchen</button>
+    <p id="join-status" class="muted"></p>
+  </div>
+</div>
+
+<!-- ============ lobby ============ -->
+<div id="screen-lobby" class="screen hidden">
+  <div class="lobby">
+    <header class="lobby-top">
+      <h1 class="logo small">Chef<span>doms</span></h1>
+      <div class="muted" id="lobby-version"></div>
+    </header>
+    <div class="lobby-main">
+      <section class="panel lobby-left">
+        <h2>Kitchens</h2>
+        <div id="lobby-slots"></div>
+        <div id="lobby-spectators" class="muted"></div>
+        <div id="lobby-actions"></div>
+      </section>
+      <section class="panel lobby-right">
+        <h2>Match settings</h2>
+        <div id="lobby-opts"></div>
+        <div id="lobby-mapnote" class="muted"></div>
+        <h2>Invite friends</h2>
+        <div id="lobby-invite"></div>
+        <h2>Chat</h2>
+        <div id="lobby-chat-log"></div>
+        <input id="lobby-chat-input" maxlength="200" autocomplete="off" placeholder="Say something…">
+        <button class="btn small ghost" id="btn-help">How to play</button>
+        <button class="btn small ghost" id="btn-sound">Sound &amp; music</button>
+        <button class="btn small ghost" id="btn-leave">Leave server</button>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ============ in-game HUD ============ -->
+<div id="hud" class="hidden">
+  <div id="topbar"></div>
+  <div id="heropanel"></div>
+  <div id="players"></div>
+  <div id="msgs"></div>
+  <div id="chatlog"></div>
+  <div id="chatbox" class="hidden"><input id="chat-input" maxlength="200" autocomplete="off"></div>
+  <div id="bottom">
+    <div id="mm-wrap"><canvas id="minimap"></canvas></div>
+    <div id="selpanel"></div>
+    <div id="card"></div>
+  </div>
+  <div id="banner" class="hidden"></div>
+</div>
+<div id="tooltip" class="hidden"></div>
+
+<script type="module" src="/client/main.js"></script>
+</body>
+</html>
