@@ -81,6 +81,12 @@ export function initUI(hk) { hooks = { ...hooks, ...hk }; buildStatic(); }
 //  LOBBY
 // ============================================================================
 const amHost = () => G.lobby && G.lobby.host === G.cid;
+/** The game modes as the lobby shows them: key, icon, name, one line about it. */
+const MODES = [
+  ['rt', ['building', 'hq'], 'Real-time', 'The classic: build a kitchen, raise a brigade, raze the enemy HQ.'],
+  ['turn', ['ui', 'endturn'], 'Turn-based', 'The same game on a grid, one kitchen at a time. Every unit moves once.'],
+  ['ctf', ['ui', 'flag'], 'Capture the Flag', 'One hero each. Farm minions, buy items, steal the flag. About 15 minutes.'],
+];
 const mySlot = () => (G.lobby ? G.lobby.slots.findIndex((s) => s && s.cid === G.cid) : -1);
 
 function slotCard(s, i) {
@@ -125,7 +131,14 @@ export function renderLobby() {
   $('lobby-slots').replaceChildren(...L.slots.map(slotCard));
 
   const turn = L.opts.mode === 'turn', ctf = L.opts.mode === 'ctf';
-  const shown = (k) => (k.startsWith('turn') ? turn : k.startsWith('ctf') ? ctf : ctf ? ['mode', 'fog', 'speed'].includes(k) : true);
+  // the game mode: three big buttons across the top of the lobby
+  const cur = L.opts.mode || OPTIONS.mode.def;
+  $('lobby-modes').replaceChildren(h('div', { class: 'modes-label' }, 'Game mode'), ...MODES.map(([key, icon, name, line]) => h('button', {
+    class: 'mode-card' + (cur === key ? ' on' : ''), 'data-mode': key, disabled: !host && cur !== key,
+    title: host ? (cur === key ? 'Selected' : 'Switch to ' + name) : 'The host picks the game mode',
+    onclick: () => { if (host && cur !== key) { send({ t: 'opt', k: 'mode', v: key }); sfx('click'); } },
+  }, img(icon[0], icon[1], 'mode-ico', icon[0] === 'building' ? (mine >= 0 ? colorHex(L.slots[mine].color) : '#e2403a') : null, 96), h('div', { class: 'mode-text' }, h('div', { class: 'mode-name' }, name), h('div', { class: 'mode-line' }, line)))));
+  const shown = (k) => k !== 'mode' && (k.startsWith('turn') ? turn : k.startsWith('ctf') ? ctf : ctf ? ['fog', 'speed'].includes(k) : true);
   $('lobby-opts').replaceChildren(...Object.keys(OPTIONS).filter(shown).map((k) => h('label', { class: 'opt' + (k === 'mode' ? ' wide' : '') }, h('span', null, OPTIONS[k].label),
     h('select', { disabled: !host, 'data-opt': k, onchange: (ev) => send({ t: 'opt', k, v: ev.target.value }) },
       Object.keys(OPTIONS[k].choices).map((v) => h('option', { value: v, selected: String(L.opts[k]) === v }, OPTIONS[k].choices[v]))))));
@@ -567,11 +580,13 @@ const itemName = (code) => (code[0] === 'u' ? (G.ps[G.me].stats.units[code.slice
 function refreshSelection(force) {
   const sel = selected();
   const panel = $('selpanel');
-  const sig = sel.length === 0 ? 'none' + G.me
+  const sig = sel.length === 0 ? 'none' + G.me + (G.ctf && G.me >= 0 ? ':' + G.ps[G.me].heroId + ':' + Math.ceil((G.ps[G.me].heroRespawn - G.tick) / G.tickRate) : '')
     : sel.length === 1 ? [sel[0].id, sel[0].hp, sel[0].prog, sel[0].qpct, (sel[0].q || []).join(), sel[0].amount, sel[0].carry, sel[0].sn, sel[0].inside, sel[0].owner >= 0 ? G.ps[sel[0].owner].sig : '', sel[0].left, sel[0].qleft, G.tb ? G.tb.cur : ''].join('|')
       : sel.map((e) => e.id + ':' + Math.ceil(e.hp / 5)).join(',');
   if (sig === selSig && !force) return;
   selSig = sig;
+  // nothing selected: the panel tucks itself away (in the arena it comes back to count down a respawn)
+  panel.classList.toggle('empty', !sel.length && !(G.ctf && G.me >= 0 && !G.ps[G.me].heroId));
 
   if (!sel.length) {
     if (G.me < 0) { panel.replaceChildren(h('div', { class: 'sel-empty' }, h('b', null, 'Spectating'), h('div', { class: 'muted' }, 'You can see the whole map. Click anything to inspect it.'))); return; }

@@ -107,8 +107,8 @@ A friend's copy uses its own `public/music` and `public/sfx` folders, so each pl
 - The first player in (or whoever is on the host PC) is the host. The host adds bots, sets the options and starts the match.
 - Click your commander to choose one. Click the coloured dot to change colour. Same team number = allies (shared vision, team chat).
 - Up to 10 kitchens per match. Fill empty seats with bots from the "+ Add bot" menu on each seat.
-- **Game mode**: Real-time (the classic game), Turn-based (see [Turn-based mode](#turn-based-mode)) or
-  Capture the Flag (see [Capture the Flag](#capture-the-flag)).
+- **Game mode**: the three big buttons across the top of the lobby (the host picks): Real-time (the classic game),
+  Turn-based (see [Turn-based mode](#turn-based-mode)) or Capture the Flag (see [Capture the Flag](#capture-the-flag)).
 - Options: map size, starting pantry, staff limit, game speed, fog of war, and the victory rule
   (destroy every enemy Kitchen HQ, or Conquest: destroy every station). Map size "Auto" picks Small (96×96 tiles) for 2,
   Medium (128) for 3-4, Large (160) for 5-6 and Huge (200) for 7-10 kitchens; a size too small for the head count is bumped up.
@@ -223,7 +223,7 @@ window edge; Menu → Full screen makes edge scrolling nicer still.
 
 ## Turn-based mode
 
-Choose **Game mode → Turn-based (tactics)** in the lobby for a match in the style of the handheld Age of Empires
+Click **Turn-based** at the top of the lobby for a match in the style of the handheld Age of Empires
 games: the same commanders, units, stations, upgrades and ages, on a small grid, one kitchen at a time.
 
 - **Your turn.** Every unit may move once (the blue tiles show how far) and then do one thing: attack, build, repair
@@ -255,7 +255,7 @@ games: the same commanders, units, stations, upgrades and ages, on a small grid,
 
 ## Capture the Flag
 
-Choose **Game mode → Capture the Flag (heroes)** in the lobby for a fast hero brawl in the style of a MOBA: no
+Click **Capture the Flag** at the top of the lobby for a fast hero brawl in the style of a MOBA: no
 kitchen to run, one hero each, 5v5, 2v2, a ten-way free-for-all or anything in between, and a match that is over in
 about 15 minutes.
 
