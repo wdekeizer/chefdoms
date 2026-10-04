@@ -3,6 +3,30 @@
 Everyone in a match needs the same version: after the host updates, friends run `git pull` in their copy
 (the lobby chat warns when a copy and the server differ).
 
+## v1.1.0
+
+**Capture the Flag** (lobby → Game mode → Capture the Flag (heroes))
+- A fast hero brawl in the style of a MOBA: no kitchen to run, one hero each, teams of any size or a free-for-all,
+  a match of about 15 minutes. Steal the enemy flag and carry it to your own stand; first to 3, 5 or 7 captures wins,
+  or the most when the clock (10, 15 or 20 minutes) runs out, with sudden death if it is level.
+- Kitchens sit round a ring with wild minion camps between them and **The Head Critic**, a boss, in the middle.
+  Minions mind their own business until you hit one, then the whole camp fights back; camps respawn and grow tougher
+  and richer every two and a half minutes.
+- **Tips** are the currency (a trickle every second, bounties for minions and heroes, 50 for a capture). Spend them at
+  your kitchen on six item tracks (Skillet, Chef's Whites, Hearty Stew, Running Clogs, Double Espresso, Herb Garden)
+  with two or three tiers each, or on an Energy Bar that heals anywhere.
+- Four new heroes, playable only here: Dolly Quintero (melee tank), Kofi Mensah (melee striker), Ingrid Halvorsen
+  (ranged control) and Rafa Santos (ranged sniper). The six commanders fight here too, with short cooldowns, ultimates
+  from 3:00, and arena kits for Hank (Thick Bark) and Zara (Rush Hour).
+- Camera lock on your hero (`Y` toggles, the minimap or a middle-drag frees it), a score bar with the captures and the
+  clock, dropped flags with a countdown, camp names and respawn timers, flags and camps on the minimap, bounty
+  numbers, and an end-of-match table of captures, hero kills, deaths, minions, Tips and items.
+- Bots play it at all four levels. `node tools/sim-test.js --mode ctf` runs them headless.
+
+**Also**
+- Up to **10 players** in every mode (two new colours: Cocoa and Slate).
+- New sounds for flags, bounties, purchases, sudden death and the new ultimates (see `public/sfx/README.txt`).
+
 ## v1.0.3
 
 **Commander ultimates**

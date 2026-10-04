@@ -7,7 +7,7 @@ import { G, K_UNIT, K_BLDG, K_NODE, canSee, isAlly, selected, setSelection, cmd,
 import { screenToWorld, zoomBy, canPlaceLocal, view } from './render.js';
 import { BUILDINGS, TILE, FORMATIONS } from '/game/data.js';
 import { sfx } from './audio.js';
-import { actionOf, keyOf } from './keys.js';
+import { actionOf, keyOf, labelOf } from './keys.js';
 import * as TAC from './tactics.js';
 
 const keys = {};
@@ -27,7 +27,18 @@ export function setEdgeScroll(v) { edgeScroll = !!v; }
 export function setCamSpeed(v) { camSpeed = Math.max(0.4, Math.min(2.5, Number(v) || 1)); }
 export const mark = (x, y, color) => G.marks.push({ x, y, t0: performance.now(), color });
 
-function centerOn(x, y) { G.cam.x = x; G.cam.y = y; }
+function centerOn(x, y, unlock) { if (unlock && G.follow) toggleFollow(false); G.cam.x = x; G.cam.y = y; }
+
+/** Capture the flag: lock the camera on your hero (it scrolls with the hero) or free it again. */
+export function toggleFollow(v) {
+  const on = v === undefined ? !G.follow : !!v;
+  if (on === G.follow) return;
+  G.follow = on;
+  if (on) { const h = myHeroEnt(); if (h) { G.cam.x = h.rx; G.cam.y = h.ry; } }
+  hooks.note(on ? `Camera locked on your hero (${labelOf('follow')} frees it)` : `Free camera (${labelOf('follow')} locks it on your hero)`);
+  hooks.selection();
+}
+const myHeroEnt = () => { const p = G.me >= 0 ? G.ps[G.me] : null; return p && p.heroId ? G.ents.get(p.heroId) : null; };
 
 // -------------------------------------------------------------------- picking
 /** The unit, station or resource under a map position (units first). */
@@ -340,7 +351,8 @@ function onKeyDown(ev) {
     case 'hq': selectHQ(double); break;
     case 'idle': selectIdleCook(); break;
     case 'army': selectArmy(); break;
-    case 'alert': if (G.lastAlert) centerOn(G.lastAlert.x, G.lastAlert.y); break;
+    case 'alert': if (G.lastAlert) centerOn(G.lastAlert.x, G.lastAlert.y, true); break;
+    case 'follow': if (G.ctf && G.me >= 0) toggleFollow(); break;
     case 'ping': if (G.me >= 0) G.mode = { type: 'ping' }; break;
     case 'bell': toggleBell(); break;
     case 'formation': if (G.tb) break; setFormation((G.formation + 1) % FORMATIONS.length); hooks.note('Formation: ' + FORMATIONS[G.formation].name); hooks.selection(); break;
@@ -362,7 +374,7 @@ function onMouseDown(ev) {
   updateMouse(ev);
   if (document.activeElement && document.activeElement.blur && document.activeElement.tagName === 'INPUT') document.activeElement.blur();
   const { wx, wy } = G.mouse;
-  if (ev.button === 1) { pan = { x: ev.clientX, y: ev.clientY, cx: G.cam.x, cy: G.cam.y }; ev.preventDefault(); return; }
+  if (ev.button === 1) { if (G.follow) toggleFollow(false); pan = { x: ev.clientX, y: ev.clientY, cx: G.cam.x, cy: G.cam.y }; ev.preventDefault(); return; }
   if (ev.button === 2) {
     if (G.mode) { G.mode = null; return; }
     contextCommand(wx, wy, ev.shiftKey);
@@ -440,6 +452,16 @@ export function updateInput(dt) {
     const x = G.mouse.x, y = G.mouse.y;
     if (x <= EDGE_X) dx -= 1; else if (x >= window.innerWidth - EDGE_X - 1) dx += 1;
     if (y <= EDGE_TOP) dy -= 1; else if (y >= window.innerHeight - EDGE_BOTTOM - 1) dy += 1;
+  }
+  if (G.follow && G.ctf) {                                           // capture the flag: the camera rides along with the hero
+    const h = myHeroEnt();
+    if (h) {
+      const k = Math.min(1, dt * 9);
+      G.cam.vx = Math.sign(h.rx - G.cam.x); G.cam.vy = Math.sign(h.ry - G.cam.y);
+      G.cam.x += (h.rx - G.cam.x) * k; G.cam.y += (h.ry - G.cam.y) * k;
+    } else { G.cam.vx = 0; G.cam.vy = 0; }
+    [G.mouse.wx, G.mouse.wy] = screenToWorld(G.mouse.x, G.mouse.y);
+    return;
   }
   if (dx || dy) {
     const speed = (CAM_PX_PER_S * camSpeed * view.dpr) / G.cam.scale;         // tiles per second

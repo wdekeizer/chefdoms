@@ -19,6 +19,8 @@ Interface
   ult        a commander's ultimate                          [ability]
   ult_flambe, ult_feast, ult_lockdown, ult_perfectcut,
   ult_glass, ult_swarm   each ultimate's own sound           [ult]
+  ult_lastcall, ult_storm, ult_bark, ult_freeze, ult_flood
+             the Capture the Flag ultimates                  [ult]
   herodown   your commander fell
   win, lose  end of the match
   chat       a chat message
@@ -31,6 +33,17 @@ Turn-based matches
   turn_other someone else's turn begins                      [click]
   endturn    you end your turn                               [click]
   heal       a unit is healed or a station repaired          [click]
+
+Capture the Flag
+  flag_take    you (or a team-mate) grabbed a flag           [ability]
+  flag_lost    your flag has been taken                      [alert]
+  flag_return  your flag is back on its stand                [built]
+  flag_cap     your team captured                            [age]
+  flag_lostcap the other side captured                       [herodown]
+  coin         a bounty lands in your tip jar                [click]
+  buy          you bought an item                            [tech]
+  sudden       sudden death begins                           [alert]
+  level        the wild minions grow stronger                [tech]
 
 Selecting units                                              [select]
   sel_cook   Prep Cook            sel_inf      infantry

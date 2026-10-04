@@ -13,7 +13,7 @@ import { sfx, unlockAudio, setCustomSfx, effectiveMusicVolume } from './audio.js
 import { music } from './music.js';
 import { cursorFor } from './cursors.js';
 import * as TAC from './tactics.js';
-import { COMMANDERS, COMMANDER_KEYS, AGE_NAMES, TECHS, UNITS, VERSION, RES, RES_INFO, TB } from '/game/data.js';
+import { COMMANDERS, COMMANDER_KEYS, AGE_NAMES, TECHS, UNITS, VERSION, RES, RES_INFO, TB, CTF, ctfKit } from '/game/data.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -40,7 +40,7 @@ function soundscape(now) {
     let fighting = (G.lastAlertAt && now - G.lastAlertAt < 6000) || (G.tb && G.lastFightAt && now - G.lastFightAt < 9000);
     if (!fighting) {
       let n = 0;
-      for (const e of G.units) if (e.st === 2 && (G.me < 0 || e.owner === G.me)) { if (++n >= (G.me < 0 ? 6 : 2)) { fighting = true; break; } }
+      for (const e of G.units) if (e.st === 2 && (G.me < 0 || e.owner === G.me)) { if (++n >= (G.me < 0 ? 6 : G.ctf ? 1 : 2)) { fighting = true; break; } }
     }
     if (fighting) { if (!fightSince) fightSince = now; if (now - fightSince > 1200) battleUntil = now + 9000; } else fightSince = 0;
     if (!G.over) music.setState(now < battleUntil ? 'battle' : 'calm');
@@ -104,6 +104,7 @@ const net = new Net(
   },
   () => store.get('server') || '');
 G.net = net;
+G.hooks.message = (m) => onMessage(m);      // for development scripts: feed the client a server message by hand
 
 function onMessage(m) {
   switch (m.t) {
@@ -135,6 +136,11 @@ function onMessage(m) {
       UI.resetHUD();
       if (!m.resync) UI.note(m.you >= 0 ? `You are ${COMMANDERS[m.players[m.you].commander].name}. Good luck, chef!` : 'You are watching this match.', 'good');
       if (!m.resync && G.tb && m.you >= 0) UI.note(`Turn-based match: move each unit once, then act. ${labelOf('endTurn')} ends your turn.`);
+      G.follow = !!(G.ctf && m.you >= 0 && !m.resync); autoSelect = !!(G.ctf && m.you >= 0);
+      if (!m.resync && G.ctf && m.you >= 0) {
+        UI.note(`Capture the Flag: steal the enemy flag and carry it home. First to ${G.ctf.capsToWin}, or the most when ${Math.round(G.ctf.timeLimit / 60)} minutes are up.`);
+        UI.note(`Fell wild minions for Tips and spend them at your kitchen. The camera follows your hero; ${labelOf('follow')} frees it.`);
+      }
       break;
     }
     case 's': if (G.phase === 'game') applySnapshot(m); break;
@@ -180,6 +186,11 @@ const NOTES = {
   pop: 'Staff limit reached: build another Break Room',
   popmax: 'Staff limit reached',
   ultage: 'Ultimates unlock in the Bistro Age',
+  // capture the flag
+  shop: 'Shop at your own kitchen (or while you wait to respawn)',
+  tips: 'Not enough Tips',
+  maxed: 'That item is fully upgraded',
+  full: 'Still chewing the last Energy Bar',
   ulttarget: 'No enemy within reach for that',
   // turn-based
   pantry: 'A Pantry is built ON a resource: a Veggie Patch, Timber Stand, Spice Mound, Salt Rock or Fishing Spot',
@@ -189,8 +200,11 @@ const NOTES = {
   blocked: 'Something is in the way',
   stuck: 'Stuck in caramel: it cannot attack this turn',
 };
-let lastIncome = null;
+let lastIncome = null, autoSelect = false;
 const onScreen = (x, y) => (isSpectator() || tileVisible(x, y));
+const myTeam = () => (G.me >= 0 ? G.players[G.me].team : -2);
+const flagOwner = (team) => { const p = G.players.find((q) => q.team === team && !q.neutral); return p ? (team === myTeam() ? 'your' : G.players.filter((q) => q.team === team && !q.neutral).length > 1 ? p.name + "'s team" : p.name + "'s") : 'the'; };
+const kitOfPlayer = (pi) => { const C = COMMANDERS[G.players[pi].commander]; return G.ctf ? ctfKit(C) : { ability: C.ability, ultimate: C.ultimate }; };
 
 G.hooks.event = (ev) => {
   const now = performance.now(), Q = G.Q;
@@ -225,7 +239,7 @@ G.hooks.event = (ev) => {
       break;
     }
     case 'alert':
-      if (!mine) break;
+      if (!mine || G.ctf) break;                                        // (in the arena you see your hero: no alarm bells)
       G.lastAlert = { x: ev[2], y: ev[3] }; G.lastAlertAt = now;
       G.pings.push({ x: ev[2], y: ev[3], t0: now });
       UI.note(ev[4] === K_BLDG ? 'Your station is under attack!' : 'Your crew is under attack!', 'bad');
@@ -247,7 +261,7 @@ G.hooks.event = (ev) => {
       break;
     }
     case 'ability': {
-      const P = G.players[ev[1]], A = COMMANDERS[P.commander].ability;
+      const P = G.players[ev[1]], A = kitOfPlayer(ev[1]).ability;
       const x = ev[3] / Q, y = ev[4] / Q;
       if (onScreen(x, y) || mine) {
         G.fx.push({ kind: 'ring', x, y, t0: now, dur: 900, color: R.colorOf(ev[1]), k: G.tb ? (TB.abilityRange + 0.5) / 3 : (A.radius || 8) / 3 });
@@ -258,7 +272,7 @@ G.hooks.event = (ev) => {
       break;
     }
     case 'ult': {                        // a commander's ultimate: everybody hears about it
-      const P = G.players[ev[1]], U = COMMANDERS[P.commander].ultimate;
+      const P = G.players[ev[1]], U = kitOfPlayer(ev[1]).ultimate;
       const x = ev[3] / Q, y = ev[4] / Q, col = R.colorOf(ev[1]), seen = onScreen(x, y) || mine;
       const big = G.tb ? (TB.abilityRange + 0.5) / 3 : (U.radius || 9) / 3;
       if (seen) {
@@ -299,19 +313,80 @@ G.hooks.event = (ev) => {
     }
     case 'herodown': {
       const P = G.players[ev[1]];
+      if (G.ctf) {
+        const K = ev[2] >= 0 ? G.players[ev[2]] : null, iKilled = ev[2] === G.me;
+        if (mine) { UI.note(`You were taken out${K ? ' by ' + K.name : ''}! Respawning at your kitchen shortly: a good moment to shop.`, 'bad'); sfx('herodown'); G.lastFightAt = now; }
+        else if (iKilled) { UI.note(`You took out ${COMMANDERS[P.commander].name} (${P.name})!`, 'good'); sfx('flag_return'); }
+        else UI.note(`${P.name} is down${K ? ' (' + K.name + ')' : ''}`, isAlly(ev[1]) ? 'warn' : '');
+        break;
+      }
       UI.note(mine ? (G.tb ? 'Your commander is down! Back at the Kitchen HQ in a few turns.' : 'Your commander is down! Back at the Kitchen HQ shortly.') : `${COMMANDERS[P.commander].name} (${P.name}) has been carried off the field`, mine ? 'bad' : '');
       if (mine) sfx('herodown');
       break;
     }
     case 'heroup':
-      if (mine) { UI.note('Your commander is back on the field', 'good'); sfx('spawn_hero'); }
+      if (mine) { UI.note(G.ctf ? 'Back on the field!' : 'Your commander is back on the field', 'good'); sfx('spawn_hero'); if (G.ctf) autoSelect = true; }
       break;
+    // ---- capture the flag
+    case 'flag': {                       // ['flag', take|drop|return|cap, flagTeam, player, qx, qy]
+      const kind = ev[1], team = ev[2], pi = ev[3], x = ev[4] / Q, y = ev[5] / Q, ours = team === myTeam();
+      const who = pi >= 0 && G.players[pi] ? G.players[pi] : null, me = pi === G.me, ally = pi >= 0 && isAlly(pi);
+      const col = R.teamColor(team);
+      G.fx.push({ kind: 'ring', x, y, t0: now, dur: 800, color: col, k: 0.8 });
+      if (kind === 'take') {
+        if (ours) { UI.note(`${who ? who.name : 'Someone'} has taken your flag! Hunt the carrier down.`, 'bad'); sfx('flag_lost'); G.lastAlert = { x, y }; G.lastAlertAt = now; G.pings.push({ x, y, t0: now }); }
+        else if (me) { UI.note('You have the flag! Run it home.', 'good'); sfx('flag_take'); }
+        else if (ally) { UI.note(`${who.name} has ${flagOwner(team)} flag: cover the run!`, 'good'); sfx('flag_take', 0.6); }
+        else if (who) UI.note(`${who.name} took ${flagOwner(team)} flag`);
+      } else if (kind === 'drop') {
+        if (ours) { UI.note('Your flag is on the ground: touch it to return it!', 'warn'); G.lastAlert = { x, y }; G.pings.push({ x, y, t0: now }); }
+        else if (G.me >= 0) UI.note(`${flagOwner(team)[0].toUpperCase() + flagOwner(team).slice(1)} flag was dropped`);
+      } else if (kind === 'return') {
+        if (ours) { UI.note(me ? 'You returned your flag!' : 'Your flag is back on its stand', 'good'); sfx('flag_return'); }
+      } else if (kind === 'cap') {
+        if (me || ally) { UI.note(`CAPTURE! ${me ? 'You' : who.name} scored${G.ctf.caps[myTeam()] !== undefined ? '' : ''}`, 'good'); sfx('flag_cap'); }
+        else if (ours) { UI.note(`${who ? who.name : 'The enemy'} captured your flag!`, 'bad'); sfx('flag_lostcap'); }
+        else if (who) { UI.note(`${who.name} captured ${flagOwner(team)} flag`); sfx('flag_lostcap', 0.5); }
+        for (const [d, k] of [[0, 1.2], [150, 0.9], [300, 0.6]]) G.fx.push({ kind: 'ring', x, y, t0: now + d, dur: 1000, color: col, k });
+      }
+      UI.refreshAll(true);
+      break;
+    }
+    case 'bounty': {                     // ['bounty', player, tips, qx, qy]
+      const x = ev[3] / Q, y = ev[4] / Q;
+      if (mine) { G.fx.push({ kind: 'num', x, y: y - 0.3, t0: now, dur: 1300, text: '+' + ev[2], color: '#ffd86b' }); G.fx.push({ kind: 'coin', x, y: y - 0.6, t0: now, dur: 900 }); sfx('coin'); G.lastFightAt = now; }
+      else if (onScreen(x, y)) G.fx.push({ kind: 'coin', x, y: y - 0.6, t0: now, dur: 900 });
+      break;
+    }
+    case 'item': {                       // ['item', player, key, tier]
+      if (!mine) break;
+      const it = CTF.items[ev[2]];
+      UI.note(`Bought ${it ? it.name : ev[2]} ${['I', 'II', 'III'][ev[3] - 1] || ev[3]}`, 'good'); sfx('buy'); UI.refreshAll(true);
+      break;
+    }
+    case 'eat': {                        // ['eat', player, qx, qy]
+      const x = ev[2] / Q, y = ev[3] / Q;
+      if (onScreen(x, y) || mine) { G.fx.push({ kind: 'heal', x, y, t0: now, dur: 800 }); sfx('heal'); }
+      break;
+    }
+    case 'camp': break;                  // the renderer shows camps coming and going
+    case 'minions':                      // ['minions', level]
+      if (G.me >= 0) { UI.note(`The wild minions grow tougher (level ${ev[1] + 1}): bigger bounties too`, 'warn'); sfx('level'); }
+      break;
+    case 'sudden':
+      UI.note('SUDDEN DEATH: the next capture wins!', 'bad'); sfx('sudden'); G.lastAlertAt = now;
+      break;
+    case 'flood': {                      // ['flood', player, qx, qy, angle*100, length, width]
+      const x = ev[2] / Q, y = ev[3] / Q;
+      if (onScreen(x, y) || mine) G.fx.push({ kind: 'flood', x, y, ang: ev[4] / 100, len: ev[5], width: ev[6], t0: now, dur: 1000 });
+      break;
+    }
     case 'elim':
       UI.note(mine ? 'Your kitchen has fallen. You can keep watching.' : `${G.players[ev[1]].name} has been eliminated`, mine ? 'bad' : 'warn');
       if (mine) { G.sel.clear(); G.mode = null; }
       break;
     case 'note':
-      if (mine && NOTES[ev[2]]) { UI.note(NOTES[ev[2]], 'warn'); sfx('error'); }
+      if (mine && NOTES[ev[2]]) { UI.note(G.ctf && ev[2] === 'ultage' ? `Ultimates unlock at ${CTF.ultUnlockMin}:00` : NOTES[ev[2]], 'warn'); sfx('error'); }
       break;
     case 'tip':
       G.fx.push({ kind: 'coin', x: ev[2] / Q, y: ev[3] / Q - 0.6, t0: now, dur: 900 });
@@ -385,6 +460,7 @@ function boot() {
     setCamSpeed: (v) => IN.setCamSpeed(v),
     setFormation: (f) => IN.setFormation(f),
     toggleBell: () => IN.toggleBell(),
+    toggleFollow: () => IN.toggleFollow(),
   });
   IN.initInput(canvas, {
     selection: () => UI.refreshAll(true),
@@ -404,7 +480,7 @@ function boot() {
   mm.addEventListener('mousedown', (ev) => {
     const [x, y] = mmWorld(ev);
     if (ev.button === 0 && (ev.altKey || (G.mode && G.mode.type === 'ping'))) { IN.pingAt(x, y); if (G.mode && G.mode.type === 'ping') G.mode = null; }
-    else if (ev.button === 0) { mmDrag = true; G.cam.x = x; G.cam.y = y; }
+    else if (ev.button === 0) { if (G.follow) IN.toggleFollow(false); mmDrag = true; G.cam.x = x; G.cam.y = y; }
     else if (ev.button === 2 && !G.tb) IN.contextCommand(x, y, ev.shiftKey);
     ev.preventDefault();
   });
@@ -421,6 +497,7 @@ function boot() {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     if (G.phase !== 'game') return;
+    if (autoSelect && G.ctf && G.me >= 0 && G.ps[G.me].heroId && G.ents.get(G.ps[G.me].heroId)) { autoSelect = false; if (!G.sel.size) IN.selectHero(false); }   // capture the flag: your hero starts selected
     IN.updateInput(dt);
     frameUpdate(now);
     // what is under the mouse decides the cursor: sword = attack, basket = gather, hammer = build, arrow = deliver

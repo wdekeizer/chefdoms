@@ -796,6 +796,334 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
   }
 }
 
+// ------------------------------------------------- v1.1.0: capture the flag
+{
+  const { CtfGame, generateCtfMap, ITEM_KEYS } = await import('../game/ctf.js');
+  const { CtfBot } = await import('../game/ctf-ai.js');
+  const { CTF, HERO_KEYS, ctfHeroStats, ctfItemCost, MAX_PLAYERS } = await import('../game/data.js');
+  const mkc = (specs, opts = {}) => new CtfGame({ players: specs.map(([c, team], i) => ({ name: 'P' + i, commander: c, team, color: i, bot: opts.bots ? 'normal' : null })), seed: opts.seed || 11, ctfCaps: opts.caps || 3, ctfTime: opts.time || 15 });
+  const hero = (g, pi) => g.heroOf(g.players[pi]);
+  /** Put a unit down somewhere (tests only). */
+  const place = (g, u, x, y) => { u.x = x; u.y = y; u.order = null; u.path = null; u.st = ST.IDLE; };
+  const settle = (g) => { g.step(); };                                              // (one tick refreshes the spatial index)
+
+  // ---- data: the arena-only heroes exist, the shared keys are split properly
+  {
+    const extra = HERO_KEYS.filter((k) => !COMMANDER_KEYS.includes(k));
+    ok(extra.length === 4 && extra.every((k) => COMMANDERS[k].ctfOnly && UNITS[COMMANDERS[k].hero] && COMMANDERS[k].ability && COMMANDERS[k].ultimate && COMMANDERS[k].aura), 'ctf: four arena-only heroes with a kit, an aura and a unit each', extra.join(','));
+    ok(HERO_KEYS.length === 10 && MAX_PLAYERS === 10, 'ctf: ten heroes for ten players');
+    const melee = HERO_KEYS.filter((k) => !UNITS[COMMANDERS[k].hero].range).length;
+    ok(melee >= 4 && HERO_KEYS.length - melee >= 4, 'ctf: a mix of melee and ranged heroes', `${melee} melee, ${HERO_KEYS.length - melee} ranged`);
+    const base = computeStats('kofi', CTF.heroAge, []).units.hero_kofi;
+    const full = {}; for (const k of ITEM_KEYS) full[k] = CTF.items[k].tiers.length;
+    const S = ctfHeroStats(base, full), S0 = ctfHeroStats(base, {});
+    ok(S.hp > S0.hp && S.atk > S0.atk && S.speed > S0.speed && S.reload < S0.reload && S.armor > S0.armor && S.regen > 0, 'ctf: a full bag of items improves every stat', `hp ${S0.hp}→${S.hp} atk ${S0.atk}→${S.atk}`);
+    ok(ctfItemCost('skillet', 0) === 140 && ctfItemCost('skillet', 3) === 0 && ctfItemCost('nope', 0) === 0, 'ctf: item prices climb by tier and stop at the top');
+  }
+
+  // ---- the map: a base per team, camps, everything connected
+  {
+    for (const teams of [[1, 2], [1, 2, 3, 4], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]) {
+      const m = generateCtfMap(teams, 5);
+      const bad = [];
+      if (m.bases.length !== teams.length) bad.push('bases ' + m.bases.length);
+      if (!m.camps.some((c) => c.type === 'critic')) bad.push('no critic');
+      if (m.camps.filter((c) => c.type !== 'critic').length < teams.length * 3) bad.push('few camps ' + m.camps.length);
+      // every base reaches every other base over grass
+      const walk = (t) => t === TILE.GRASS;
+      const seen = new Uint8Array(m.w * m.h), q = [m.bases[0].ty * m.w + m.bases[0].tx]; seen[q[0]] = 1;
+      while (q.length) { const i = q.pop(), x = i % m.w, y = (i / m.w) | 0; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= m.w || ny >= m.h) continue; const j = ny * m.w + nx; if (!seen[j] && walk(m.tiles[j])) { seen[j] = 1; q.push(j); } } }
+      for (const b of m.bases) if (!seen[b.ty * m.w + b.tx]) bad.push('base cut off ' + b.team);
+      for (const c of m.camps) { let near = false; for (let dy = -2; dy <= 2 && !near; dy++) for (let dx = -2; dx <= 2; dx++) if (seen[(c.y + dy) * m.w + c.x + dx]) { near = true; break; } if (!near) bad.push('camp cut off ' + c.type); }
+      ok(!bad.length, `ctf: a ${teams.length}-team arena (${m.w}×${m.h}) has a base per team, camps and open paths`, bad.join(', '));
+    }
+  }
+
+  // ---- start: one hero each, a shared invulnerable kitchen per team, Tips, the wild kitchen last
+  {
+    const g = mkc([['kofi', 1], ['nonna', 1], ['ryo', 2], ['rafa', 2]]);
+    const N = g.neutral;
+    ok(N.neutral && N.team === -1 && g.players.length === 5 && g.players.slice(0, 4).every((P) => !P.neutral), 'ctf: the wild kitchen is appended as the last player');
+    ok(g.players.slice(0, 4).every((P) => hero(g, P.idx) && P.res.food === CTF.startTips && P.age === CTF.heroAge), 'ctf: everybody starts with a hero and the starting Tips');
+    const hqs = g.bldgs.filter((b) => b.type === 'hq');
+    ok(hqs.length === 2 && hqs.every((b) => b.invuln && b.shared), 'ctf: one unbreakable kitchen per team');
+    const h0 = hero(g, 0), h1 = hero(g, 1);
+    ok(Math.hypot(h0.x - h1.x, h0.y - h1.y) < 6, 'ctf: team-mates spawn at the same kitchen');
+    run(g, 3);
+    const hp = hqs[0].hp; g.applyDamage(2, hero(g, 2).id, hqs[0], 500, {}, false);
+    ok(hqs[0].hp === hp, 'ctf: kitchens shrug off damage');
+    ok(g.units.some((u) => u.owner === N.idx && u.camp), 'ctf: the wild camps are populated');
+    const cooks = g.units.filter((u) => u.owner === N.idx && u.type === 'cook');
+    ok(cooks.length > 0 && cooks.every((u) => u.noPop && u.bounty > 0 && u.camp), 'ctf: minions carry a bounty and cost no staff');
+  }
+
+  // ---- flags: take, run home, capture; drop on death; a dropped flag returns on touch or by timer
+  {
+    const g = mkc([['kofi', 1], ['ryo', 2]]);
+    const [A, B] = g.players, fA = g.flagOf(1), fB = g.flagOf(2);
+    const hA = hero(g, 0);
+    ok(fA.state === 0 && fB.state === 0 && fA.x === fA.hx, 'ctf: flags start on their stands');
+    place(g, hA, fB.hx, fB.hy); g.step(); g.step();
+    ok(fB.state === 1 && fB.carrier === hA.id && hA.buffs && hA.buffs.flagged, 'ctf: stepping on the enemy flag picks it up');
+    const ev = g.events.find((e) => e[0] === 'flag' && e[1] === 'take');
+    ok(ev && ev[2] === 2 && ev[3] === 0, 'ctf: and announces who took it');
+    g.delta();
+    const fx = fB.x; run(g, 0.5);
+    place(g, hA, fA.hx + 0.5, fA.hy); g.step(); g.step();
+    ok(fB.state === 0 && fB.x === fB.hx && g.caps[1] === 1 && A.caps === 1 && A.res.food > CTF.startTips, 'ctf: bringing it to your own stand scores and pays Tips', `caps ${JSON.stringify(g.caps)} tips ${A.res.food}`);
+    // our own flag away: no capture until it is back
+    const hB = hero(g, 1);
+    place(g, hB, fA.hx, fA.hy); place(g, hA, 40, 40); g.step();
+    ok(fA.state === 1 && fA.carrier === hB.id, 'ctf: the other side can take our flag too');
+    place(g, hA, fB.hx, fB.hy); g.step();
+    ok(fB.state === 1 && fB.carrier === hA.id, 'ctf: both flags can be out at once');
+    place(g, hA, fA.hx, fA.hy); place(g, hB, 50, 50); g.step(); g.step();
+    ok(fB.state === 1 && g.caps[1] === 1, 'ctf: no capture while your own flag is away');
+    // the carrier falls: the flag drops where they stood, a team-mate (or the owner) touching it returns it
+    const tipsBefore = A.res.food;
+    g.killEntity(hB, 0); g.step();
+    ok(fA.state === 2 && Math.abs(fA.x - 50) < 1 && B.deaths === 1 && A.score.heroKills === 1, 'ctf: a felled carrier drops the flag', `state ${fA.state} at ${fA.x.toFixed(1)}`);
+    ok(A.res.food >= tipsBefore + CTF.heroBounty - 2, 'ctf: a hero kill pays a bounty', `${tipsBefore} → ${A.res.food}`);
+    place(g, hA, 50, 50); g.step();
+    ok(fA.state === 0 && fA.x === fA.hx, 'ctf: touching your own dropped flag returns it');
+    place(g, hA, fA.hx, fA.hy); g.step(); g.step();
+    ok(fB.state === 0 && g.caps[1] === 2, 'ctf: and the capture goes through as soon as it is home', JSON.stringify(g.caps));
+    // timer return
+    const g2 = mkc([['dolly', 1], ['ingrid', 2]]);
+    const h2 = hero(g2, 0), f2 = g2.flagOf(2);
+    place(g2, h2, f2.hx, f2.hy); g2.step(); place(g2, h2, 30, 30); g2.step(); g2.killEntity(h2, -1); g2.step();
+    ok(f2.state === 2, 'ctf: a flag dropped in the field waits');
+    run(g2, CTF.flag.dropReturn + 1);
+    ok(f2.state === 0 && f2.x === f2.hx, `ctf: and goes home by itself after ${CTF.flag.dropReturn}s`);
+    // a stunned hero cannot grab
+    const g3 = mkc([['kofi', 1], ['ryo', 2]]);
+    const h3 = hero(g3, 0), f3 = g3.flagOf(2);
+    h3.stunned = true; place(g3, h3, f3.hx, f3.hy); g3.step();
+    ok(f3.state === 0, 'ctf: a stunned hero cannot pick a flag up');
+  }
+
+  // ---- shop: at the kitchen only, Tips only, tiers, stats follow; the Energy Bar
+  {
+    const g = mkc([['kofi', 1], ['ryo', 2]]);
+    const A = g.players[0], h = hero(g, 0), base = g.baseOf.get(1);
+    const atk0 = h.S.atk, hp0 = h.S.hp;
+    ok(Math.abs(atk0 - Math.round(computeStats('kofi', CTF.heroAge, []).units.hero_kofi.atk * CTF.heroAtkMul * 10) / 10) < 0.11, 'ctf: heroes hit harder in the arena', String(atk0));
+    g.command(0, { c: 'buy', item: 'herbs' });
+    ok(A.items.herbs === 1 && A.res.food === CTF.startTips - 110 && h.S.regen === 3, 'ctf: buying Herb Garden I at the kitchen takes 110 Tips and adds regen');
+    g.command(0, { c: 'buy', item: 'skillet' });
+    ok(A.items.skillet === 0 && g.events.some((e) => e[0] === 'note' && e[2] === 'tips'), 'ctf: too poor for a Skillet');
+    A.res.food = 5000;
+    place(g, h, g.w / 2, g.h / 2); g.command(0, { c: 'buy', item: 'skillet' });
+    ok(A.items.skillet === 0 && g.events.some((e) => e[0] === 'note' && e[2] === 'shop'), 'ctf: no shopping away from the kitchen');
+    place(g, h, base.x + 1, base.y + 2);
+    for (let i = 0; i < 5; i++) g.command(0, { c: 'buy', item: 'skillet' });
+    ok(A.items.skillet === 3 && h.S.atk > atk0 && g.events.some((e) => e[0] === 'note' && e[2] === 'maxed'), 'ctf: three Skillet tiers, then it is maxed', `atk ${atk0} → ${h.S.atk}`);
+    h.hp = 100; g.command(0, { c: 'buy', item: 'stew' });
+    ok(h.S.hp === hp0 + 130 && h.hp === 230, 'ctf: a Stew tier raises max health and heals the difference');
+    g.command(0, { c: 'buy', item: 'clogs' }); g.command(0, { c: 'buy', item: 'whites' }); g.command(0, { c: 'buy', item: 'espresso' });
+    ok(h.S.speed > 3 && h.S.armor > 2 && h.S.reload < 0.75, 'ctf: clogs, whites and espresso change speed, armour and attack rate');
+    g.command(0, { c: 'buy', item: '__proto__' }); g.command(0, { c: 'buy', item: 42 }); g.command(0, { c: 'buy' });
+    ok(Object.keys(A.items).length === ITEM_KEYS.length, 'ctf: junk item names are ignored');
+    // shopping while dead
+    const B = g.players[1], hb = hero(g, 1); B.res.food = 1000;
+    g.killEntity(hb, 0); g.step();
+    g.command(1, { c: 'buy', item: 'whites' });
+    ok(B.items.whites === 1, 'ctf: a fallen hero shops while waiting to respawn');
+    const back = g.heroRespawnTicks();
+    run(g, back / TICK_RATE + 1);
+    const hb2 = hero(g, 1);
+    ok(hb2 && hb2.S.armor > 2 && Math.hypot(hb2.x - g.baseOf.get(2).x, hb2.y - g.baseOf.get(2).y) < 6, 'ctf: and comes back at the kitchen wearing it');
+    // energy bar
+    A.res.food = 100; h.hp = 100;
+    g.command(0, { c: 'eat' });
+    ok(A.res.food === 40 && h.buffs && h.buffs.energy && A.energyReady > g.tick, 'ctf: an Energy Bar costs 60 Tips and starts healing');
+    run(g, 4.5);
+    ok(h.hp > 100 + h.S.hp * 0.3, 'ctf: it heals about a third of max health', `${h.hp}/${h.S.hp}`);
+    A.res.food = 100; g.command(0, { c: 'eat' });
+    ok(A.res.food === 100 && g.events.some((e) => e[0] === 'note' && e[2] === 'full'), 'ctf: one bar every 20 seconds');
+    // fountain
+    place(g, h, base.x, base.y + 3); h.hp = 50; run(g, 5);
+    ok(h.hp > 50 + h.S.hp * 0.3, 'ctf: heroes heal fast at their kitchen', `${Math.round(h.hp)}/${h.S.hp}`);
+    // respawn gets slower
+    const g4 = mkc([['kofi', 1], ['ryo', 2]]);
+    const early = g4.heroRespawnTicks(); g4.tick = 12 * 60 * TICK_RATE;
+    ok(early === CTF.respawn.base * TICK_RATE && g4.heroRespawnTicks() > early && g4.heroRespawnTicks() <= CTF.respawn.max * TICK_RATE, 'ctf: respawns take longer as the match goes on');
+  }
+
+  // ---- camps: bounties, the whole camp fights back, respawn, levels
+  {
+    const g = mkc([['kofi', 1], ['ryo', 2]]);
+    const A = g.players[0], h = hero(g, 0);
+    run(g, 1);
+    const camp = g.camps.find((c) => c.type === 'dishpit' && c.alive);
+    const first = g.ents.get([...camp.units][0]);
+    place(g, h, camp.x - 2, camp.y);
+    A.res.food = 0;
+    g.command(0, { c: 'at', ids: [h.id], tid: first.id });
+    run(g, 25);
+    ok(A.minions >= 1 && A.res.food >= 25, 'ctf: a hero clears a dishpit camp and pockets the bounties', `minions ${A.minions} tips ${A.res.food}`);
+    ok(g.events.some((e) => e[0] === 'camp' && e[1] === camp.i && e[2] === 'down') || camp.alive > 0, 'ctf: a cleared camp announces it');
+    if (!camp.alive) {
+      ok(camp.nextAt > g.tick, 'ctf: and schedules a respawn');
+      place(g, h, 5, 5); run(g, camp.def.respawn + 1);
+      ok(camp.alive === camp.def.units.length, 'ctf: the camp comes back later', `${camp.alive}`);
+    }
+    // leash: minions do not chase across the map
+    const g2 = mkc([['rafa', 1], ['ryo', 2]]);
+    run(g2, 1);
+    const h2 = hero(g2, 0), camp2 = g2.camps.find((c) => c.type === 'cooks' && c.alive), m2 = g2.ents.get([...camp2.units][0]);
+    place(g2, h2, camp2.x - 3, camp2.y); settle(g2);
+    g2.applyDamage(0, h2.id, m2, 5, {}, true); g2.step();
+    const angry = [...camp2.units].map((id) => g2.ents.get(id)).filter((u) => u.order && u.order.t === 'attack').length;
+    ok(angry === camp2.units.size, 'ctf: hit one minion and the whole camp turns on you');
+    place(g2, h2, 5, 5); run(g2, 12);
+    const far = [...camp2.units].map((id) => g2.ents.get(id)).every((u) => u && !u.dead && Math.hypot(u.x - camp2.x, u.y - camp2.y) < CTF.minion.leash + 3);
+    ok(far, 'ctf: minions give up the chase and go home');
+    // levels
+    const g3 = mkc([['kofi', 1], ['ryo', 2]]);
+    g3.tick = CTF.minion.levelEvery * TICK_RATE * 2 - 1; g3.step();
+    ok(g3.minionLevel === 2 && g3.events.some((e) => e[0] === 'minions' && e[1] === 2), 'ctf: minions level up on the clock');
+    for (const c of g3.camps) if (c.type === 'dishpit') { for (const id of c.units) g3.killEntity(g3.ents.get(id), -1); }
+    g3.step(); run(g3, CTF.camps.dishpit.respawn + 1);
+    const lv2 = g3.units.find((u) => u.camp && u.camp.type === 'dishpit');
+    ok(lv2 && lv2.S.hp > UNITS.cook.hp * 1.5 && lv2.bounty > CTF.camps.dishpit.bounty / 4, 'ctf: a respawned camp is tougher and richer', lv2 ? `hp ${lv2.S.hp} bounty ${lv2.bounty}` : 'none');
+    const boss = g3.units.find((u) => u.boss);
+    ok(boss && boss.S.hp >= UNITS.truck.hp * 3 && boss.bounty >= CTF.camps.critic.bounty, 'ctf: the Critic is a proper boss', boss ? `hp ${boss.S.hp} bounty ${boss.bounty}` : 'none');
+  }
+
+  // ---- kits: scaled cooldowns, the ultimate unlock, new abilities do something
+  {
+    const g = mkc([['kofi', 1], ['dolly', 1], ['ingrid', 2], ['rafa', 2], ['zara', 2], ['hank', 1]]);
+    const kofi = hero(g, 0), dolly = hero(g, 1), ingrid = hero(g, 2), rafa = hero(g, 3), zara = hero(g, 4), hank = hero(g, 5);
+    g.command(0, { c: 'ul' });
+    ok(g.events.some((e) => e[0] === 'note' && e[1] === 0 && e[2] === 'ultage') && !g.players[0].ultReady, 'ctf: ultimates are locked at first');
+    // Flash Fry: dash to the enemy hero and hurt it
+    place(g, kofi, 30, 30); place(g, ingrid, 35, 30); settle(g); const ihp = ingrid.hp;
+    g.command(0, { c: 'ab' }); g.step();
+    ok(ingrid.hp < ihp && Math.hypot(kofi.x - ingrid.x, kofi.y - ingrid.y) < 2.5 && kofi.buffs && kofi.buffs.fry, 'ctf: Flash Fry dashes in, hits, and speeds up attacks', `d ${Math.hypot(kofi.x - ingrid.x, kofi.y - ingrid.y).toFixed(1)} hp ${ihp}→${ingrid.hp}`);
+    const cd = g.players[0].abilityReady - g.tick;
+    ok(Math.abs(cd - Math.round(COMMANDERS.kofi.ability.cd * CTF.abilityCdMul * TICK_RATE)) <= TICK_RATE, 'ctf: ability cooldowns are scaled down', `${cd / TICK_RATE}s`);
+    // Hot Shot: a long-range snipe at the most wounded enemy hero
+    place(g, rafa, 30, 40); place(g, dolly, 30, 48); settle(g); dolly.hp = 100; const dhp = dolly.hp;
+    g.command(3, { c: 'ab' }); run(g, 2);
+    ok(dolly.hp < dhp, 'ctf: Hot Shot wounds the weakest enemy hero in range', `${dhp}→${dolly.hp}`);
+    // Brain Freeze: chills enemies
+    place(g, ingrid, 20, 20); place(g, kofi, 22, 20); settle(g); g.command(2, { c: 'ab' }); g.step();
+    ok(kofi.buffs && kofi.buffs.chill && kofi.bSpeed < 0.95, 'ctf: Brain Freeze slows enemies nearby', `speed x${kofi.bSpeed}`);
+    // Hold the Pass: Dolly heals and braces
+    place(g, dolly, 60, 60); settle(g); dolly.hp = 100; g.command(1, { c: 'ab' }); g.step();
+    ok(dolly.hp > 100 && dolly.buffs && dolly.buffs.brace, 'ctf: Hold the Pass heals and braces', `hp ${dolly.hp}`);
+    // Rush Hour: Zara speeds up
+    g.command(4, { c: 'ab' }); g.step();
+    ok(zara.buffs && zara.buffs.sugar, 'ctf: Zara\'s arena ability is Rush Hour (a sugar rush)');
+    // ultimates after the unlock
+    g.tick = g.ultUnlock; g.step();
+    place(g, kofi, 30, 30); place(g, ingrid, 31, 30); place(g, rafa, 32, 31); settle(g); const ihp2 = ingrid.hp, rhp2 = rafa.hp;
+    g.command(0, { c: 'ul' }); run(g, 2);
+    ok(ingrid.hp < ihp2 && rafa.hp < rhp2, 'ctf: Cleaver Storm damages everyone around Kofi', `${ihp2}→${ingrid.hp}, ${rhp2}→${rafa.hp}`);
+    const ucd = g.players[0].ultReady - g.tick;
+    ok(ucd > 0 && ucd <= COMMANDERS.kofi.ultimate.cd * CTF.ultCdMul * TICK_RATE, 'ctf: ultimate cooldowns are scaled down', `${ucd / TICK_RATE}s`);
+    // (the storm finished Ingrid off: wait for her to come back, then freeze)
+    ok(ingrid.dead && g.players[2].deaths === 1, 'ctf: a hero can fall to an ultimate');
+    run(g, g.heroRespawnTicks() / TICK_RATE + 1);
+    const ingrid2 = hero(g, 2);
+    place(g, ingrid2, 20, 20); place(g, kofi, 22, 20); place(g, rafa, 70, 70); settle(g); kofi.stunned = false; delete kofi.storm;
+    g.command(2, { c: 'ul' }); g.step();
+    ok(ingrid2 && kofi.stunned && kofi.buffs.chill, 'ctf: Deep Freeze stuns and chills enemies around Ingrid');
+    const rafa2 = hero(g, 3) || (run(g, g.heroRespawnTicks() / TICK_RATE + 1), hero(g, 3));
+    place(g, rafa2, 40, 40); place(g, dolly, 46, 40); place(g, kofi, 70, 70); settle(g); const dhp2 = dolly.hp;
+    g.command(3, { c: 'ul' }); run(g, 1);
+    ok(rafa2 && dolly.hp < dhp2 && g.events.some((e) => e[0] === 'flood' && e[1] === 3), 'ctf: Sauce Flood pours a line of damage and tells the clients', `${dhp2}→${dolly.hp}`);
+    place(g, hank, 10, 10); settle(g); g.command(5, { c: 'ul' }); g.step();
+    ok(hank.buffs && hank.buffs.bark, 'ctf: Hank\'s arena ultimate is Thick Bark');
+    place(g, dolly, 50, 50); place(g, kofi, 51, 50); settle(g); dolly.hp = 100; g.command(1, { c: 'ul' }); g.step();
+    g.applyDamage(1, dolly.id, kofi, 40, {}, false);
+    ok(dolly.buffs && dolly.buffs.lastcall && dolly.hp > 100, 'ctf: Last Call heals Dolly for the damage she deals');
+  }
+
+  // ---- victory: by captures, by the clock, sudden death, and a resignation
+  {
+    const g = mkc([['kofi', 1], ['ryo', 2]], { caps: 3 });
+    g.caps[1] = 3; g.checkVictory();
+    ok(g.over && g.over.team === 1, 'ctf: first to the target wins');
+    const g2 = mkc([['kofi', 1], ['ryo', 2]], { caps: 5, time: 10 });
+    g2.caps[1] = 2; g2.caps[2] = 1; g2.tick = g2.timeLimit; g2.checkVictory();
+    ok(g2.over && g2.over.team === 1, 'ctf: when time is up the most captures wins');
+    const g3 = mkc([['kofi', 1], ['ryo', 2]], { caps: 5, time: 10 });
+    g3.caps[1] = 2; g3.caps[2] = 2; g3.tick = g3.timeLimit; g3.checkVictory();
+    ok(!g3.over && g3.sudden && g3.events.some((e) => e[0] === 'sudden'), 'ctf: a level score goes to sudden death');
+    g3.caps[2] = 3; g3.checkVictory();
+    ok(g3.over && g3.over.team === 2, 'ctf: the next capture wins it');
+    const g4 = mkc([['kofi', 1], ['ryo', 2]], { caps: 5, time: 10 });
+    g4.caps[1] = 1; g4.caps[2] = 1; g4.players[0].score.heroKills = 3; g4.players[1].score.heroKills = 1; g4.tick = g4.suddenUntil; g4.checkVictory();
+    ok(g4.over && g4.over.team === 1, 'ctf: still level after sudden death: most hero kills wins');
+    const g5 = mkc([['kofi', 1], ['nonna', 1], ['ryo', 2]]);
+    g5.eliminate(g5.players[2]); run(g5, 1.1);
+    ok(g5.over && g5.over.team === 1 && !g5.players[2].alive && !hero(g5, 2), 'ctf: when the last enemy resigns the match ends');
+    const g6 = mkc([['kofi', 1], ['nonna', 1], ['ryo', 2], ['rafa', 2]]);
+    g6.eliminate(g6.players[2]); run(g6, 1.1);
+    ok(!g6.over && g6.players[3].alive && g6.bldgs.filter((b) => b.type === 'hq').length === 2, 'ctf: a team-mate resigning leaves the kitchen for the others');
+    const g7 = mkc([['kofi', 1]]);
+    run(g7, 2);
+    ok(!g7.over, 'ctf: alone you just practise');
+  }
+
+  // ---- ten players, snapshots, and the network records
+  {
+    const specs = HERO_KEYS.map((k, i) => [k, (i % 2) + 1]);
+    const g = mkc(specs, { seed: 3 });
+    ok(g.players.length === 11 && g.flags.length === 2 && g.bldgs.filter((b) => b.type === 'hq').length === 2, 'ctf: ten heroes, 5v5, two kitchens');
+    const full = g.full();
+    ok(full.ctf && full.flags && full.camps && full.p.length === 11 && full.p[0].length >= 27, 'ctf: the full snapshot carries flags, camps and the arena record');
+    const si = g.startInfo();
+    ok(si.mode === 'ctf' && si.ctf.capsToWin === 3 && si.ctf.bases.length === 2 && si.ctf.flags.length === 2 && si.ctf.camps.length === g.camps.length && si.ctf.neutral === 10, 'ctf: start info describes the arena');
+    run(g, 2); g.delta();
+    const t0 = Date.now(); run(g, 20); const ms = Date.now() - t0;
+    ok(ms < 4000, 'ctf: twenty seconds of a 10-hero arena simulate quickly', `${ms} ms`);
+    const ffa = mkc(HERO_KEYS.map((k, i) => [k, i + 1]), { seed: 4 });
+    ok(ffa.flags.length === 10 && ffa.bldgs.filter((b) => b.type === 'hq').length === 10 && ffa.w >= 100, 'ctf: a ten-way free-for-all gets ten kitchens on a big ring', `${ffa.w}×${ffa.h}`);
+  }
+
+  // ---- bots play a whole match
+  {
+    const g = mkc([['kofi', 1], ['nonna', 1], ['ryo', 2], ['rafa', 2]], { seed: 9, caps: 3, time: 10, bots: true });
+    for (const P of g.players) if (!P.neutral) P.ai = new CtfBot(g, P, 'hard');
+    let boom = null, flagsTaken = 0, bought = 0;
+    try {
+      while (!g.over && g.tick < 16 * 60 * TICK_RATE) {
+        g.step();
+        for (const e of g.events) { if (e[0] === 'flag' && e[1] === 'take') flagsTaken++; if (e[0] === 'item') bought++; }
+        g.delta();
+      }
+    } catch (e) { boom = e; }
+    ok(!boom && g.over, 'ctf: four hard bots finish a 2v2 inside the time limit', boom ? boom.stack : `${(g.tick / TICK_RATE / 60).toFixed(1)} min, caps ${JSON.stringify(g.caps)}`);
+    ok(flagsTaken >= 3 && bought >= 8 && g.players.slice(0, 4).every((P) => P.minions > 0), 'ctf: they run flags, farm camps and shop', `takes ${flagsTaken} items ${bought} minions ${g.players.slice(0, 4).map((P) => P.minions).join('/')}`);
+    const sum = g.summary(), tl = g.timeline();
+    ok(sum.length === 4 && sum.every((s) => s.ctf && typeof s.caps === 'number' && s.items) && tl.labels && tl.labels.army === 'Captures' && tl.series.score.length === 4, 'ctf: the summary and timeline leave the wild kitchen out');
+  }
+
+  // ---- hostile input
+  {
+    const g = mkc([['kofi', 1], ['ryo', 2], ['dolly', 1]], { seed: 5 });
+    const junk = [undefined, null, NaN, Infinity, -1, 0, 1e9, '', 'x', '__proto__', 'constructor', [], {}, [1, 2, 3], { length: 5 }, true, 'skillet', 'herbs'];
+    const pick = () => junk[(Math.random() * junk.length) | 0];
+    const cmds = ['mv', 'am', 'at', 'st', 'sn', 'ab', 'ul', 'rg', 'buy', 'eat', 'bp', 'tr', 'ga', 'dl', 'bell', 'zz'];
+    let threw = null;
+    try {
+      for (let i = 0; i < 4000; i++) {
+        const pi = (Math.random() * 5) | 0;
+        g.command(pi, { c: cmds[(Math.random() * cmds.length) | 0], ids: Math.random() < 0.5 ? g.units.slice(0, 4).map((u) => u.id) : pick(), item: pick(), tid: Math.random() < 0.5 ? (g.nextId * Math.random()) | 0 : pick(), x: pick(), y: pick(), v: pick(), i: pick() });
+        if (i % 40 === 0) { g.step(); g.delta(); }
+      }
+      run(g, 10);
+    } catch (e) { threw = e; }
+    ok(!threw, 'ctf: thousands of malformed orders never crash the arena', threw ? threw.stack : '');
+    let sane = g.units.filter((u) => u.owner === g.neutral.idx).length > 0 && !g.players[g.neutral.idx].items.skillet;
+    for (const P of g.players) { for (const r in P.res) if (!Number.isFinite(P.res[r]) || P.res[r] < 0) sane = false; for (const k of ITEM_KEYS) if (!Number.isInteger(P.items[k]) || P.items[k] < 0 || P.items[k] > 3) sane = false; }
+    ok(sane, 'ctf: and leave Tips, items and the wild kitchen intact');
+  }
+}
+
 // ----------------------------------------------------------- hostile input fuzz
 {
   const g = mk(['flint', 'nonna'], { seed: 3 });

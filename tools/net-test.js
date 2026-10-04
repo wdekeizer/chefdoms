@@ -42,6 +42,9 @@ function client(name, token) {
       if (m.r) for (const id of m.r) c.ents.delete(id);
       if (m.p) for (const p of m.p) c.players[p[0]] = p;
       if (m.tb) c.tb = m.tb;
+      if (m.ctf) c.ctf = m.ctf;
+      if (m.flags) c.flags = m.flags;
+      if (m.camps) c.camps = m.camps;
       if (m.ev) for (const e of m.ev) c.events.push(e);
     }
   };
@@ -206,6 +209,41 @@ try {
   a.send({ t: 'c', c: 'rg' }); b2.send({ t: 'c', c: 'rg' });
   await until(() => a.over && spec.over, 6000);
   ok(a.over && a.over.rounds >= 2 && a.over.timeline.unit === 'turn' && a.over.summary.length === 3, 'a turn-based match ends with rounds and a per-round timeline', a.over && `rounds ${a.over.rounds}`);
+
+  // a fourth match, capture the flag: heroes, Tips and the wild kitchen
+  a.send({ t: 'end' });
+  await until(() => a.lobby && !a.start && b2.lobby && !b2.start);
+  a.send({ t: 'opt', k: 'mode', v: 'ctf' });
+  a.send({ t: 'opt', k: 'ctfCaps', v: '3' });
+  a.send({ t: 'opt', k: 'ctfTime', v: '10' });
+  a.send({ t: 'set', k: 'commander', v: 'kofi' });
+  b2.send({ t: 'set', k: 'commander', v: 'rafa' });
+  b2.send({ t: 'set', k: 'ready', v: true });
+  await until(() => a.lobby.opts.mode === 'ctf' && a.lobby.slots[0].commander === 'kofi' && a.lobby.slots[1] && a.lobby.slots[1].ready && a.lobby.slots[1].commander === 'rafa');
+  ok(a.lobby.slots[0].commander === 'kofi' && a.lobby.slots[1].commander === 'rafa', 'arena-only heroes can be picked in capture the flag');
+  for (const c of [a, b2, spec]) { c.over = null; c.tb = null; c.ctf = null; c.flags = null; c.camps = null; c.events = []; }
+  a.send({ t: 'start' });
+  await until(() => a.start && b2.start && spec.start && a.snaps > 0 && a.flags && a.ctf);
+  const nTeams = new Set(a.start.players.filter((p) => p.team >= 0).map((p) => p.team)).size;
+  ok(a.start.mode === 'ctf' && a.start.ctf && a.start.ctf.capsToWin === 3 && a.start.ctf.bases.length === nTeams && a.start.ctf.flags.length === nTeams && a.start.ctf.camps.length > 6 && a.start.players.length === 4 && a.start.players[3].team === -1, 'a capture-the-flag match starts with a base per team and the wild kitchen last', JSON.stringify({ teams: nTeams, bases: a.start.ctf && a.start.ctf.bases.length, players: a.start.players.length }));
+  ok(a.flags.length === nTeams && a.flags.every((f) => f[1] === 0) && a.camps.length === a.start.ctf.camps.length && a.ctf.caps && a.ctf.sudden === 0, 'snapshots carry the flags, camps and score', JSON.stringify(a.ctf));
+  const unitsOfC = (c, pi) => [...c.ents.values()].filter((r) => r[1] === 0 && r[3] === pi);
+  await until(() => unitsOfC(spec, 3).length > 8);
+  ok(unitsOfC(spec, 0).length === 1 && unitsOfC(spec, 0)[0][2] === 'hero_kofi' && unitsOfC(spec, 1)[0][2] === 'hero_rafa' && unitsOfC(spec, 3).length > 8, 'each kitchen has one hero and the wild kitchen has its minions', JSON.stringify([unitsOfC(spec, 0).map((r) => r[2]), unitsOfC(spec, 1).map((r) => r[2]), unitsOfC(spec, 3).length]));
+  ok(a.players[0][1] >= 120 && Array.isArray(a.players[0][21]) && a.players[0][21].length === 6 && a.players[0][22] === 0, 'the player record carries Tips, items and captures', JSON.stringify(a.players[0].slice(21)));
+  const tips0 = a.players[0][1];
+  a.send({ t: 'c', c: 'buy', item: 'herbs' });
+  await until(() => a.players[0][21][5] === 1);
+  ok(a.players[0][21][5] === 1 && a.players[0][1] <= tips0 - 110 + 3 && a.events.some((e) => e[0] === 'item' && e[1] === 0 && e[2] === 'herbs'), 'buying an item at the kitchen is reflected in the next snapshot', JSON.stringify([a.players[0][21], a.players[0][1]]));
+  a.send({ t: 'c', c: 'buy', item: 'skillet' });
+  await until(() => a.events.some((e) => e[0] === 'note' && e[1] === 0 && e[2] === 'tips'));
+  ok(a.events.some((e) => e[0] === 'note' && e[1] === 0 && e[2] === 'tips'), 'and a purchase you cannot afford is refused with a note');
+  a.send({ t: 'c', c: 'bp', ids: [unitsOfC(a, 0)[0][0]], b: 'house', tx: 5, ty: 5 }); a.send({ t: 'c', c: 'tr', u: 'cook' });
+  await sleep(300);
+  ok([...spec.ents.values()].filter((r) => r[1] === 1).length === nTeams && unitsOfC(spec, 0).length === 1, 'building and training orders are ignored in the arena', JSON.stringify([...spec.ents.values()].filter((r) => r[1] === 1).map((r) => r[2])));
+  a.send({ t: 'c', c: 'rg' }); b2.send({ t: 'c', c: 'rg' });
+  await until(() => a.over && spec.over, 6000);
+  ok(a.over && a.over.summary.length === 3 && a.over.summary.every((s) => s.ctf && typeof s.caps === 'number') && a.over.timeline.labels && a.over.timeline.labels.army === 'Captures', 'a capture-the-flag match ends with an arena summary (the wild kitchen left out)', a.over && JSON.stringify(a.over.summary.map((s) => s.name)));
   for (const c of [a, b2, spec]) c.ws.close();
   await sleep(200);
   try { fs.unlinkSync(SCORES); } catch { /* nothing written */ }

@@ -18,6 +18,7 @@ export const ACTIONS = [
   ['camRight', 'Camera right (extra key)', '', 'KeyD', 'Camera'],
   ['zoomIn', 'Zoom in', 'Equal', 'Equal', 'Camera'],
   ['zoomOut', 'Zoom out', 'Minus', 'Minus', 'Camera'],
+  ['follow', 'Lock / free the camera on your hero (capture the flag)', 'KeyY', 'Semicolon', 'Camera'],
   ['ability', 'Commander ability', 'Space', 'Space', 'Commands'],
   ['ultimate', 'Commander ultimate (from the Bistro Age)', 'KeyO', 'KeyO', 'Commands'],
   ['endTurn', 'End your turn (turn-based mode)', 'KeyI', 'KeyI', 'Commands'],

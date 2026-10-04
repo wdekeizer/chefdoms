@@ -2,13 +2,14 @@
 //  All the HTML user interface: lobby, in-game HUD, command card, tooltips,
 //  chat, notifications, menus and the end-of-match screen.
 // ============================================================================
-import { G, K_UNIT, K_BLDG, K_NODE, selected, setSelection, cmd, send, statsOf, maxHp } from './state.js';
+import { G, K_UNIT, K_BLDG, K_NODE, selected, setSelection, cmd, send, statsOf, maxHp, campOf, myHero } from './state.js';
 import * as SPR from './sprites.js';
 import {
   BUILDINGS, TECHS, COMMANDERS, COMMANDER_KEYS, RES, RES_INFO, AGE_NAMES, AGE_SHORT, OPTIONS, PLAYER_COLORS,
   BOT_LEVELS, BOT_NOTES, MAX_PLAYERS, MAP_SIZES, mapSizeFor, NODES, trainList, techCost, techTime, computeStats,
   STANCES, FORMATIONS, GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, VERSION,
   ULT_AGE, TB, tbUnit, tbBldg, tbTurns, tbCooldown, tbDamage,
+  HERO_KEYS, CTF, NEUTRAL_COLOR, ctfKit, ctfHeroStats, ctfItemCost,
 } from '/game/data.js';
 import * as TAC from './tactics.js';
 import { ACTIONS, keyOf, keyLabel, labelOf, setKey, resetKeys, setWasd, isWasd, canBind, onKeysChanged } from './keys.js';
@@ -42,12 +43,20 @@ export function iconURL(kind, key, size = 96, color) {
 }
 const img = (kind, key, cls, color, size) => h('img', { class: cls || 'ico', src: iconURL(kind, key, size || 96, color), draggable: 'false', alt: '' });
 const colorHex = (i) => PLAYER_COLORS[i % PLAYER_COLORS.length].hex;
+const playerColor = (i) => (G.players[i] && G.players[i].neutral ? NEUTRAL_COLOR : colorHex(G.players[i].color));
+const teamHex = (team) => { const p = G.players.find((q) => q.team === team && !q.neutral); return p ? colorHex(p.color) : '#999'; };
+const realPlayers = () => G.players.map((p, i) => [p, i]).filter(([p]) => !p.neutral);
+const ITEM_KEYS = Object.keys(CTF.items);
 const myColor = () => (G.me >= 0 ? colorHex(G.players[G.me].color) : '#999');
 /** Are we looking at (or setting up) a turn-based match? Texts and numbers differ. */
 const isTurn = () => (G.phase === 'game' ? !!G.tb : !!(G.lobby && G.lobby.opts.mode === 'turn'));
+const isCtf = () => (G.phase === 'game' ? !!G.ctf : !!(G.lobby && G.lobby.opts.mode === 'ctf'));
+/** The kit a commander plays with in the mode at hand. */
+const kitOf = (C) => (isCtf() ? ctfKit(C) : { ability: C.ability, ultimate: C.ultimate });
 const turnsText = (n) => n + (n === 1 ? ' turn' : ' turns');
 const abilText = (A) => (isTurn() && A.tb ? A.tb : A.desc);
-const cdText = (A) => (isTurn() ? `every ${turnsText(tbCooldown(A.cd))}` : `every ${A.cd}s`);
+const cdText = (A, ult) => (isTurn() ? `every ${turnsText(tbCooldown(A.cd))}` : isCtf() ? `every ${Math.round(A.cd * (ult ? CTF.ultCdMul : CTF.abilityCdMul))}s` : `every ${A.cd}s`);
+const fmtClock = (sec) => Math.floor(sec / 60) + ':' + String(Math.floor(sec % 60)).padStart(2, '0');
 const PLAIN = { tags: [], armor: 0, parmor: 0 };
 /** Turn-based stat lines: what a unit or station can do on the grid. */
 function tbUnitText(S) {
@@ -99,9 +108,9 @@ function slotCard(s, i) {
       s.kind === 'human' && s.cid !== G.lobby.host && h('span', { class: 'tag ' + (s.ready ? 'ready' : 'wait') }, s.ready ? 'READY' : 'NOT READY'),
       host && !me && h('button', { class: 'x', title: s.kind === 'bot' ? 'Remove bot' : 'Move to spectators', onclick: () => send({ t: 'slot', i, a: 'remove' }) }, '×')),
     h('div', { class: 'slot-body' },
-      h('button', { class: 'cmd-pick' + (canEdit ? '' : ' locked'), disabled: !canEdit, title: canEdit ? 'Choose a commander' : '', onclick: canEdit ? () => openCommanderPicker(s, edit) : null },
-        C ? img('commander', s.commander, 'portrait', null, 128) : h('div', { class: 'portrait random' }, '?'),
-        h('div', { class: 'cmd-pick-text' }, h('div', { class: 'cmd-name' }, C ? C.name : 'Random commander'), h('div', { class: 'cmd-title' }, C ? C.title : 'Surprise me'))),
+      h('button', { class: 'cmd-pick' + (canEdit ? '' : ' locked'), disabled: !canEdit, title: canEdit ? (isCtf() ? 'Choose a hero' : 'Choose a commander') : '', onclick: canEdit ? () => openCommanderPicker(s, edit) : null },
+        C && (isCtf() || !C.ctfOnly) ? img('commander', s.commander, 'portrait', null, 128) : h('div', { class: 'portrait random' }, '?'),
+        h('div', { class: 'cmd-pick-text' }, h('div', { class: 'cmd-name' }, C && (isCtf() || !C.ctfOnly) ? C.name : isCtf() ? 'Random hero' : 'Random commander'), h('div', { class: 'cmd-title' }, C && (isCtf() || !C.ctfOnly) ? C.title : 'Surprise me'))),
       h('div', { class: 'slot-row' },
         h('select', { disabled: !canEdit, title: 'Same team number = allies', onchange: (ev) => edit('team', +ev.target.value) },
           Array.from({ length: MAX_PLAYERS }, (_, t) => h('option', { value: t + 1, selected: s.team === t + 1 }, 'Team ' + (t + 1)))),
@@ -115,12 +124,16 @@ export function renderLobby() {
   const host = amHost(), mine = mySlot();
   $('lobby-slots').replaceChildren(...L.slots.map(slotCard));
 
-  const turn = L.opts.mode === 'turn';
-  $('lobby-opts').replaceChildren(...Object.keys(OPTIONS).filter((k) => turn || !k.startsWith('turn')).map((k) => h('label', { class: 'opt' + (k === 'mode' ? ' wide' : '') }, h('span', null, OPTIONS[k].label),
+  const turn = L.opts.mode === 'turn', ctf = L.opts.mode === 'ctf';
+  const shown = (k) => (k.startsWith('turn') ? turn : k.startsWith('ctf') ? ctf : ctf ? ['mode', 'fog', 'speed'].includes(k) : true);
+  $('lobby-opts').replaceChildren(...Object.keys(OPTIONS).filter(shown).map((k) => h('label', { class: 'opt' + (k === 'mode' ? ' wide' : '') }, h('span', null, OPTIONS[k].label),
     h('select', { disabled: !host, 'data-opt': k, onchange: (ev) => send({ t: 'opt', k, v: ev.target.value }) },
       Object.keys(OPTIONS[k].choices).map((v) => h('option', { value: v, selected: String(L.opts[k]) === v }, OPTIONS[k].choices[v]))))));
   const nSeats = L.slots.filter(Boolean).length, real = mapSizeFor(L.opts.mapSize, Math.max(1, nSeats));
-  $('lobby-mapnote').textContent = turn
+  const nTeams = new Set(L.slots.filter(Boolean).map((s) => s.team)).size;
+  $('lobby-mapnote').textContent = ctf
+    ? `Capture the Flag: one hero each, no kitchen to run. ${nTeams <= 1 ? 'Give the seats different team numbers: ' : nTeams + ' team' + (nTeams === 1 ? '' : 's') + ' on a ' + CTF.mapSize(Math.max(2, nTeams)) + '×' + CTF.mapSize(Math.max(2, nTeams)) + ' arena. '}Same team number = one shared base and flag; every seat its own number = free-for-all. Fell wild minions for Tips, buy items at your kitchen, first to ${L.opts.ctfCaps || 3} captures (or the most when ${L.opts.ctfTime || 15} minutes are up) wins.`
+    : turn
     ? `Turn-based: one kitchen plays at a time on a ${TB.mapSizes[real]}×${TB.mapSizes[real]} grid. Every unit moves once and then does one thing; stations built on resources pay every turn. Staff limit ${Math.max(10, Math.round((+L.opts.popCap || 100) * TB.popShare))}.`
     : `With ${nSeats} kitchen${nSeats === 1 ? '' : 's'} this match plays on the ${OPTIONS.mapSize.choices[real].replace(' (cozy)', '')} map (${MAP_SIZES[real]}×${MAP_SIZES[real]} tiles).`;
 
@@ -164,6 +177,19 @@ function copyText(t) {
 function commanderDetail(key) {
   const C = COMMANDERS[key];
   const U = statsFor(key).units, uq = U[C.unique], hero = U[C.hero];
+  if (isCtf()) {
+    const kit = ctfKit(C), H = ctfHeroStats(computeStats(key, CTF.heroAge, []).units[C.hero], {});
+    return h('div', { class: 'cd' },
+      h('div', { class: 'cd-head' }, img('commander', key, 'portrait big', null, 192),
+        h('div', null, h('div', { class: 'cd-name' }, C.name), h('div', { class: 'cd-title' }, `${C.title}`), h('div', { class: 'cd-style' }, C.style))),
+      h('p', { class: 'cd-blurb' }, C.blurb),
+      h('div', { class: 'cd-sec' }, 'In the arena'),
+      h('div', { class: 'tt-stats' }, `HP ${H.hp} · Attack ${H.atk} every ${H.reload}s · Armour ${H.armor}/${H.parmor} · Speed ${H.speed.toFixed(1)} · ${H.range ? 'Range ' + H.range : 'Melee'}`),
+      h('div', { class: 'cd-row' }, img('unit', C.hero, 'ico', '#e2403a'), h('div', null, h('b', null, 'Aura · ' + C.aura.name), h('br'), h('span', { class: 'muted' }, C.aura.desc))),
+      h('div', { class: 'cd-row' }, img('ability', kit.ability.key, 'ico'), h('div', null, h('b', null, kit.ability.name), ` (${cdText(kit.ability)})`, h('br'), h('span', { class: 'muted' }, kit.ability.desc))),
+      h('div', { class: 'cd-row' }, img('ability', kit.ultimate.key, 'ico ult'), h('div', null, h('b', null, kit.ultimate.name), ` · ultimate (${cdText(kit.ultimate, true)}, from minute ${CTF.ultUnlockMin})`, h('br'), h('span', { class: 'muted' }, kit.ultimate.desc))),
+      h('p', { class: 'cd-quote' }, '“' + C.quotes[0] + '”'));
+  }
   return h('div', { class: 'cd' },
     h('div', { class: 'cd-head' }, img('commander', key, 'portrait big', null, 192),
       h('div', null, h('div', { class: 'cd-name' }, C.name), h('div', { class: 'cd-title' }, `${C.title} — ${C.brigade}`), h('div', { class: 'cd-style' }, C.style))),
@@ -182,12 +208,13 @@ const statsCache = {};
 function statsFor(key) { return statsCache[key] || (statsCache[key] = computeStats(key, 1, [])); }
 
 function openCommanderPicker(slot, edit) {
-  let cur = slot.commander === 'random' ? COMMANDER_KEYS[0] : slot.commander;
+  const KEYS = isCtf() ? HERO_KEYS : COMMANDER_KEYS;
+  let cur = KEYS.includes(slot.commander) ? slot.commander : KEYS[0];
   const detail = h('div', { class: 'picker-detail' });
   const list = h('div', { class: 'picker-list' });
   const draw = () => {
     list.replaceChildren(
-      ...COMMANDER_KEYS.map((k) => h('button', { class: 'picker-item' + (k === cur ? ' on' : ''), onclick: () => { cur = k; draw(); sfx('click'); } },
+      ...KEYS.map((k) => h('button', { class: 'picker-item' + (k === cur ? ' on' : ''), onclick: () => { cur = k; draw(); sfx('click'); } },
         img('commander', k, 'portrait', null, 128), h('div', null, h('div', { class: 'cmd-name' }, COMMANDERS[k].name), h('div', { class: 'cmd-title' }, COMMANDERS[k].title)))),
       h('button', { class: 'picker-item', onclick: () => { edit('commander', 'random'); close(); } }, h('div', { class: 'portrait random' }, '?'), h('div', null, h('div', { class: 'cmd-name' }, 'Random'), h('div', { class: 'cmd-title' }, 'Decided when the match starts'))));
     detail.replaceChildren(commanderDetail(cur), h('button', { class: 'btn primary big', onclick: () => { edit('commander', cur); close(); } }, 'Play as ' + COMMANDERS[cur].name));
@@ -208,13 +235,15 @@ const gridLabel = (i) => labelOf('card' + i);
 
 function buildStatic() {
   // top bar
-  const res = RES.map((r) => { const v = h('span', { class: 'res-v' }, '0'), inc = h('span', { class: 'res-inc' }, ''); resEls[r] = v; resEls[r + 'Inc'] = inc; return h('div', { class: 'res', title: RES_INFO[r].name }, img('res', r, 'res-i', null, 64), v, inc); });
+  const res = RES.map((r) => { const v = h('span', { class: 'res-v' }, '0'), inc = h('span', { class: 'res-inc' }, ''); resEls[r] = v; resEls[r + 'Inc'] = inc; const box = h('div', { class: 'res res-' + r, title: RES_INFO[r].name }, img('res', r, 'res-i', null, 64), v, inc); resEls[r + 'Box'] = box; return box; });
+  resEls.tips = h('div', { class: 'res res-tips hidden', title: 'Tips: fell minions and heroes to earn them, spend them at your kitchen' }, img('res', 'tips', 'res-i', null, 64), h('span', { class: 'res-v' }, '0'), h('span', { class: 'res-inc' }, 'Tips'));
+  resEls.popBox = h('div', { class: 'res', title: 'Staff (population)' }, img('res', 'pop', 'res-i', null, 64), null);
   resEls.pop = h('span', { class: 'res-v' }, '0/0');
   resEls.age = h('span', null, '');
   resEls.clock = h('span', { class: 'clock' }, '0:00');
   resEls.ping = h('span', { class: 'ping' }, '');
   $('topbar').replaceChildren(
-    h('div', { class: 'res-group' }, ...res, h('div', { class: 'res', title: 'Staff (population)' }, img('res', 'pop', 'res-i', null, 64), resEls.pop)),
+    h('div', { class: 'res-group' }, ...res, resEls.tips, (resEls.popBox.append(resEls.pop), resEls.popBox)),
     h('div', { class: 'age' }, resEls.age),
     h('div', { class: 'top-right' }, resEls.clock, resEls.ping, h('button', { class: 'btn small ghost', onclick: () => toggleMenu() }, 'Menu (F10)')));
 
@@ -284,7 +313,7 @@ function closeChat() { $('chatbox').classList.add('hidden'); $('chatlog').classL
 function costRow(cost, time, pop, turns) {
   const me = G.ps[G.me];
   const parts = [];
-  for (const r of RES) if (cost && cost[r]) parts.push(h('span', { class: 'tt-c' + (me && me.res[r] < cost[r] ? ' lack' : '') }, img('res', r, 'tt-i', null, 64), cost[r]));
+  for (const r of RES) if (cost && cost[r]) parts.push(h('span', { class: 'tt-c' + (me && me.res[r] < cost[r] ? ' lack' : '') }, img('res', G.ctf && r === 'food' ? 'tips' : r, 'tt-i', null, 64), cost[r], G.ctf && r === 'food' ? ' Tips' : ''));
   if (pop) parts.push(h('span', { class: 'tt-c' }, img('res', 'pop', 'tt-i', null, 64), pop));
   if (turns) parts.push(h('span', { class: 'tt-c time' }, turnsText(turns)));
   else if (time) parts.push(h('span', { class: 'tt-c time' }, Math.round(time) + 's'));
@@ -342,8 +371,9 @@ function buildCard() {
   const me = G.ps[G.me];
   if (!me || !me.alive) return;
   const sel = selected().filter((e) => e.owner === G.me);
-  if (!sel.length) return;
+  if (!sel.length && !G.ctf) return;
   const st = me.stats, cmdKey = G.players[G.me].commander;
+  if (G.ctf) { buildCardCtf(me); return; }
   if (G.tb) { buildCardTurn(me, sel[0], st, cmdKey); return; }
   const units = sel.filter((e) => e.kind === K_UNIT), bl = sel.filter((e) => e.kind === K_BLDG);
   const stop = { icon: ['ui', 'stop'], title: 'Stop', desc: 'Drop whatever they are doing.', ok: true, run: () => hooks.stop() };
@@ -413,6 +443,32 @@ function buildCard() {
   if (b0.type === 'hq') card[14] = bellCard(me);
 }
 
+/** The command card in Capture the Flag: your hero's orders on the top row, the shop below. */
+function buildCardCtf(me) {
+  const P = G.players[G.me], C = COMMANDERS[P.commander], kit = ctfKit(C), hero = myHero();
+  const alive = !!hero, base = G.ctf.bases.find((b) => b.team === P.team);
+  const atBase = !alive || (base && Math.hypot(hero.rx - base.x, hero.ry - base.y) <= CTF.shopRadius);
+  const cd = Math.max(0, Math.ceil((me.abilityReady - G.tick) / G.tickRate)), ucd = Math.max(0, Math.ceil((me.ultReady - G.tick) / G.tickRate));
+  const locked = G.tick < G.ctf.ultUnlock * G.tickRate;
+  card[0] = { icon: ['ui', 'attack'], title: 'Attack-move', desc: 'Then left-click a spot: your hero walks there and fights anything hostile on the way.', ok: alive, why: 'Your hero is down', active: G.mode && G.mode.type === 'amove', run: () => { G.mode = { type: 'amove' }; } };
+  card[1] = { icon: ['ui', 'stop'], title: 'Stop', desc: 'Stand still.', ok: alive, why: 'Your hero is down', run: () => hooks.stop() };
+  card[2] = { icon: ['ability', kit.ability.key], title: kit.ability.name, sub: `Ability · ${cdText(kit.ability)}`, desc: kit.ability.desc, ok: alive && cd === 0, why: !alive ? 'Your hero is down' : `Ready in ${cd}s`, badge: cd || '', hint: `Hotkey: ${labelOf('ability')}`, run: () => cmd({ c: 'ab' }) };
+  card[3] = { icon: ['ability', kit.ultimate.key], title: kit.ultimate.name, sub: `Ultimate · ${cdText(kit.ultimate, true)}`, desc: kit.ultimate.desc, ok: alive && !locked && ucd === 0, why: !alive ? 'Your hero is down' : locked ? `Ultimates unlock at ${CTF.ultUnlockMin}:00` : `Ready in ${ucd}s`, badge: locked ? '' : ucd || '', hint: `Hotkey: ${labelOf('ultimate')}`, run: () => cmd({ c: 'ul' }) };
+  const ecd = Math.max(0, Math.ceil((me.energyReady - G.tick) / G.tickRate));
+  card[4] = { icon: ['ui', 'energy'], title: 'Energy Bar', sub: `${CTF.energy.cost} Tips · usable anywhere`, desc: 'Wolf one down: heals 35% of your health over 4 seconds. One every 20 seconds.', cost: { food: CTF.energy.cost }, ok: alive && ecd === 0, why: !alive ? 'Your hero is down' : `Still chewing: ${ecd}s`, badge: ecd || '', run: () => cmd({ c: 'eat' }) };
+  ITEM_KEYS.forEach((key, i) => {
+    const it = CTF.items[key], lv = me.items[key] | 0, max = lv >= it.tiers.length, cost = ctfItemCost(key, lv);
+    const now = lv ? it.tiers[lv - 1][0] : 0, next = max ? null : it.tiers[lv][0];
+    const fmt = (v) => (it.stat === 'reload' ? Math.round((1 - v) * 100) + '% faster attacks' : it.stat === 'speed' ? '+' + v.toFixed(2) + ' speed' : it.stat === 'regen' ? '+' + v + ' HP/s' : it.stat === 'hp' ? '+' + v + ' HP' : it.stat === 'armor' ? '+' + v + ' armour' : '+' + v + ' attack');
+    card[5 + i] = {
+      icon: it.icon, title: `${it.name}${lv ? ' ' + ['I', 'II', 'III'][lv - 1] : ''}`, sub: max ? 'Fully upgraded' : `Tier ${lv + 1} of ${it.tiers.length}`,
+      desc: it.desc + (lv ? ` You have: ${fmt(now)}.` : '') + (next !== null ? ` Next: ${fmt(next)}.` : ''), cost: max ? null : { food: cost },
+      ok: !max && atBase, why: max ? 'Nothing more to buy here' : 'Shop at your own kitchen (or while you wait to respawn)', badge: lv ? ['I', 'II', 'III'][lv - 1] : '', pending: lv >= it.tiers.length,
+      hint: atBase ? '' : 'Walk back to your kitchen to shop.', run: () => cmd({ c: 'buy', item: key }),
+    };
+  });
+}
+
 /** The command card in turn-based mode: one unit or station at a time, and only on your turn. */
 function buildCardTurn(me, e, st, cmdKey) {
   const my = TAC.myTurn(), wait = 'Wait for your turn';
@@ -470,7 +526,7 @@ function trigger(i, shift) {
   const c = card[i];
   if (!c) return false;
   if (!c.ok) { note(c.why, 'warn'); sfx('error'); return true; }
-  if (c.cost && !canAfford(c.cost)) { note('Not enough ' + lacking(c.cost).join(' and '), 'warn'); sfx('error'); return true; }
+  if (c.cost && !canAfford(c.cost)) { note(G.ctf ? 'Not enough Tips' : 'Not enough ' + lacking(c.cost).join(' and '), 'warn'); sfx('error'); return true; }
   c.run(shift);
   sfx('click');
   refreshCard(true);
@@ -520,6 +576,15 @@ function refreshSelection(force) {
   if (!sel.length) {
     if (G.me < 0) { panel.replaceChildren(h('div', { class: 'sel-empty' }, h('b', null, 'Spectating'), h('div', { class: 'muted' }, 'You can see the whole map. Click anything to inspect it.'))); return; }
     const C = COMMANDERS[G.players[G.me].commander];
+    if (G.ctf) {
+      const me = G.ps[G.me], back = Math.max(0, Math.ceil((me.heroRespawn - G.tick) / G.tickRate));
+      panel.replaceChildren(h('div', { class: 'sel-one' }, img('commander', G.players[G.me].commander, 'sel-ico', null, 160),
+        h('div', { class: 'sel-info' }, h('div', { class: 'sel-name' }, C.name, h('span', { class: 'sel-role' }, C.title)),
+          h('div', { class: 'sel-turn done' }, me.heroId ? '' : back ? `Down. Back at your kitchen in ${back}s — a good moment to shop.` : 'Returning to the kitchen…'),
+          h('div', { class: 'sel-desc' }, h('b', null, kitOf(C).ability.name + ': '), kitOf(C).ability.desc),
+          h('div', { class: 'muted' }, `Right-click to move or attack · ${labelOf('ability')} ability · ${labelOf('ultimate')} ultimate · ${labelOf('hero')} selects your hero (twice: jump there) · ${labelOf('follow')} locks the camera on it`))));
+      return;
+    }
     panel.replaceChildren(h('div', { class: 'sel-one' }, img('commander', G.players[G.me].commander, 'sel-ico', null, 160),
       h('div', { class: 'sel-info' }, h('div', { class: 'sel-name' }, C.name, h('span', { class: 'sel-role' }, C.title)),
         h('ul', { class: 'sel-bonus' }, C.bonuses.map((b) => h('li', null, b))),
@@ -538,22 +603,43 @@ function refreshSelection(force) {
           : h('div', { class: 'sel-info' }, h('div', { class: 'sel-name' }, N.name), h('div', null, `${e.amount} ${RES_INFO[N.res].name} left`), h('div', { class: 'muted' }, e.type === 'fish' ? 'Right-click it with Prep Cooks selected: they fish from the shore.' : 'Right-click it with Prep Cooks selected to gather.'))));
       return;
     }
-    const S = statsOf(e) || {}, col = colorHex(G.players[e.owner].color), mh = maxHp(e), mine = e.owner === G.me;
+    const S = statsOf(e) || {}, col = playerColor(e.owner), mh = maxHp(e), mine = e.owner === G.me;
+    const camp = campOf(e);
+    if (camp) {                                                  // a wild minion
+      const def = CTF.camps[camp.type], bounty = Math.round(def.bounty * (1 + CTF.minion.bounty * camp.level) / (def.boss ? 1 : def.units.length));
+      panel.replaceChildren(h('div', { class: 'sel-one' }, h('img', { class: 'sel-ico', src: iconURL('unit', e.type, 160, NEUTRAL_COLOR), draggable: 'false', alt: '' }),
+        h('div', { class: 'sel-info' }, h('div', { class: 'sel-name' }, S.name || e.type, h('span', { class: 'sel-role' }, def.name + (camp.level ? ' · level ' + (camp.level + 1) : ''))),
+          h('div', { class: 'sel-hp' }, bar(e.hp / mh), h('span', null, `${Math.max(0, e.hp)} / ${mh}`)),
+          h('div', { class: 'tt-stats' }, `Attack ${Math.round(S.atk * (1 + CTF.minion.atk * camp.level) * (def.atkMul || 1) * 10) / 10} · Armour ${S.armor}/${S.parmor} · Bounty ${bounty} Tips`),
+          h('div', { class: 'sel-desc' }, def.boss ? 'The toughest customer on the map. Bring friends, or a full bag of items.' : 'Wild minions mind their own business until you hit one; then the whole camp comes for you. They heal between fights and come back a while after they are cleared.'))));
+      return;
+    }
     const head = h('div', { class: 'sel-name' }, S.name || e.type, h('span', { class: 'sel-role' }, e.kind === K_UNIT ? S.role : mine ? '' : G.players[e.owner].name),
       !mine && e.kind === K_UNIT && h('span', { class: 'sel-owner', style: `color:${col}` }, G.players[e.owner].name));
     const info = h('div', { class: 'sel-info' }, head, h('div', { class: 'sel-hp' }, bar(e.hp / mh), h('span', null, `${Math.max(0, e.hp)} / ${mh}`)));
     if (e.kind === K_UNIT) {
-      info.append(G.tb ? h('div', { class: 'tt-stats' }, tbUnitText(S)) : statLine(S) || '');
+      if (G.ctf && e.type.startsWith('hero_')) {
+        const p = G.ps[e.owner], tiers = ITEM_KEYS.map((k) => p.items[k] | 0);
+        info.append(h('div', { class: 'tt-stats' }, `HP ${mh} · Attack ${S.atk} every ${S.reload}s · Armour ${S.armor}/${S.parmor} · Speed ${S.speed.toFixed(1)}${S.regen ? ' · Regen ' + S.regen + '/s' : ''}${S.range ? ' · Range ' + S.range : ''}`));
+        const carried = G.ctf.flags.find((f) => f.state === 1 && f.carrier === e.id);
+        info.append(h('div', { class: 'sel-items' },
+          h('span', { class: 'items' }, ...ITEM_KEYS.map((k, i) => tiers[i] ? h('span', { class: 'item', title: CTF.items[k].name + ' ' + ['I', 'II', 'III'][tiers[i] - 1] }, h('img', { src: iconURL(CTF.items[k].icon[0], CTF.items[k].icon[1], 48, col), draggable: 'false', alt: '' }), h('b', null, ['I', 'II', 'III'][tiers[i] - 1])) : null)),
+          !tiers.some(Boolean) && h('span', { class: 'muted' }, mine ? 'No items yet: fell some minions and shop at your kitchen.' : 'No items yet.'),
+          carried && h('span', { class: 'sel-turn' }, `Carrying the ${G.players.find((q) => q.team === carried.team && !q.neutral)?.name || 'enemy'} flag!`)));
+      } else info.append(G.tb ? h('div', { class: 'tt-stats' }, tbUnitText(S)) : statLine(S) || '');
       if (G.tb) { const stt = TAC.statusOf(e); if (stt) info.append(h('div', { class: 'sel-turn' + (TAC.flagsOf(e) & (TAC.F_DONE | TAC.F_STUN) ? ' done' : '') }, stt)); }
       if (e.type.startsWith('hero_')) {
-        const C = COMMANDERS[G.players[e.owner].commander];
-        info.append(h('div', { class: 'sel-desc' }, h('b', null, C.aura.name + ': '), abilText(C.aura)), h('div', { class: 'sel-desc' }, h('b', null, C.ability.name + ': '), abilText(C.ability)));
+        const C = COMMANDERS[G.players[e.owner].commander], kit = kitOf(C);
+        info.append(h('div', { class: 'sel-desc' }, h('b', null, C.aura.name + ': '), abilText(C.aura)), h('div', { class: 'sel-desc' }, h('b', null, kit.ability.name + ': '), abilText(kit.ability)));
       } else info.append(h('div', { class: 'sel-desc' }, S.desc || ''));
       if (e.carry) info.append(h('div', { class: 'sel-desc' }, 'Carrying ' + RES_INFO[RES[e.carry - 1]].name + (mine ? ' — right-click a Kitchen HQ or Pantry to deliver it' : '')));
-      if (mine && e.type !== 'cook' && S.atk > 0 && !G.tb) info.append(h('div', { class: 'muted' }, 'Stance: ' + STANCES[e.sn || 0].name));
+      if (mine && e.type !== 'cook' && S.atk > 0 && !G.tb && !G.ctf) info.append(h('div', { class: 'muted' }, 'Stance: ' + STANCES[e.sn || 0].name));
     } else if (e.prog < 100) {
       if (G.tb) info.append(h('div', { class: 'sel-desc' }, mine ? `Under construction: ${turnsText(e.left || 1)} left` : 'Under construction'), mine ? h('div', { class: 'muted' }, 'Right-click it with a Prep Cook to finish a turn sooner.') : '');
       else info.append(h('div', { class: 'sel-desc' }, `Under construction: ${e.prog}%`), mine ? h('div', { class: 'muted' }, 'Right-click it with Prep Cooks to speed things up.') : '');
+    } else if (G.ctf && e.type === 'hq') {
+      const own = G.me >= 0 && G.players[e.owner].team === G.players[G.me].team;
+      info.append(h('div', { class: 'sel-desc' }, own ? 'Your kitchen. Heroes heal fast around it, you shop within a few tiles of it, and you come back here when you fall.' : 'An enemy kitchen: unbreakable, and their heroes heal fast around it. Their flag stands in front.'));
     } else if (G.tb) {
       info.append(h('div', { class: 'tt-stats' }, tbBldgText(S)));
       if (mine && e.q && e.q.length) {
@@ -583,7 +669,7 @@ function refreshSelection(force) {
   const grid = h('div', { class: 'sel-grid' });
   const shown = sel.slice(0, 40);
   for (const e of shown) {
-    const col = e.owner >= 0 ? colorHex(G.players[e.owner].color) : '#999';
+    const col = e.owner >= 0 ? playerColor(e.owner) : '#999';
     grid.append(h('button', { class: 'sel-cell', title: (statsOf(e) || {}).name || e.type,
       onmousedown: (ev) => { if (ev.shiftKey) G.sel.delete(e.id); else setSelection([e]); refreshAll(true); ev.preventDefault(); } },
       h('img', { src: iconURL(e.kind === K_UNIT ? 'unit' : 'building', e.type, 96, col), draggable: 'false', alt: '' }), bar(e.hp / maxHp(e), 'mini')));
@@ -596,16 +682,16 @@ let heroSig = '';
 function refreshHero() {
   const box = $('heropanel');
   if (G.me < 0) { if (heroSig !== 'spec') { heroSig = 'spec'; box.replaceChildren(); } return; }
-  const me = G.ps[G.me], P = G.players[G.me], C = COMMANDERS[P.commander], A = C.ability;
+  const me = G.ps[G.me], P = G.players[G.me], C = COMMANDERS[P.commander], kit = kitOf(C), A = kit.ability;
   const hero = me.heroId ? G.ents.get(me.heroId) : null;
-  const tb = !!G.tb, U = C.ultimate, unit = '';
+  const tb = !!G.tb, ctf = !!G.ctf, U = kit.ultimate, unit = '';
   // in a turn-based match the server counts cooldowns in turns
   const cd = tb ? me.abilityReady : Math.max(0, Math.ceil((me.abilityReady - G.tick) / G.tickRate));
   const ucd = tb ? me.ultReady : Math.max(0, Math.ceil((me.ultReady - G.tick) / G.tickRate));
   const back = hero ? 0 : tb ? me.heroRespawn : Math.max(0, Math.ceil((me.heroRespawn - G.tick) / G.tickRate));
   const idle = tb ? TAC.readyUnits().length : G.units.reduce((n, e) => n + (e.owner === G.me && e.type === 'cook' && e.st === 0 ? 1 : 0), 0);
-  const lunch = !tb && G.tick < me.lunchUntil, locked = me.age < ULT_AGE;
-  const sig = [hero ? Math.ceil(hero.hp / 4) : 'x', cd, ucd, locked, back, idle, lunch, me.alive, me.bell, G.mode && G.mode.type === 'ping', tb && G.tb.cur].join('|');
+  const lunch = !tb && G.tick < me.lunchUntil, locked = ctf ? G.tick < G.ctf.ultUnlock * G.tickRate : me.age < ULT_AGE;
+  const sig = [hero ? Math.ceil(hero.hp / 4) : 'x', cd, ucd, locked, back, idle, lunch, me.alive, me.bell, G.mode && G.mode.type === 'ping', tb && G.tb.cur, ctf && G.follow].join('|');
   if (sig === heroSig) return;
   heroSig = sig;
   if (!me.alive) { box.replaceChildren(); return; }
@@ -617,11 +703,14 @@ function refreshHero() {
     h('button', { class: 'qbtn' + (G.mode && G.mode.type === 'ping' ? ' on' : ''), onmousedown: press(() => { G.mode = { type: 'ping' }; sfx('click'); heroSig = ''; }),
       ...tip(() => simpleTip('Ping the map', labelOf('ping'), 'Then click the map or the minimap: your team sees and hears a marker there.', 'Shortcut: hold Alt and click anywhere.')) },
       img('ui', 'ping', 'q-ico', myColor())),
-    !tb && h('button', { class: 'qbtn' + (me.bell ? ' alarm' : ''), onmousedown: press(() => { hooks.toggleBell(); sfx('click'); }),
+    ctf && h('button', { class: 'qbtn' + (G.follow ? ' on' : ''), onmousedown: press(() => { hooks.toggleFollow(); sfx('click'); heroSig = ''; }),
+      ...tip(() => simpleTip(G.follow ? 'Camera follows your hero' : 'Free camera', labelOf('follow'), 'Click to switch. With the camera locked, the map scrolls with your hero.')) },
+      img('ui', 'follow', 'q-ico', myColor())),
+    !tb && !ctf && h('button', { class: 'qbtn' + (me.bell ? ' alarm' : ''), onmousedown: press(() => { hooks.toggleBell(); sfx('click'); }),
       ...tip(() => simpleTip(me.bell ? 'All clear' : 'Ring the bell', labelOf('bell'), me.bell ? 'Your Prep Cooks come out and go back to the jobs they had.' : 'All Prep Cooks shelter inside the nearest Kitchen HQ until you give the all-clear.')) },
       img('ui', me.bell ? 'allclear' : 'bell', 'q-ico')),
-    !tb && h('button', { class: 'qbtn', onmousedown: press(() => hooks.selectArmy()), ...tip(() => simpleTip('Select your whole army', labelOf('army'))) }, img('ui', 'attack', 'q-ico')),
-    tb
+    !tb && !ctf && h('button', { class: 'qbtn', onmousedown: press(() => hooks.selectArmy()), ...tip(() => simpleTip('Select your whole army', labelOf('army'))) }, img('ui', 'attack', 'q-ico')),
+    ctf ? null : tb
       ? h('button', { class: 'qbtn' + (idle ? ' warn' : ''), onmousedown: press(() => hooks.selectIdle()),
         ...tip(() => simpleTip(idle ? `${idle} unit${idle === 1 ? '' : 's'} can still act` : TAC.myTurn() ? 'Every unit has acted' : 'Waiting for your turn', labelOf('idle'), 'Click to jump to the next unit with something left to do this turn.')) },
         img('ui', 'next', 'q-ico', myColor()), idle ? h('span', { class: 'q-badge' }, idle) : null)
@@ -631,10 +720,10 @@ function refreshHero() {
     h('button', { class: 'qbtn abil ult' + (uready ? ' ready' : '') + (locked ? ' locked' : ''),
       onmousedown: press(() => {
         if (uready && (!tb || TAC.myTurn())) { cmd({ c: 'ul' }); sfx('click'); }
-        else { note(locked ? `${U.name} unlocks in the ${AGE_NAMES[ULT_AGE]}` : !hero ? 'Your commander is down' : ucd > 0 ? `${U.name} is ready ${wait(ucd)}` : 'Wait for your turn', 'warn'); sfx('error'); }
+        else { note(locked ? (ctf ? `${U.name} unlocks at ${CTF.ultUnlockMin}:00` : `${U.name} unlocks in the ${AGE_NAMES[ULT_AGE]}`) : !hero ? 'Your commander is down' : ucd > 0 ? `${U.name} is ready ${wait(ucd)}` : 'Wait for your turn', 'warn'); sfx('error'); }
       }),
-      ...tip(() => h('div', null, h('div', { class: 'tt-title' }, U.name, h('span', { class: 'tt-key' }, labelOf('ultimate'))), h('div', { class: 'tt-sub' }, `Ultimate · ${cdText(U)}`), h('div', { class: 'tt-desc' }, abilText(U)),
-        locked && h('div', { class: 'tt-why' }, `Unlocks in the ${AGE_NAMES[ULT_AGE]}`))) },
+      ...tip(() => h('div', null, h('div', { class: 'tt-title' }, U.name, h('span', { class: 'tt-key' }, labelOf('ultimate'))), h('div', { class: 'tt-sub' }, `Ultimate · ${cdText(U, true)}`), h('div', { class: 'tt-desc' }, abilText(U)),
+        locked && h('div', { class: 'tt-why' }, ctf ? `Unlocks at ${CTF.ultUnlockMin}:00` : `Unlocks in the ${AGE_NAMES[ULT_AGE]}`))) },
       img('ability', U.key, 'q-ico'), locked ? img('ui', 'lock', 'q-lock') : !uready && hero ? h('span', { class: 'q-cd' }, ucd + unit) : null),
     h('button', { class: 'qbtn abil' + (ready ? ' ready' : '') + (lunch ? ' lit' : ''),
       onmousedown: press(() => { if (ready && (!tb || TAC.myTurn())) { cmd({ c: 'ab' }); sfx('click'); } else { note(!hero ? 'Your commander is down' : cd > 0 ? `${A.name} is ready ${wait(cd)}` : 'Wait for your turn', 'warn'); sfx('error'); } }),
@@ -647,6 +736,18 @@ function refreshHero() {
 
 // -------------------------------------------------------------------- top bar
 function refreshTop() {
+  if (G.ctf) {                                                   // capture the flag: Tips, the clock and the score
+    const me = G.me >= 0 ? G.ps[G.me] : null, t = me ? String(me.res.food) : '–';
+    if (resEls.tips.children[1].textContent !== t) resEls.tips.children[1].textContent = t;
+    const left = Math.max(0, G.ctf.timeLimit - G.tick / G.tickRate);
+    const clock = (G.ctf.sudden ? 'SUDDEN DEATH ' : left > 0 ? fmtClock(left) + ' left' : '') + (G.paused ? '  PAUSED' : '');
+    if (resEls.clock.textContent !== clock) resEls.clock.textContent = clock;
+    const age = G.me < 0 ? 'Spectating' : `${COMMANDERS[G.players[G.me].commander].name}`;
+    if (resEls.age.textContent !== age) resEls.age.textContent = age;
+    const ping = G.net && G.net.ping ? Math.round(G.net.ping) + ' ms' : '';
+    if (resEls.ping.textContent !== ping) resEls.ping.textContent = ping;
+    return;
+  }
   if (G.me >= 0) {
     const me = G.ps[G.me];
     RES.forEach((r, i) => {
@@ -669,14 +770,24 @@ function refreshTop() {
 // --------------------------------------------------------------- player list
 let plSig = '';
 function refreshPlayers() {
-  const sig = G.players.map((p, i) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '')).join('|') + (G.tb ? G.tb.cur : '');
+  const list = realPlayers();
+  const sig = list.map(([p, i]) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '') + (G.ctf ? G.ps[i].caps + ':' + G.ps[i].heroKills + ':' + G.ps[i].deaths + (G.ps[i].heroId ? '' : 'x') : '')).join('|') + (G.tb ? G.tb.cur : '');
   if (sig === plSig) return;
   plSig = sig;
-  const teams = new Set(G.players.map((p) => p.team)).size;
-  $('players').replaceChildren(...G.players.map((p, i) => h('div', { class: 'pl' + (G.ps[i].alive ? '' : ' out') + (i === G.me ? ' me' : '') + (G.tb && G.tb.cur === i && !G.over ? ' turn' : '') },
+  const teams = new Set(list.map(([p]) => p.team)).size;
+  if (G.ctf) {
+    const sorted = list.slice().sort((a, b) => a[0].team - b[0].team || b[1] - a[1]);
+    $('players').replaceChildren(...sorted.map(([p, i]) => h('div', { class: 'pl' + (G.ps[i].alive ? '' : ' out') + (i === G.me ? ' me' : '') + (G.ps[i].heroId ? '' : ' down'), style: `border-color:${teamHex(p.team)}` },
+      h('span', { class: 'dot', style: `background:${colorHex(p.color)}` }),
+      h('span', { class: 'pl-name' }, p.name),
+      h('span', { class: 'pl-team', title: COMMANDERS[p.commander].name }, COMMANDERS[p.commander].title),
+      h('span', { class: 'pl-age', title: 'captures · hero kills / deaths' }, `${G.ps[i].caps}⚑ ${G.ps[i].heroKills || 0}/${G.ps[i].deaths}`))));
+    return;
+  }
+  $('players').replaceChildren(...list.map(([p, i]) => h('div', { class: 'pl' + (G.ps[i].alive ? '' : ' out') + (i === G.me ? ' me' : '') + (G.tb && G.tb.cur === i && !G.over ? ' turn' : '') },
     h('span', { class: 'dot', style: `background:${colorHex(p.color)}` }),
     h('span', { class: 'pl-name' }, p.name),
-    teams < G.players.length && h('span', { class: 'pl-team' }, 'T' + p.team),
+    teams < list.length && h('span', { class: 'pl-team' }, 'T' + p.team),
     h('span', { class: 'pl-age', title: COMMANDERS[p.commander].name + ' · ' + AGE_NAMES[G.ps[i].age] }, G.ps[i].alive ? AGE_SHORT[G.ps[i].age] + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '↑' : '') : 'out'))));
 }
 
@@ -702,6 +813,38 @@ function refreshTurn() {
     my && h('button', { class: 'btn small primary', title: 'Hand over to the next kitchen', onmousedown: (ev) => { if (ev.button === 0 && TAC.endTurn()) sfx('endturn'); ev.preventDefault(); } }, `End turn (${labelOf('endTurn')})`)].filter(Boolean));
 }
 
+// ------------------------------------------------- score bar (capture the flag)
+let scoreSig = '';
+const teamLabel = (team) => { const p = G.players.find((q) => q.team === team && !q.neutral); return p ? (realPlayers().filter(([q]) => q.team === team).length > 1 ? PLAYER_COLORS[p.color % PLAYER_COLORS.length].name : p.name) : 'Team ' + team; };
+function refreshScore() {
+  const box = $('scorebar');
+  if (!G.ctf) { if (scoreSig !== 'off') { scoreSig = 'off'; box.classList.add('hidden'); box.replaceChildren(); } return; }
+  const list = realPlayers(), teams = [...new Set(list.map(([p]) => p.team))];
+  const capsOf = (t) => G.ctf.caps[t] || 0;
+  const alive = (t) => list.some(([p, i]) => p.team === t && G.ps[i].alive);
+  const left = Math.max(0, G.ctf.timeLimit - G.tick / G.tickRate);
+  const sig = teams.map((t) => t + ':' + capsOf(t) + (alive(t) ? '' : 'x')).join('|') + '|' + (G.ctf.sudden ? 'S' : Math.ceil(left)) + '|' + G.ctf.lvl + '|' + (G.over ? 1 : 0);
+  if (sig === scoreSig) return;
+  scoreSig = sig;
+  const myT = G.me >= 0 ? G.players[G.me].team : -1;
+  const ffa = teams.length === list.length && list.length > 2;
+  const chip = (t) => h('span', { class: 'sc-team' + (t === myT ? ' mine' : '') + (alive(t) ? '' : ' out'), style: `border-color:${teamHex(t)}` },
+    h('span', { class: 'dot', style: `background:${teamHex(t)}` }), h('span', { class: 'sc-name' }, teamLabel(t)), h('b', { class: 'sc-caps' }, String(capsOf(t))));
+  const order = teams.slice().sort((a, b) => capsOf(b) - capsOf(a) || a - b);
+  const kids = [];
+  if (teams.length === 2) {                                        // the classic read-out: Red 1 – 0 Blue
+    const [a, b] = teams;
+    kids.push(chip(a), h('span', { class: 'sc-vs' }, 'first to ' + G.ctf.capsToWin), chip(b));
+  } else if (ffa) {                                                 // free for all: the top three, plus you
+    const top = order.slice(0, 3); if (myT >= 0 && !top.includes(myT)) top.push(myT);
+    kids.push(h('span', { class: 'tb-round' }, 'First to ' + G.ctf.capsToWin), ...top.map(chip));
+  } else kids.push(h('span', { class: 'tb-round' }, 'First to ' + G.ctf.capsToWin), ...order.map(chip));
+  kids.push(h('span', { class: 'tb-time' + (G.ctf.sudden || left <= 60 ? ' low' : '') }, G.over ? 'Match over' : G.ctf.sudden ? 'SUDDEN DEATH · next capture wins' : fmtClock(left)));
+  if (G.ctf.lvl) kids.push(h('span', { class: 'tb-left', title: 'Wild minions grow tougher (and richer) every few minutes' }, 'minions lv ' + (G.ctf.lvl + 1)));
+  box.classList.remove('hidden');
+  box.replaceChildren(...kids);
+}
+
 export function refreshAll(force) {
   refreshSelection(force);
   refreshCard(force);
@@ -714,6 +857,7 @@ export function updateHUD(now, force) {
   refreshTop();
   refreshHero();
   refreshTurn();
+  refreshScore();
   refreshPlayers();
   refreshSelection(force);
   refreshCard(force);
@@ -721,8 +865,12 @@ export function updateHUD(now, force) {
 }
 
 export function resetHUD() {
-  cardSig = selSig = heroSig = plSig = turnSig = '';
+  cardSig = selSig = heroSig = plSig = turnSig = scoreSig = '';
   document.body.classList.toggle('tb', !!G.tb);
+  document.body.classList.toggle('ctf', !!G.ctf);
+  resEls.tips.classList.toggle('hidden', !G.ctf);
+  for (const r of RES) resEls[r + 'Box'].classList.toggle('hidden', !!G.ctf);
+  resEls.popBox.classList.toggle('hidden', !!G.ctf);
   $('chatlog').replaceChildren(); $('msgs').replaceChildren();
   closeOver(); toggleMenu(false);
   updateHUD(0, true);
@@ -897,6 +1045,7 @@ const METRICS = [
 /** Line chart of one statistic over the match, one line per player. */
 function timelineChart(m) {
   const tl = m.timeline, players = m.summary, rounds = tl.unit === 'turn';
+  const metrics = METRICS.map(([k, n]) => [k, (tl.labels || {})[k] || n]);
   const when = (t) => (rounds ? 'Round ' + t : fmtTime(t));
   let metric = 'score', asTable = false, focus = -1;
   const wrap = h('div', { class: 'chart' });
@@ -911,7 +1060,7 @@ function timelineChart(m) {
     for (const row of data) for (const v of row) if (v > vMax) vMax = v;
     vMax = niceMax(vMax);
     const X = (t) => L + (t / tMax) * (W - L - R), Y = (v) => H - B - (v / vMax) * (H - T - B);
-    const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, class: 'ch-svg', role: 'img', 'aria-label': METRICS.find((x) => x[0] === metric)[1] + (rounds ? ' by round' : ' over time') + ', one line per player' });
+    const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, class: 'ch-svg', role: 'img', 'aria-label': metrics.find((x) => x[0] === metric)[1] + (rounds ? ' by round' : ' over time') + ', one line per player' });
     for (let i = 0; i <= 4; i++) {                              // recessive horizontal grid + value labels
       const v = (vMax / 4) * i, y = Y(v);
       svg.append(s('line', { x1: L, y1: y, x2: W - R, y2: y, class: i ? 'ch-grid' : 'ch-axis' }));
@@ -980,7 +1129,7 @@ function timelineChart(m) {
         idx.map((k) => h('tr', null, h('td', null, rounds ? tl.t[k] : fmtTime(tl.t[k])), players.map((p, i) => h('td', null, k <= lastIdx(i) ? fmtNum(data[i][k]) : '–'))))));
     } else view = h('div', { class: 'ch-plot' }, svg, tip);
     wrap.replaceChildren(
-      h('div', { class: 'ch-filters' }, METRICS.map(([key, name]) => h('button', { class: 'tab' + (metric === key ? ' on' : ''), onclick: () => { metric = key; draw(); } }, name)),
+      h('div', { class: 'ch-filters' }, metrics.map(([key, name]) => h('button', { class: 'tab' + (metric === key ? ' on' : ''), onclick: () => { metric = key; draw(); } }, name)),
         h('button', { class: 'tab right' + (asTable ? ' on' : ''), onclick: () => { asTable = !asTable; draw(); } }, asTable ? 'Show the graph' : 'Show as a table')),
       view, legend);
   };
@@ -996,7 +1145,7 @@ function hallTable(list, fresh) {
       h('td', null, i + 1), h('td', null, e.name, fresh && fresh.includes(e.id) && h('span', { class: 'tag ready' }, 'NEW')),
       h('td', null, (COMMANDERS[e.commander] || {}).name || e.commander), h('td', null, h('b', null, fmtNum(e.score))), h('td', null, e.won ? 'Won' : 'Lost'),
       h('td', null, fmtTime(e.minutes * 60)),
-      h('td', null, (e.mode === 'turn' ? 'Turn-based, ' : '') + `${e.players} kitchens` + (e.bots ? `, ${e.bots} bot${e.bots === 1 ? '' : 's'}${e.hardest ? ' (up to ' + (BOT_LEVELS[e.hardest] || e.hardest) + ')' : ''}` : '')),
+      h('td', null, (e.mode === 'turn' ? 'Turn-based, ' : e.mode === 'ctf' ? 'Capture the Flag, ' : '') + `${e.players} kitchens` + (e.bots ? `, ${e.bots} bot${e.bots === 1 ? '' : 's'}${e.hardest ? ' (up to ' + (BOT_LEVELS[e.hardest] || e.hardest) + ')' : ''}` : '')),
       h('td', null, e.date))));
 }
 
@@ -1019,7 +1168,16 @@ export function showOver(m) {
   const chef = (x) => h('td', { class: 'chef' }, h('span', { class: 'dot', style: `background:${colorHex(x.color)}` }), x.name, x.team === m.team && h('span', { class: 'tag host' }, 'WON'), x.bot && h('span', { class: 'tag bot' }, 'BOT'));
   const tr = (x, cells) => h('tr', { class: (x.team === m.team ? 'won' : '') + (x.idx === G.me ? ' me' : '') }, chef(x), cells.map((c) => h('td', null, c)));
   const sc = (x) => x.score || { military: 0, economy: 0, technology: 0, society: 0, total: 0 };
-  const tabs = [
+  const ctf = m.summary.some((x) => x.ctf);
+  const itemCells = (x) => h('span', { class: 'items' }, ...ITEM_KEYS.map((k) => { const lv = (x.items || {})[k] | 0; return lv ? h('span', { class: 'item', title: CTF.items[k].name + ' ' + ['I', 'II', 'III'][lv - 1] }, h('img', { src: iconURL(CTF.items[k].icon[0], CTF.items[k].icon[1], 48, colorHex(x.color)), draggable: 'false', alt: '' }), h('b', null, ['I', 'II', 'III'][lv - 1])) : null; }));
+  const tabs = ctf ? [
+    ['Scores', () => h('div', null,
+      h('table', { class: 'score' },
+        h('tr', null, ['Chef', 'Hero', 'Captures', 'Hero kills', 'Deaths', 'Minions', 'Tips earned', 'Items', 'Total'].map((t) => h('th', null, t))),
+        rows.map((x) => tr(x, [COMMANDERS[x.commander].name, x.caps, x.kills, x.deaths, x.minions, fmtNum(x.earned), itemCells(x), h('b', { class: 'total' }, fmtNum(sc(x).total))]))),
+      h('p', { class: 'muted' }, 'Captures count 400 each · hero kills 60 · minions 4 · every item tier 40 · a quarter of the Tips earned'))],
+  ] : [
+
     ['Scores', () => h('div', null,
       h('table', { class: 'score' },
         h('tr', null, ['Chef', 'Commander', 'Military', 'Economy', 'Technology', 'Society', 'Total'].map((t) => h('th', null, t))),
@@ -1030,6 +1188,8 @@ export function showOver(m) {
       rows.map((x) => { const r = x.res || {}; return tr(x, [AGE_SHORT[x.age], x.kills, x.lost, x.razed, x.bldgLost ?? '–', `${x.heroKills ?? 0} / ${x.heroDeaths ?? 0}`, x.trained ?? '–', x.built ?? '–', x.techs ?? '–', x.peakPop ?? '–', x.peakArmy ?? '–',
         fmtNum(r.food || 0), fmtNum(r.wood || 0), fmtNum(r.spice || 0), fmtNum(r.salt || 0), x.outAt ? (m.rounds ? 'round ' + x.outAt : fmtTime(x.outAt)) : '–']); })))],
   ];
+  const capsBy = (team) => m.summary.filter((x) => x.team === team).reduce((n, x) => n + (x.caps || 0), 0);
+  const runnerUp = ctf ? [...new Set(m.summary.map((x) => x.team))].filter((t) => t !== m.team).sort((a, b) => capsBy(b) - capsBy(a))[0] : undefined;
   if (m.timeline && m.timeline.t && m.timeline.t.length > 1) tabs.push(['Timeline', () => timelineChart(m)]);
   tabs.push(['Hall of Fame', () => h('div', null, hallTable(m.hof, m.fresh), h('p', { class: 'muted' }, 'Top scores by human players on this server (matches with two or more kitchens that last a few minutes).'))]);
   let cur = 0;
@@ -1042,7 +1202,7 @@ export function showOver(m) {
   const modal = h('div', { class: 'modal', id: 'over' },
     h('div', { class: 'modal-box over wide ' + (title === 'Victory!' ? 'win' : title === 'Defeat' ? 'loss' : '') },
       h('h1', null, title),
-      h('p', { class: 'muted' }, (m.onScore ? `The round limit is up: ${winners || 'nobody'} ${winners.includes(' & ') ? 'win' : 'wins'} on points` : winners ? winners + (winners.includes(' & ') ? ' rule' : ' rules') + ' the kitchen' : 'Nobody is left standing')
+      h('p', { class: 'muted' }, (ctf ? (winners ? `${winners} ${winners.includes(' & ') ? 'take' : 'takes'} the flag ${capsBy(m.team)}–${runnerUp === undefined ? 0 : capsBy(runnerUp)}` : 'Nobody is left standing') : m.onScore ? `The round limit is up: ${winners || 'nobody'} ${winners.includes(' & ') ? 'win' : 'wins'} on points` : winners ? winners + (winners.includes(' & ') ? ' rule' : ' rules') + ' the kitchen' : 'Nobody is left standing')
         + (m.rounds ? ` after ${m.rounds} round${m.rounds === 1 ? '' : 's'} (${fmtTime(m.minutes * 60)}).` : ` after ${fmtTime(m.minutes * 60)}.`)),
       bar2, body,
       h('div', { class: 'over-btns' },

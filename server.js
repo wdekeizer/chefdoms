@@ -22,7 +22,9 @@ import { Game } from './game/sim.js';
 import { Bot } from './game/ai.js';
 import { TacticsGame } from './game/tactics.js';
 import { TacticsBot } from './game/tactics-ai.js';
-import { VERSION, TICK_RATE, MAX_PLAYERS, COMMANDER_KEYS, OPTIONS, PLAYER_COLORS, BOT_LEVELS } from './game/data.js';
+import { CtfGame } from './game/ctf.js';
+import { CtfBot } from './game/ctf-ai.js';
+import { VERSION, TICK_RATE, MAX_PLAYERS, COMMANDER_KEYS, HERO_KEYS, OPTIONS, PLAYER_COLORS, BOT_LEVELS } from './game/data.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -139,7 +141,7 @@ function recordScores(m, summary, team) {
     if (!m.tokens[i]) return;
     const e = {
       name: s.name, commander: s.commander, score: s.score.total, won: s.team === team, minutes: Math.round(minutes * 10) / 10,
-      players: summary.length, bots: bots.length, hardest, map: m.g.mapSize, mode: m.g.mode === 'turn' ? 'turn' : 'rt', date: new Date().toISOString().slice(0, 10), id: randomBytes(6).toString('hex'),
+      players: summary.length, bots: bots.length, hardest, map: m.g.mapSize, mode: m.g.mode || 'rt', date: new Date().toISOString().slice(0, 10), id: randomBytes(6).toString('hex'),
     };
     hallOfFame.push(e); fresh.push(e);
   });
@@ -213,7 +215,7 @@ function lobbyAction(c, m) {
   switch (m.t) {
     case 'set': {                                   // change my own seat
       if (!mine) return;
-      if (m.k === 'commander' && (m.v === 'random' || COMMANDER_KEYS.includes(m.v))) mine.commander = m.v;
+      if (m.k === 'commander' && (m.v === 'random' || HERO_KEYS.includes(m.v))) mine.commander = m.v;
       else if (m.k === 'team' && Number.isInteger(m.v) && m.v >= 1 && m.v <= MAX_PLAYERS) mine.team = m.v;
       else if (m.k === 'color' && Number.isInteger(m.v) && m.v >= 0 && m.v < PLAYER_COLORS.length) {
         if (!lobby.slots.some((s) => s && s !== mine && s.color === m.v)) mine.color = m.v;
@@ -246,7 +248,7 @@ function lobbyAction(c, m) {
       if (m.a === 'remove') {
         if (s.kind === 'human' && s.cid === c.id) return;
         lobby.slots[i] = null;
-      } else if (m.a === 'commander' && (m.v === 'random' || COMMANDER_KEYS.includes(m.v))) s.commander = m.v;
+      } else if (m.a === 'commander' && (m.v === 'random' || HERO_KEYS.includes(m.v))) s.commander = m.v;
       else if (m.a === 'team' && Number.isInteger(m.v) && m.v >= 1 && m.v <= MAX_PLAYERS) s.team = m.v;
       else if (m.a === 'level' && s.kind === 'bot' && BOT_LEVELS[m.v]) s.level = m.v;
       else if (m.a === 'color' && Number.isInteger(m.v) && m.v >= 0 && m.v < PLAYER_COLORS.length) {
@@ -271,28 +273,30 @@ function lobbyAction(c, m) {
 // ------------------------------------------------------------------- match
 function startMatch() {
   const seats = lobby.slots.map((s, i) => (s ? { ...s, slot: i } : null)).filter(Boolean);
-  // resolve random commanders, avoiding duplicates where possible
-  const taken = new Set(seats.map((s) => s.commander).filter((k) => k !== 'random'));
-  const pool = COMMANDER_KEYS.filter((k) => !taken.has(k)).sort(() => Math.random() - 0.5);
+  const mode = lobby.opts.mode === 'turn' ? 'turn' : lobby.opts.mode === 'ctf' ? 'ctf' : 'rt';
+  // resolve random commanders, avoiding duplicates where possible (the Capture the Flag heroes only exist in that mode)
+  const keys = mode === 'ctf' ? HERO_KEYS : COMMANDER_KEYS;
+  const taken = new Set(seats.map((s) => s.commander).filter((k) => k !== 'random' && keys.includes(k)));
+  const pool = keys.filter((k) => !taken.has(k)).sort(() => Math.random() - 0.5);
   const players = seats.map((s) => ({
     name: s.name, team: s.team, color: s.color, bot: s.kind === 'bot' ? s.level : null,
-    commander: s.commander === 'random' ? (pool.pop() || COMMANDER_KEYS[(Math.random() * COMMANDER_KEYS.length) | 0]) : s.commander,
+    commander: s.commander !== 'random' && keys.includes(s.commander) ? s.commander : (pool.pop() || keys[(Math.random() * keys.length) | 0]),
   }));
-  const turnBased = lobby.opts.mode === 'turn';
-  const g = new (turnBased ? TacticsGame : Game)({ players, ...lobby.opts, seed: (Math.random() * 2147483647) | 0 });
-  g.players.forEach((P, i) => { if (seats[i].kind === 'bot') P.ai = new (turnBased ? TacticsBot : Bot)(g, P, seats[i].level); });
+  const GameClass = mode === 'turn' ? TacticsGame : mode === 'ctf' ? CtfGame : Game, BotClass = mode === 'turn' ? TacticsBot : mode === 'ctf' ? CtfBot : Bot;
+  const g = new GameClass({ players, ...lobby.opts, seed: (Math.random() * 2147483647) | 0 });
+  g.players.forEach((P, i) => { if (seats[i] && seats[i].kind === 'bot') P.ai = new BotClass(g, P, seats[i].level); });
   match = {
     g, timer: null, paused: false, over: false, speed: Number(lobby.opts.speed) || 1,
     tokens: seats.map((s) => (s.kind === 'human' ? s.token : null)),
     takeover: new Map(), emptySince: 0, started: Date.now(),
   };
   for (const s of lobby.slots) if (s && s.kind === 'human') s.ready = false;
-  if (WARP > 0 && !turnBased) { for (let i = 0; i < WARP * TICK_RATE && !g.over; i++) g.step(); g.delta(); }
+  if (WARP > 0 && mode === 'rt') { for (let i = 0; i < WARP * TICK_RATE && !g.over; i++) g.step(); g.delta(); }
   for (const c of joined()) {
     c.player = match.tokens.indexOf(c.token);
     sendStart(c);
   }
-  log(`match started: ${players.map((p) => `${p.name} (${p.commander}${p.bot ? ', ' + p.bot + ' bot' : ''})`).join(' vs ')} | ${turnBased ? 'turn-based, ' : ''}map ${g.mapSize} ${g.w}x${g.h}, seed ${g.seed}`);
+  log(`match started: ${players.map((p) => `${p.name} (${p.commander}${p.bot ? ', ' + p.bot + ' bot' : ''})`).join(' vs ')} | ${mode === 'turn' ? 'turn-based, ' : mode === 'ctf' ? 'capture the flag, ' : ''}map ${g.mapSize} ${g.w}x${g.h}, seed ${g.seed}`);
   runLoop();
 }
 
@@ -359,7 +363,7 @@ function housekeeping(m) {
     const P = m.g.players[pi];
     // (in a turn-based match everyone is waiting on the player whose turn it is, so the bot steps in sooner)
     if (!P.ai && P.alive && now - since > (m.g.mode === 'turn' ? Math.min(TAKEOVER_MS, 20000) : TAKEOVER_MS)) {
-      P.ai = m.g.mode === 'turn' ? new TacticsBot(m.g, P, 'normal') : new Bot(m.g, P, 'normal');
+      P.ai = m.g.mode === 'turn' ? new TacticsBot(m.g, P, 'normal') : m.g.mode === 'ctf' ? new CtfBot(m.g, P, 'normal') : new Bot(m.g, P, 'normal');
       P.ai.caretaker = true;
       if (P.bell) m.g.command(pi, { c: 'bell', on: 0 });        // the caretaker needs the Prep Cooks at work
       for (const c of joined()) send(c, { t: 'chat', sys: 1, m: `${P.name} is still away; a bot is minding their kitchen.` });

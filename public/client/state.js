@@ -2,7 +2,7 @@
 //  Client-side game state: a mirror of what the server streams to us, plus
 //  purely local things (selection, camera, fog of war, visual effects).
 // ============================================================================
-import { UNITS, BUILDINGS, NODES, computeStats, tbUnit, tbBldg } from '/game/data.js';
+import { UNITS, BUILDINGS, NODES, COMMANDERS, CTF, computeStats, tbUnit, tbBldg, ctfHeroStats } from '/game/data.js';
 
 export const K_UNIT = 0, K_BLDG = 1, K_NODE = 2;
 export const ST_INSIDE = 6;               // unit state: sheltering inside a station (hidden)
@@ -21,6 +21,8 @@ export const G = {
   tick: 0, snapAt: 0, snapDt: 50, startedAt: 0,
   paused: false, over: null,
   tb: null,                 // turn-based match: { n: round, cur: whose turn, deadline: tick the turn ends (0 = no timer), time, limit }
+  ctf: null,                // capture the flag: { capsToWin, timeLimit, ultUnlock, neutral, bases, flags, camps, caps, sudden, lvl }
+  follow: false,            // camera follows your hero (capture the flag)
 
   // --- local
   sel: new Set(), groups: {},
@@ -38,13 +40,19 @@ export const G = {
 try { G.formation = Math.max(0, Math.min(4, Number(localStorage.getItem('chefdoms.formation')) || 0)); } catch { /* private mode */ }
 
 export const isSpectator = () => G.me < 0 || !G.ps[G.me] || !G.ps[G.me].alive;
+/** My hero on the field (capture the flag), or null. */
+export const myHero = () => { const p = G.me >= 0 ? G.ps[G.me] : null; return p && p.heroId ? G.ents.get(p.heroId) || null : null; };
 export const myTeam = () => (G.me >= 0 ? G.players[G.me].team : -99);
 export const isAlly = (owner) => owner >= 0 && G.me >= 0 && G.players[owner].team === G.players[G.me].team;
+/** The camp a wild minion belongs to (capture the flag), or null. */
+export const campOf = (e) => (G.ctf && e.kind === K_UNIT && e.owner === G.ctf.neutral && e.sn > 0 ? G.ctf.camps[e.sn - 1] || null : null);
 export const maxHp = (e) => {
   if (e.kind === K_NODE) return 1;
   const st = G.ps[e.owner] && G.ps[e.owner].stats;
   const S = st && (e.kind === K_UNIT ? st.units[e.type] : st.bldgs[e.type]);
   if (!S) return 1;
+  const camp = campOf(e);
+  if (camp) { const def = CTF.camps[camp.type]; return Math.round(S.hp * (1 + CTF.minion.hp * camp.level) * ((def && def.hpMul) || 1)); }
   return G.tb && e.kind === K_BLDG ? tbBldg(S).hp : S.hp;      // stations are much smaller on the tactics grid
 };
 export const statsOf = (e) => {
@@ -56,6 +64,11 @@ export const statsOf = (e) => {
 export function beginMatch(m) {
   G.me = m.you; G.players = m.players; G.opts = m.opts || {};
   G.tb = m.mode === 'turn' ? { n: 1, cur: 0, deadline: 0, time: Number(G.opts.turnTime) || 0, limit: Number(G.opts.turnLimit) || 0 } : null;
+  G.ctf = m.mode === 'ctf' && m.ctf ? {
+    ...m.ctf, caps: {}, sudden: false, lvl: 0,
+    flags: m.ctf.flags.map((f) => ({ team: f.team, hx: f.x, hy: f.y, x: f.x, y: f.y, state: 0, carrier: 0, dropAt: 0 })),
+    camps: m.ctf.camps.map((k, i) => ({ i, x: k.x, y: k.y, type: k.type, level: 0, nextAt: 0, alive: 0 })),
+  } : null;
   G.w = m.w; G.h = m.h; G.Q = m.q || 32; G.tickRate = m.tickRate || 20;
   const N = G.w * G.h;
   G.tiles = new Uint8Array(N);
@@ -65,7 +78,7 @@ export function beginMatch(m) {
   G.ps = m.players.map((p) => ({
     res: { food: 0, wood: 0, spice: 0, salt: 0 }, pop: 0, cap: 0, age: 1, techs: [], alive: true,
     heroId: 0, heroRespawn: 0, abilityReady: 0, lunchUntil: 0, pending: [], kills: 0, lost: 0, razed: 0, bell: false,
-    ultReady: 0, lockUntil: 0, income: [0, 0, 0, 0],
+    ultReady: 0, lockUntil: 0, income: [0, 0, 0, 0], items: {}, caps: 0, deaths: 0, energyReady: 0, minions: 0, heroKills: 0,
     stats: computeStats(p.commander, 1, []), sig: '',
   }));
   G.tick = m.tick || 0; G.snapAt = 0; G.snapDt = 1000 / G.tickRate / (Number(G.opts.speed) || 1);
@@ -167,11 +180,20 @@ function updatePlayer(r) {
   p.res.food = r[1]; p.res.wood = r[2]; p.res.spice = r[3]; p.res.salt = r[4];
   p.pop = r[5]; p.cap = r[6];
   const sig = r[7] + '|' + r[8].join(',');
-  if (sig !== p.sig) { p.sig = sig; p.age = r[7]; p.techs = r[8]; p.stats = computeStats(G.players[r[0]].commander, p.age, p.techs); }
+  const items = G.ctf && r[21] ? r[21].join('') : '';
+  if (sig + items !== p.sig) {
+    p.sig = sig + items; p.age = r[7]; p.techs = r[8]; p.stats = computeStats(G.players[r[0]].commander, p.age, p.techs);
+    if (G.ctf && r[21]) {                                      // capture the flag: the hero wears what it bought
+      const C = COMMANDERS[G.players[r[0]].commander], keys = Object.keys(CTF.items);
+      p.items = {}; keys.forEach((k, i) => { p.items[k] = r[21][i] | 0; });
+      if (C) p.stats.units[C.hero] = ctfHeroStats(p.stats.units[C.hero], p.items);
+    }
+  }
   p.alive = !!r[9]; p.heroId = r[10]; p.heroRespawn = r[11]; p.abilityReady = r[12]; p.lunchUntil = r[13];
   p.pending = r[14]; p.kills = r[15]; p.lost = r[16]; p.razed = r[17]; p.bell = !!r[18];
   p.ultReady = r[19] || 0; p.lockUntil = r[20] || 0;
-  if (r[21]) p.income = r[21];
+  if (G.ctf) { p.caps = r[22] || 0; p.deaths = r[23] || 0; p.energyReady = r[24] || 0; p.minions = r[25] || 0; p.heroKills = r[26] || 0; }
+  else if (r[21]) p.income = r[21];
 }
 
 export function applySnapshot(m) {
@@ -187,6 +209,11 @@ export function applySnapshot(m) {
   G.tick = m.k;
   if (m.p) for (const r of m.p) updatePlayer(r);
   if (m.tb && G.tb) { G.tb.n = m.tb[0]; G.tb.cur = m.tb[1]; G.tb.deadline = m.tb[2]; }
+  if (G.ctf) {
+    if (m.ctf) { G.ctf.caps = m.ctf.caps || {}; G.ctf.sudden = !!m.ctf.sudden; G.ctf.lvl = m.ctf.lvl || 0; }
+    if (m.flags) for (const r of m.flags) { const f = G.ctf.flags.find((x) => x.team === r[0]); if (!f) continue; f.state = r[1]; f.carrier = r[4]; f.dropAt = r[5]; if (r[1] !== 1) { f.x = r[2] / G.Q; f.y = r[3] / G.Q; } }
+    if (m.camps) for (const r of m.camps) { const k = G.ctf.camps[r[0]]; if (k) { k.level = r[1]; k.nextAt = r[2]; k.alive = r[3]; } }
+  }
   if (G.tb && (m.e || m.m || m.r || m.tb || m.p)) G.tbDirty = true;
   if (m.e) for (const r of m.e) upsert(r, now, !!m.full);
   if (m.m) {

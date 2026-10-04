@@ -1,8 +1,9 @@
 # Chefdoms
 
-A cooking-themed real-time strategy game in the spirit of Age of Empires, for 1 to 8 players (any mix of humans and bots).
+A cooking-themed real-time strategy game in the spirit of Age of Empires, for 1 to 10 players (any mix of humans and bots).
 You host it from your own computer; everyone plays in a web browser. Nothing to install for your friends.
-It can also be played turn-based, on a grid, one kitchen at a time (see [Turn-based mode](#turn-based-mode)).
+It can also be played turn-based, on a grid, one kitchen at a time (see [Turn-based mode](#turn-based-mode)), or as a
+fast hero brawl: [Capture the Flag](#capture-the-flag), one hero each, wild minions to farm and items to buy, 15 minutes a match.
 
 Gather Produce, Firewood, Spice and Salt. Build stations. Advance from the Food Cart Age to the Five-Star Age.
 Lead your brigade with one of six commanders, each a hero on the battlefield with their own buffs, aura,
@@ -105,11 +106,12 @@ A friend's copy uses its own `public/music` and `public/sfx` folders, so each pl
 
 - The first player in (or whoever is on the host PC) is the host. The host adds bots, sets the options and starts the match.
 - Click your commander to choose one. Click the coloured dot to change colour. Same team number = allies (shared vision, team chat).
-- Up to 8 kitchens per match. Fill empty seats with bots from the "+ Add bot" menu on each seat.
-- **Game mode**: Real-time (the classic game) or Turn-based (see [Turn-based mode](#turn-based-mode)).
+- Up to 10 kitchens per match. Fill empty seats with bots from the "+ Add bot" menu on each seat.
+- **Game mode**: Real-time (the classic game), Turn-based (see [Turn-based mode](#turn-based-mode)) or
+  Capture the Flag (see [Capture the Flag](#capture-the-flag)).
 - Options: map size, starting pantry, staff limit, game speed, fog of war, and the victory rule
   (destroy every enemy Kitchen HQ, or Conquest: destroy every station). Map size "Auto" picks Small (96×96 tiles) for 2,
-  Medium (128) for 3-4, Large (160) for 5-6 and Huge (200) for 7-8 kitchens; a size too small for the head count is bumped up.
+  Medium (128) for 3-4, Large (160) for 5-6 and Huge (200) for 7-10 kitchens; a size too small for the head count is bumped up.
 - **Hall of Fame** shows the best scores by human players on this server (kept in `highscores.json` next to `server.js`).
 - Bots come in Easy, Normal, Hard and Extreme. Easy to Hard play by the same rules as you. Extreme plays the
   Hard script flat out and also gathers 25% faster. No bot is limited by fog of war.
@@ -206,6 +208,7 @@ All commanders are original characters; names, buffs and everything else live in
 | . and , | Next idle Prep Cook / whole army |
 | U / M / L | Ring or silence the bell / ping (then click) / next formation |
 | Tab | Jump to the last alert or ping |
+| Y | Lock the camera on your hero, or free it again (Capture the Flag) |
 | Ctrl or Shift + 1…9 | Save a control group; the number recalls it |
 | Arrows, screen edge, middle-drag, minimap | Move the camera; mouse wheel (or = and -) zooms |
 | Delete | Remove selected units/stations |
@@ -250,6 +253,50 @@ games: the same commanders, units, stations, upgrades and ages, on a small grid,
 - **Mouse.** Left-click selects, moves to a blue tile, or attacks a red enemy. Right-click moves and attacks too, and
   is how a Barista tops up a friend and how a Prep Cook repairs, helps build, or puts a Pantry on a resource.
 
+## Capture the Flag
+
+Choose **Game mode → Capture the Flag (heroes)** in the lobby for a fast hero brawl in the style of a MOBA: no
+kitchen to run, one hero each, 5v5, 2v2, a ten-way free-for-all or anything in between, and a match that is over in
+about 15 minutes.
+
+- **The arena.** Teams start in kitchens spread round a ring (72 tiles across for two teams, bigger with more).
+  Your team's flag stands in front of your kitchen; the kitchen itself cannot be destroyed, heals heroes quickly
+  around it, and is where you shop. Wild minion camps sit between the kitchens, with **The Head Critic** in the middle.
+- **Scoring.** Walk over an enemy flag to pick it up, carry it to your own flag stand to score (your own flag has to be
+  home, so defending counts). The carrier is slower and marked for everyone. If the carrier falls the flag drops where
+  they stood: a team-mate of its owner touches it to send it home, an enemy picks it straight up, and after 25 seconds
+  it goes home by itself. First to 3, 5 or 7 captures wins (lobby option); when the clock (10, 15 or 20 minutes)
+  runs out the most captures wins, a level score goes to **sudden death** (next capture wins), and after five more
+  minutes hero kills, then fewest deaths, settle it.
+- **Tips** are the only currency. Every second pays one, felling wild minions pays their bounty, taking down an enemy
+  hero pays 90 (more if they are well equipped), a capture pays 50. Zara's Tip Jar pays Tips.
+- **Items** (the second and third row of the command card; shop within a few tiles of your kitchen, or while you wait
+  to respawn): Cast-Iron Skillet (attack), Chef's Whites (armour), Hearty Stew (health), Running Clogs (speed),
+  Double Espresso (attack speed) and Herb Garden (regeneration), two or three tiers each, dearer every tier.
+  The **Energy Bar** (60 Tips, once every 20 seconds) heals a third of your health anywhere on the map.
+- **Wild minions** mind their own business until you hit one; then the whole camp comes for you, and gives up if you
+  run far enough. Camps come back a while after they are cleared and grow tougher (and richer) every two and a half
+  minutes: Dish Pit Crew, Rogue Line Cooks, The Sauce Gang, Delivery Pirates, Smokehouse Bouncers, and the Critic,
+  a boss worth 160 Tips who needs a team or a full bag of items.
+- **Heroes.** All ten commanders fight here with their abilities on a short cooldown (about 15 to 20 seconds) and their
+  ultimates (unlocked at 3:00, about 75 to 80 seconds). Heroes hit 50% harder than in the classic game, and a fallen
+  hero returns at the kitchen after 6 seconds early on, growing to 22 late in the match. Hank's and Zara's kits are
+  swapped for ones that work without stations (Thick Bark and Rush Hour), and four heroes are only playable here:
+
+| Hero | Style | Aura | Ability (Space) | Ultimate (O) |
+|---|---|---|---|---|
+| Dolores "Dolly" Quintero, "The Line Boss" | Melee tank | Friendly heroes near her take 8% less damage and regenerate | Hold the Pass!: heroes around her heal 15% and take 35% less damage for 6s | Last Call: for 8s she takes 60% less damage and every blow heals her for the damage it does |
+| Kofi Mensah, "The Flash" | Melee striker | Enemies near him take 10% more damage | Flash Fry: dashes to the nearest enemy hero within 7 tiles, hits it hard, attacks 40% faster for 3s | Cleaver Storm: for 5s everything within 2.5 tiles takes damage four times a second, armour or not |
+| Ingrid Halvorsen, "The Ice Queen" | Ranged control | Enemies near her move 10% slower | Brain Freeze: enemies within 6 tiles move 50% and attack 40% slower for 5s | Deep Freeze: enemies within 7 tiles are frozen for 3s (heroes 2s) and chilled after |
+| Rafael "Rafa" Santos, "The Saucier General" | Ranged sniper | Friendly heroes near him deal 12% more damage | Hot Shot: a scalding ladle at the most wounded enemy hero within 12 tiles, ignores armour | Sauce Flood: a 13-tile wave of sauce towards the nearest enemy; heavy damage and a chill to everything in its path |
+
+- **The screen.** Your hero starts selected and the camera is locked on it (`Y` frees it, or click the minimap).
+  The score bar under the top bar shows the captures, the target and the clock; the player list shows captures and
+  hero kills / deaths for everyone; a dropped flag shows how long until it goes home. The end-of-match table counts
+  captures, hero kills, deaths, minions, Tips earned and items.
+- **Bots** play it at all four levels: they farm camps that suit their strength, shop, run flags one at a time per team,
+  chase carriers, defend, and retreat to eat an Energy Bar when hurt.
+
 ## Sound and music
 
 Everything you hear is generated in the browser: the effects are synthesised, and the soundtrack is a set of
@@ -290,7 +337,8 @@ node tools/sim-test.js --series 12          twelve quick matches and a win table
 node tools/sim-test.js --players flint:extreme,nonna:hard --map small
 node tools/sim-test.js --n 8 --level hard   an eight-bot free-for-all
 node tools/sim-test.js --mode turn --rounds 60   a turn-based bot match (add --series 6 for a win table)
-node tools/rules-test.js                    rule checks (economy, combat, heroes, ultimates, turn-based mode, victory, ...)
+node tools/sim-test.js --mode ctf --n 10 --teams 2 --level hard   a 5v5 Capture the Flag between bots (--teams 0: free for all)
+node tools/rules-test.js                    rule checks (economy, combat, heroes, ultimates, turn-based mode, capture the flag, victory, ...)
 node tools/net-test.js                      end-to-end server test (Node 22+)
 ```
 
@@ -305,6 +353,8 @@ game/mapgen.js        random maps
 game/ai.js            the bots
 game/tactics.js       turn-based mode: the same game on a grid, one kitchen at a time
 game/tactics-ai.js    the bots for turn-based mode
+game/ctf.js           Capture the Flag: the arena, flags, wild camps, items
+game/ctf-ai.js        the bots for Capture the Flag
 lib/wsserver.js       dependency-free WebSocket server
 public/               the browser client (canvas renderer, HUD, input, sprites, sounds, music)
 public/music, sfx     drop your own audio here

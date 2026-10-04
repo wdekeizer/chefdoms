@@ -6,7 +6,7 @@
 import {
   TICK_RATE, DT, RES, TILE, TREE_WOOD, NODES, BUILDINGS, TECHS, COMMANDERS, BUFFS,
   AURA_RADIUS, ZARA_TIP, HERO_RESPAWN, START_RES, MAP_SIZES, mapSizeFor,
-  GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, FORMATIONS, ULT_AGE,
+  GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, FORMATIONS, ULT_AGE, CTF,
   computeStats, techCost, techTime, trainList,
 } from './data.js';
 import { Pathfinder } from './pathfinding.js';
@@ -467,6 +467,11 @@ export class Game {
       if (t) this.beginOrder(u, { t: 'heal', id: t.id, auto: true });
       return;
     }
+    if (u.camp) {                                   // wild minions guard their camp: they only pick on whoever comes very close, and wander back home
+      if (S.atk > 0) { const tg = this.acquire(u, S, 2.5); if (tg) { this.beginOrder(u, { t: 'attack', id: tg.id, auto: true, gx: u.camp.x, gy: u.camp.y, leash: u.camp.leash }); return; } }
+      if (Math.hypot(u.x - u.camp.x, u.y - u.camp.y) > 2.5) this.beginOrder(u, { t: 'move', x: u.camp.x + u.campOff[0], y: u.camp.y + u.campOff[1] });
+      return;
+    }
     if (S.atk <= 0 || u.isCook || u.stance === 2) return;
     const hold = u.stance === 1;
     const tg = this.acquire(u, S, hold ? this.holdRadius(S) : 0);
@@ -628,8 +633,14 @@ export class Game {
     let dmg = atk * mult - (ranged ? TS.parmor : TS.armor);
     if (dmg < 1) dmg = 1;
     if (tg.kind === K_UNIT) dmg *= tg.bDmg;
+    else if (tg.invuln) return;                                                     // (Capture the Flag kitchens cannot be hurt)
     else if (this.players[tg.owner].lockUntil > this.tick) dmg *= 0.25;         // Lockdown
+    if (dmg > tg.hp) dmg = tg.hp;
     tg.hp -= dmg; tg.lastHit = this.tick;
+    if (srcId) {                                                                   // Last Call: the blow feeds the one who struck it
+      const src = this.ents.get(srcId);
+      if (src && !src.dead && src.kind === K_UNIT && src.buffs && src.buffs.lastcall > this.tick) src.hp = Math.min(src.S.hp, src.hp + dmg * BUFFS.lastcall.lifesteal);
+    }
     if (tg.hp <= 0) { this.killEntity(tg, owner); return; }
     this.onDamaged(tg, srcId, owner);
   }
@@ -641,6 +652,13 @@ export class Game {
     if (tick - P.lastAlert > 120) { P.lastAlert = tick; this.events.push(['alert', tg.owner, Math.round(tg.x), Math.round(tg.y), tg.kind]); }
     P.lastAttacked = { tick, x: tg.x, y: tg.y, by };
     // idle soldiers hit back (unless told to hold the line or stand down)
+    if (tg.kind === K_UNIT && tg.camp && tg.S.atk > 0 && (!tg.order || tg.order.t !== 'attack')) {     // the whole camp turns on whoever started it
+      const src = this.ents.get(srcId);
+      if (src && !src.dead && Math.hypot(src.x - tg.camp.x, src.y - tg.camp.y) < tg.camp.leash + 6) {
+        for (const v of this.units) if (!v.dead && v.camp === tg.camp && (!v.order || v.order.t !== 'attack')) this.beginOrder(v, { t: 'attack', id: src.id, auto: true, gx: tg.camp.x, gy: tg.camp.y, leash: tg.camp.leash });
+      }
+      return;
+    }
     if (tg.kind === K_UNIT && !tg.order && tg.S.atk > 0 && !tg.isCook && tg.stance !== 2) {
       const src = this.ents.get(srcId);
       const reach = tg.stance === 1 ? this.holdRadius(tg.S) : 12;
@@ -1073,11 +1091,11 @@ export class Game {
       if (!P.alive || !P.heroId) continue;
       const hero = this.ents.get(P.heroId);
       if (!hero || hero.dead) continue;
-      const key = COMMANDERS[P.commander].aura.key;
+      const key = COMMANDERS[P.commander].aura.key, onFoes = !!BUFFS[key].hostile;
       const list = this.near(hero.x, hero.y, AURA_RADIUS);
       for (let i = 0; i < list.length; i++) {
         const v = list[i];
-        if (v.owner !== P.idx || v.dead || Math.hypot(v.x - hero.x, v.y - hero.y) > AURA_RADIUS) continue;
+        if (v.dead || (onFoes ? !this.hostile(P.idx, v.owner) : v.owner !== P.idx) || Math.hypot(v.x - hero.x, v.y - hero.y) > AURA_RADIUS) continue;
         (v.buffs || (v.buffs = {}))[key] = tick + 8;
       }
     }
@@ -1099,6 +1117,7 @@ export class Game {
           if (B.gatherMul) gat *= B.gatherMul;
           if (B.regen) heal += B.regen;
           if (B.regenFrac) heal += B.regenFrac * u.S.hp;
+          if (B.pulse && regen && u.storm) this.pulse(u);
         }
         if (!any) u.buffs = null;
       }
@@ -1106,12 +1125,35 @@ export class Game {
       u.stunned = (mask & BUFFS.stun.bit) !== 0;
       if (!regen) continue;
       if (u.isHero && tick - u.lastHit > 6 * TICK_RATE) heal += 2;
+      if (u.S.regen) heal += u.S.regen;                                                       // Herb Garden
+      if (u.camp && tick - u.lastHit > 6 * TICK_RATE) heal += u.S.hp * CTF.minion.regenFrac;   // wild minions shake it off between fights
       if (heal > 0 && u.hp < u.S.hp) u.hp = Math.min(u.S.hp, u.hp + heal * 0.25);
     }
   }
 
   addBuff(u, key, seconds) {
     (u.buffs || (u.buffs = {}))[key] = this.tick + Math.round(seconds * TICK_RATE);
+  }
+  /** Cleaver Storm: one quarter-second of whirling blades around u. */
+  pulse(u) {
+    const st = u.storm, list = this.near(u.x, u.y, st.r + 0.6).slice();
+    for (const v of list) if (!v.dead && v !== u && this.hostile(u.owner, v.owner) && Math.hypot(v.x - u.x, v.y - u.y) - v.r <= st.r) this.applyDamage(u.owner, u.id, v, st.dmg + v.S.armor, {}, false);
+  }
+  /** Zara's Tip Jar pays Spice (Tips, in Capture the Flag). */
+  tipJar(K, amount) { K.res.spice += amount; }
+  /** The ability and ultimate a player's commander brings to this match (Capture the Flag swaps a couple). */
+  kitOf(P) { const C = COMMANDERS[P.commander]; return { ability: C.ability, ultimate: C.ultimate }; }
+  cdMul() { return 1; }
+  ultCdMul() { return 1; }
+  ultLocked(P) { return P.age < ULT_AGE; }
+  ultLevel(P) { return P.age - ULT_AGE; }
+  heroRespawnTicks(P) { return HERO_RESPAWN[P.age] * TICK_RATE; }
+  /** The enemy heroes (then any enemy units) within R of a hero, nearest first. */
+  foesNear(P, hero, R) {
+    const out = [];
+    for (const v of this.near(hero.x, hero.y, R)) { if (v.dead || !this.hostile(P.idx, v.owner)) continue; const d = Math.hypot(v.x - hero.x, v.y - hero.y); if (d <= R) out.push([d, v]); }
+    out.sort((a, b) => (b[1].isHero ? 1 : 0) - (a[1].isHero ? 1 : 0) || a[0] - b[0]);
+    return out.map((x) => x[1]);
   }
 
   updateHeroes() {
@@ -1132,11 +1174,39 @@ export class Game {
   }
 
   useAbility(P) {
-    const A = COMMANDERS[P.commander].ability;
+    const A = this.kitOf(P).ability;
     const hero = P.heroId ? this.ents.get(P.heroId) : null;
     if (!hero || hero.dead || this.tick < P.abilityReady) return false;
-    P.abilityReady = this.tick + A.cd * TICK_RATE;
+    const lvl = Math.max(0, this.ultLevel(P) + ULT_AGE - 1), scale = (d, per) => d + per * lvl;
+    let fxX = hero.x, fxY = hero.y;
     switch (A.key) {
+      case 'brace': {                                           // Hold the Pass!: a quick bite and a wall of pans
+        for (const v of this.near(hero.x, hero.y, A.radius)) if (v.owner === P.idx && !v.dead && Math.hypot(v.x - hero.x, v.y - hero.y) <= A.radius) { v.hp = Math.min(v.S.hp, v.hp + v.S.hp * 0.15); this.addBuff(v, 'brace', A.dur); }
+        break;
+      }
+      case 'rush': for (const u of this.units) if (u.owner === P.idx && !u.dead) this.addBuff(u, 'sugar', A.dur); break;
+      case 'chill': for (const v of this.near(hero.x, hero.y, A.radius).slice()) if (!v.dead && this.hostile(P.idx, v.owner) && Math.hypot(v.x - hero.x, v.y - hero.y) <= A.radius) this.addBuff(v, 'chill', A.dur); break;
+      case 'dash': {                                            // Flash Fry: straight onto the nearest enemy hero
+        const tg = this.foesNear(P, hero, A.radius)[0];
+        if (!tg) { this.events.push(['note', P.idx, 'ulttarget']); return false; }
+        const spot = this.pf.nearestFree(Math.floor(tg.x + (hero.x < tg.x ? -0.8 : 0.8)), Math.floor(tg.y), 4);
+        if (spot) { hero.x = spot[0] + 0.5; hero.y = spot[1] + 0.5; hero.path = null; hero.wantPath = false; }
+        this.applyDamage(P.idx, hero.id, tg, scale(A.dmg, A.dmgPerAge) + tg.S.armor, {}, false);
+        this.addBuff(hero, 'fry', A.dur);
+        if (!tg.dead) this.beginOrder(hero, { t: 'attack', id: tg.id });
+        fxX = hero.x; fxY = hero.y;
+        break;
+      }
+      case 'snipe': {                                           // Hot Shot: the most wounded enemy hero in sight
+        const foes = this.foesNear(P, hero, A.radius);
+        if (!foes.length) { this.events.push(['note', P.idx, 'ulttarget']); return false; }
+        const heroes = foes.filter((v) => v.isHero);
+        const tg = heroes.length ? heroes.reduce((m, v) => (v.hp / v.S.hp < m.hp / m.S.hp ? v : m)) : foes[0];
+        this.launch(hero, hero.S, tg, scale(A.dmg, A.dmgPerAge) + tg.S.parmor);
+        if (Math.abs(tg.x - hero.x) > 0.05) hero.face = tg.x > hero.x ? 1 : -1;
+        fxX = tg.x; fxY = tg.y;
+        break;
+      }
       case 'service': case 'mangia': case 'lowslow': {
         const list = this.near(hero.x, hero.y, A.radius);
         for (const v of list) {
@@ -1160,19 +1230,20 @@ export class Game {
         P.lunchUntil = this.tick + A.dur * TICK_RATE;
         break;
     }
+    P.abilityReady = this.tick + Math.round(A.cd * this.cdMul() * TICK_RATE);
     this.updateBuffs(false);
-    this.events.push(['ability', P.idx, A.key, Math.round(hero.x * POS_Q), Math.round(hero.y * POS_Q)]);
+    this.events.push(['ability', P.idx, A.key, Math.round(fxX * POS_Q), Math.round(fxY * POS_Q)]);
     return true;
   }
 
   /** The commander's ultimate: unlocked in the Bistro Age, on a long cooldown. */
   useUltimate(P) {
-    const U = COMMANDERS[P.commander].ultimate;
+    const U = this.kitOf(P).ultimate;
     const hero = P.heroId ? this.ents.get(P.heroId) : null;
     if (!U) return false;
-    if (P.age < ULT_AGE) { this.events.push(['note', P.idx, 'ultage']); return false; }
+    if (this.ultLocked(P)) { this.events.push(['note', P.idx, 'ultage']); return false; }
     if (!hero || hero.dead || this.tick < P.ultReady) return false;
-    const up = P.age - ULT_AGE, R = U.radius;
+    const up = Math.max(0, this.ultLevel(P)), R = U.radius;
     const foes = () => this.near(hero.x, hero.y, R).filter((v) => !v.dead && this.hostile(P.idx, v.owner) && Math.hypot(v.x - hero.x, v.y - hero.y) - v.r <= R);
     let fxX = hero.x, fxY = hero.y;
     switch (U.key) {
@@ -1208,6 +1279,26 @@ export class Game {
       case 'glass':
         for (const v of foes()) this.addBuff(v, 'stun', v.isHero ? U.dur / 2 : U.dur);
         break;
+      case 'lastcall': this.addBuff(hero, 'lastcall', U.dur); break;
+      case 'storm': hero.storm = { r: U.radius, dmg: U.dmg + U.dmgPerAge * up }; this.addBuff(hero, 'storm', U.dur); break;
+      case 'bark': for (const v of this.near(hero.x, hero.y, R)) if (v.owner === P.idx && !v.dead && Math.hypot(v.x - hero.x, v.y - hero.y) <= R) this.addBuff(v, 'bark', U.dur); break;
+      case 'freeze': for (const v of foes()) { this.addBuff(v, 'stun', v.isHero ? U.dur * 2 / 3 : U.dur); this.addBuff(v, 'chill', U.dur + 6); } break;
+      case 'flood': {                                           // Sauce Flood: a wave along the line to the nearest enemy
+        const aim = this.foesNear(P, hero, R)[0];
+        const ang = aim ? Math.atan2(aim.y - hero.y, aim.x - hero.x) : (hero.face < 0 ? Math.PI : 0), ux = Math.cos(ang), uy = Math.sin(ang);
+        const dmg = U.dmg + U.dmgPerAge * up;
+        for (const v of this.near(hero.x + ux * R / 2, hero.y + uy * R / 2, R / 2 + U.width + 1).slice()) {
+          if (v.dead || !this.hostile(P.idx, v.owner)) continue;
+          const dx = v.x - hero.x, dy = v.y - hero.y, along = dx * ux + dy * uy, side = Math.abs(dx * uy - dy * ux);
+          if (along < -0.5 || along > R || side - v.r > U.width) continue;
+          this.applyDamage(P.idx, hero.id, v, dmg + v.S.parmor, {}, true);
+          if (!v.dead) this.addBuff(v, 'chill', U.dur);
+        }
+        if (Math.abs(ux) > 0.05) hero.face = ux > 0 ? 1 : -1;
+        fxX = hero.x + ux * R / 2; fxY = hero.y + uy * R / 2;
+        this.events.push(['flood', P.idx, Math.round(hero.x * POS_Q), Math.round(hero.y * POS_Q), Math.round(ang * 100), R, U.width]);
+        break;
+      }
       case 'swarm': {
         const n = U.count + up;
         for (let i = 0; i < n; i++) {
@@ -1221,7 +1312,7 @@ export class Game {
       }
       default: return false;
     }
-    P.ultReady = this.tick + U.cd * TICK_RATE;
+    P.ultReady = this.tick + Math.round(U.cd * this.ultCdMul() * TICK_RATE);
     this.updateBuffs(false);
     this.events.push(['ult', P.idx, U.key, Math.round(fxX * POS_Q), Math.round(fxY * POS_Q)]);
     return true;
@@ -1257,14 +1348,14 @@ export class Game {
           if (K.commander === 'zara' && K.heroId) {
             const hero = this.ents.get(K.heroId);
             if (hero && !hero.dead && Math.hypot(hero.x - e.x, hero.y - e.y) <= AURA_RADIUS) {
-              K.res.spice += ZARA_TIP;
+              this.tipJar(K, ZARA_TIP);
               this.events.push(['tip', K.idx, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]);
             }
           }
         }
         if (e.isHero) {
           P.heroId = 0;
-          P.heroRespawn = this.tick + HERO_RESPAWN[P.age] * TICK_RATE;
+          P.heroRespawn = this.tick + this.heroRespawnTicks(P);
           this.events.push(['herodown', P.idx, K ? K.idx : -1]);
         }
       } else if (e.kind === K_BLDG) {

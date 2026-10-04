@@ -1,9 +1,9 @@
 // ============================================================================
 //  Canvas renderer: terrain, fog of war, everything on the map, the minimap.
 // ============================================================================
-import { G, K_UNIT, K_BLDG, canSee, isAlly, maxHp, statsOf, updateFog, isSpectator } from './state.js';
+import { G, K_UNIT, K_BLDG, canSee, isAlly, maxHp, statsOf, updateFog, isSpectator, campOf } from './state.js';
 import * as SPR from './sprites.js';
-import { BUILDINGS, RES, TILE, PLAYER_COLORS, AURA_RADIUS, COMMANDERS, BUFFS, NODES, RES_INFO, TB } from '/game/data.js';
+import { BUILDINGS, RES, TILE, PLAYER_COLORS, AURA_RADIUS, COMMANDERS, BUFFS, NODES, RES_INFO, TB, CTF, NEUTRAL_COLOR } from '/game/data.js';
 import { T as TAC, flagsOf, F_DONE, myTurn, nodeIncome } from './tactics.js';
 
 export const ZOOMS = [16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96];   // device px per tile (sprite cache buckets)
@@ -148,7 +148,21 @@ function drawFog(now) {
 }
 
 // ------------------------------------------------------------------ helpers
-const colorOf = (owner) => (owner >= 0 && G.players[owner] ? PLAYER_COLORS[G.players[owner].color % PLAYER_COLORS.length].hex : '#999999');
+const colorOf = (owner) => (owner >= 0 && G.players[owner] ? (G.players[owner].neutral ? NEUTRAL_COLOR : PLAYER_COLORS[G.players[owner].color % PLAYER_COLORS.length].hex) : '#999999');
+const teamColor = (team) => { const p = G.players.find((q) => q.team === team && !q.neutral); return p ? colorOf(G.players.indexOf(p)) : '#ffffff'; };
+const BUFF_GLOW = { service: '#ffb347', mangia: '#7dff8a', lowslow: '#c9c9c9', sugar: '#ff9ad5', feast: '#fff0a8', stun: '#d98a1c', fry: '#ff9a3c', chill: '#9fe3ff', brace: '#d0d8e0', lastcall: '#ff5a4d', storm: '#f4f8fa', bark: '#b07a4a', energy: '#ffd27a' };
+
+/** A flag on a pole, planted at (x,y) (its foot). `wave` animates the cloth. */
+function drawFlag(x, y, s, color, wave, k = 1) {
+  const H = s * 1.5 * k, W = s * 0.62 * k, lw = Math.max(1.5, s / 14);
+  ctx.fillStyle = 'rgba(20,12,10,0.25)'; ctx.beginPath(); ctx.ellipse(x, y, s * 0.3 * k, s * 0.12 * k, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.lineCap = 'round'; ctx.strokeStyle = '#3a2a20'; ctx.lineWidth = lw * 1.4; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - H); ctx.stroke();
+  const f1 = Math.sin(wave * 6) * 0.08, f2 = Math.sin(wave * 6 + 1.2) * 0.1;
+  ctx.beginPath(); ctx.moveTo(x, y - H); ctx.quadraticCurveTo(x + W * 0.5, y - H - W * f1, x + W, y - H + W * (0.3 + f2)); ctx.quadraticCurveTo(x + W * 0.5, y - H + W * (0.55 + f1), x, y - H + W * 0.6); ctx.closePath();
+  ctx.fillStyle = color; ctx.fill(); ctx.lineWidth = lw * 0.8; ctx.strokeStyle = 'rgba(20,12,10,0.8)'; ctx.stroke();
+  ctx.fillStyle = '#f0b41c'; ctx.beginPath(); ctx.arc(x, y - H, lw * 1.3, 0, Math.PI * 2); ctx.fill();
+  ctx.lineCap = 'butt';
+}
 
 function hpBar(x, y, w, frac, thick) {
   const h = Math.max(3, Math.round(thick));
@@ -307,8 +321,26 @@ export function render(now) {
   const x1 = Math.min(G.w - 1, Math.floor((W - ox) / s)), y1 = Math.min(G.h - 1, Math.floor((H - oy) / s) + 1);
   if (x1 < x0 || y1 < y0) return;
   drawTerrain(x0, y0, x1, y1);
-  const tac = !!G.tb, foot = tac ? FOOT : 0;
+  const tac = !!G.tb, foot = tac ? FOOT : 0, ctf = G.ctf;
   if (tac) drawTacticsGround(now, x0, y0, x1, y1, s);
+  if (ctf) {                                                   // kitchens heal, camps hold minions, flags sit on their stands
+    for (const b of ctf.bases) {
+      const col = teamColor(b.team), mine = G.me >= 0 && G.players[G.me].team === b.team;
+      ctx.beginPath(); ctx.arc(ox + b.x * s, oy + b.y * s, CTF.fountain.radius * s, 0, Math.PI * 2);
+      ctx.fillStyle = col; ctx.globalAlpha = mine ? 0.09 : 0.05; ctx.fill(); ctx.globalAlpha = 1;
+      ctx.setLineDash([s * 0.3, s * 0.25]); ctx.lineWidth = Math.max(1, s / 20); ctx.strokeStyle = col; ctx.globalAlpha = 0.6; ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+    for (const k of ctf.camps) {
+      if (k.x < x0 - 4 || k.x > x1 + 4 || k.y < y0 - 4 || k.y > y1 + 4 || !G.fogExp[(k.y | 0) * G.w + (k.x | 0)]) continue;
+      const boss = k.type === 'critic';
+      ctx.beginPath(); ctx.arc(ox + k.x * s, oy + k.y * s, (boss ? 3.2 : 2.4) * s, 0, Math.PI * 2);
+      ctx.fillStyle = k.alive ? (boss ? 'rgba(120,40,30,0.16)' : 'rgba(60,40,30,0.12)') : 'rgba(255,255,255,0.08)'; ctx.fill();
+      ctx.setLineDash([s * 0.18, s * 0.22]); ctx.lineWidth = Math.max(1, s / 26); ctx.strokeStyle = k.alive ? (boss ? 'rgba(255,120,90,0.7)' : 'rgba(255,240,200,0.5)') : 'rgba(255,255,255,0.3)'; ctx.stroke(); ctx.setLineDash([]);
+    }
+    for (const f of ctf.flags) {                               // the stand
+      ctx.beginPath(); ctx.ellipse(ox + f.hx * s, oy + f.hy * s, s * 0.7, s * 0.4, 0, 0, Math.PI * 2); ctx.fillStyle = '#d8c8a8'; ctx.fill(); ctx.lineWidth = Math.max(1, s / 20); ctx.strokeStyle = teamColor(f.team); ctx.stroke();
+    }
+  }
 
   const sel = G.sel, lw = Math.max(2, s / 14);
 
@@ -376,6 +408,7 @@ export function render(now) {
     if (e.rx < x0 - 2 || e.rx > x1 + 2 || e.ry < y0 - 2 || e.ry > y1 + 3) continue;
     if (canSee(e)) put(Math.floor(e.ry), e);
   }
+  if (ctf) for (const f of ctf.flags) { if (f.state === 1) continue; const vis = G.fogExp[(f.y | 0) * G.w + (f.x | 0)]; if (vis && f.x > x0 - 2 && f.x < x1 + 2 && f.y > y0 - 2 && f.y < y1 + 3) put(Math.floor(f.y), { flag: f, y: f.y, id: -f.team }); }
 
   const bars = [], badges = [], stationBadges = [];
   const tiles = G.tiles, exp = G.fogExp, w = G.w;
@@ -395,6 +428,16 @@ export function render(now) {
     if (!list) continue;
     list.sort((a, b) => (a.kind === K_UNIT ? a.ry : a.y) - (b.kind === K_UNIT ? b.ry : b.y) || a.id - b.id);
     for (const e of list) {
+      if (e.flag) {                                              // a flag on its stand, or dropped on the ground
+        const f = e.flag, col = teamColor(f.team);
+        drawFlag(ox + f.x * s, oy + f.y * s, s, col, t + f.team, f.state === 2 ? 0.85 : 1);
+        if (f.state === 2) {                                     // dropped: how long until it goes home
+          const left = Math.max(0, CTF.flag.dropReturn - (G.tick - f.dropAt) / G.tickRate);
+          ctx.beginPath(); ctx.arc(ox + f.x * s, oy + f.y * s, s * 0.55, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (left / CTF.flag.dropReturn)); ctx.lineWidth = Math.max(2, s / 12); ctx.strokeStyle = col; ctx.globalAlpha = 0.85; ctx.stroke(); ctx.globalAlpha = 1;
+          label(Math.ceil(left) + 's', ox + f.x * s, oy + (f.y - 1.7) * s, Math.max(11 * dpr, s * 0.28));
+        }
+        continue;
+      }
       if (e.kind === K_UNIT) {
         const sx = ox + e.rx * s, sy = oy + (e.ry + foot) * s;
         const hero = e.type.startsWith('hero_');
@@ -403,7 +446,7 @@ export function render(now) {
         else if (e.id === G.hover) { ctx.globalAlpha = 0.55; ring(sx, sy, e.r * s * 1.25, e.r * s * 0.75, '#ffffff', lw * 0.7); ctx.globalAlpha = 1; }
         if (e.bm) {
           let col = null;
-          for (const k in BUFFS) if (e.bm & BUFFS[k].bit && !k.startsWith('a_')) col = k === 'mangia' ? '#7dff8a' : k === 'lowslow' ? '#c9c9c9' : k === 'sugar' ? '#ff9ad5' : k === 'feast' ? '#fff0a8' : k === 'stun' ? '#d98a1c' : '#ffb347';
+          for (const k in BUFF_GLOW) if (e.bm & BUFFS[k].bit) col = BUFF_GLOW[k];
           if (col) { ctx.globalAlpha = 0.35 + 0.2 * Math.sin(t * 8 + e.id); ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(sx, sy, e.r * s * 1.1, e.r * s * 0.65, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; }
         }
         if (spent) ctx.globalAlpha = 0.5;
@@ -416,6 +459,17 @@ export function render(now) {
         if (tac && e.owner === G.me && !spent && myTurn() && !sel.has(e.id)) {       // still has something to do this turn
           const bob = Math.sin(t * 5 + e.id) * s * 0.04, px = sx + e.r * s * 0.95, py = sy - s * (hero ? 1.25 : 0.95) + bob, k = Math.max(4, s * 0.1);
           ctx.beginPath(); ctx.arc(px, py, k, 0, Math.PI * 2); ctx.fillStyle = '#ffe45c'; ctx.fill(); ctx.lineWidth = Math.max(1, dpr); ctx.strokeStyle = 'rgba(20,12,10,0.9)'; ctx.stroke();
+        }
+        if (e.bm & BUFFS.storm.bit) {                  // Cleaver Storm: a ring of spinning blades
+          ctx.save(); ctx.translate(sx, sy - s * 0.35); ctx.rotate(t * 9);
+          for (let i = 0; i < 5; i++) { ctx.rotate(Math.PI * 2 / 5); ctx.fillStyle = '#e8eef1'; ctx.strokeStyle = 'rgba(20,12,10,0.8)'; ctx.lineWidth = Math.max(1, s / 30); ctx.beginPath(); ctx.moveTo(s * 1.1, -s * 0.12); ctx.lineTo(s * 2.1, -s * 0.05); ctx.lineTo(s * 2.1, s * 0.2); ctx.lineTo(s * 1.1, s * 0.12); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+          ctx.restore();
+        }
+        if (ctf) {
+          const carried = ctf.flags.find((f) => f.state === 1 && f.carrier === e.id);
+          if (carried) drawFlag(sx + e.r * s * 0.9, sy - s * (hero ? 1.2 : 0.9), s * 0.75, teamColor(carried.team), t + e.id);
+          const camp = campOf(e);
+          if (camp && CTF.camps[camp.type] && CTF.camps[camp.type].boss) { ctx.beginPath(); ctx.ellipse(sx, sy, e.r * s * 1.6, e.r * s * 0.9, 0, 0, Math.PI * 2); ctx.setLineDash([s * 0.15, s * 0.15]); ctx.lineWidth = Math.max(1.5, s / 14); ctx.strokeStyle = '#ff8a6a'; ctx.stroke(); ctx.setLineDash([]); }
         }
         const mh = maxHp(e);
         if (sel.has(e.id) || e.hp < mh || hero) bars.push(sx, sy - (hero ? 1.45 : e.r > 0.45 ? 1.0 : 1.02) * s, (hero ? 1.0 : 0.62) * s, e.hp / mh, s / (hero ? 9 : 12));
@@ -438,7 +492,7 @@ export function render(now) {
         if (tac && vis) stationBadges.push(e);
         if (sel.has(e.id)) { ctx.strokeStyle = selColor(e); ctx.lineWidth = lw; ctx.strokeRect(ox + e.tx * s + 1, oy + e.ty * s + 1, e.size * s - 2, e.size * s - 2); }
         else if (e.id === G.hover) { ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = lw * 0.7; ctx.strokeRect(ox + e.tx * s + 1, oy + e.ty * s + 1, e.size * s - 2, e.size * s - 2); }
-        if (vis && (sel.has(e.id) || e.hp < mh)) bars.push(ox + e.x * s, oy + (e.ty - (tac ? 0.5 : 0.55)) * s, e.size * s * (tac ? 0.9 : 0.7), e.hp / mh, s / 10);
+        if (vis && (sel.has(e.id) || e.hp < mh) && !(ctf && e.type === 'hq')) bars.push(ox + e.x * s, oy + (e.ty - (tac ? 0.5 : 0.55)) * s, e.size * s * (tac ? 0.9 : 0.7), e.hp / mh, s / 10);
         if (e.inside > 0 && isAlly(e.owner)) badges.push(e);
         if (vis && e.qpct > 0 && e.owner === G.me) { ctx.fillStyle = 'rgba(20,12,10,0.8)'; ctx.fillRect(ox + (e.tx + 0.15) * s, oy + (e.ty + e.size) * s - s * 0.2, (e.size - 0.3) * s, s * 0.1); ctx.fillStyle = '#6fd3ff'; ctx.fillRect(ox + (e.tx + 0.15) * s, oy + (e.ty + e.size) * s - s * 0.2, (e.size - 0.3) * s * e.qpct / 100, s * 0.1); }
       } else if (e.amount !== undefined) {
@@ -514,6 +568,25 @@ export function render(now) {
   }
 
   drawFog(now);
+  if (ctf) {
+    for (const f of G.fx) {                                    // Sauce Flood: a wave rolling down its line
+      if (f.kind !== 'flood') continue;
+      const a = (now - f.t0) / f.dur;
+      if (a < 0 || a >= 1) continue;
+      ctx.save(); ctx.translate(ox + f.x * s, oy + f.y * s); ctx.rotate(f.ang);
+      const head = f.len * Math.min(1, a * 1.6), W = f.width;
+      ctx.globalAlpha = a > 0.6 ? (1 - a) / 0.4 : 0.85;
+      ctx.fillStyle = '#d8342a'; ctx.beginPath(); ctx.roundRect(0, -W * s, head * s, W * 2 * s, W * s); ctx.fill();
+      ctx.fillStyle = '#ff7a60'; for (let i = 0; i < 7; i++) { const px = head * s * (0.55 + 0.45 * ((i * 0.37 + a * 2) % 1)), py = Math.sin(i * 2.1 + a * 20) * W * s * 0.7; ctx.beginPath(); ctx.arc(px, py, s * 0.18, 0, Math.PI * 2); ctx.fill(); }
+      ctx.restore(); ctx.globalAlpha = 1;
+    }
+    for (const k of ctf.camps) {                               // who lives where, and when they are back
+      if (k.x < x0 - 3 || k.x > x1 + 3 || k.y < y0 - 3 || k.y > y1 + 3 || !G.fogExp[(k.y | 0) * G.w + (k.x | 0)] || s < 20) continue;
+      const def = CTF.camps[k.type], fs = Math.max(10 * dpr, s * 0.26);
+      const text = k.alive ? `${def.name}${k.level ? ' · Lv ' + (k.level + 1) : ''}` : `${def.name} · back in ${Math.max(0, Math.ceil((k.nextAt - G.tick) / G.tickRate))}s`;
+      ctx.globalAlpha = k.alive ? 0.85 : 0.55; label(text, ox + k.x * s, oy + (k.y - (k.type === 'critic' ? 3.1 : 2.3)) * s, fs, k.alive ? '#fff8ea' : '#d8c8a8'); ctx.globalAlpha = 1;
+    }
+  }
   if (tac) {
     drawTacticsTop(now, s);
     for (const f of G.fx) {                                    // damage and healing numbers float up from where they happened
@@ -634,7 +707,18 @@ function drawMinimap(now, x0, y0, x1, y1) {
     const big = e.type.startsWith('hero_') ? us * 1.8 : us;
     mmCtx.fillRect(e.rx * k - big / 2, e.ry * k - big / 2, big, big);
   }
+  if (G.ctf) {
+    for (const c of G.ctf.camps) { mmCtx.fillStyle = c.alive ? '#f0b41c' : '#6b5a40'; mmCtx.fillRect(c.x * k - k, c.y * k - k, k * 2, k * 2); }
+  }
   if (!(G.opts.fog === 'off' || isSpectator()) && fogCv) { mmCtx.imageSmoothingEnabled = true; mmCtx.drawImage(fogCv, 0, 0, S, S); }
+  if (G.ctf) {
+    for (const f of G.ctf.flags) {                             // flags show through the fog: everyone knows where they are
+      const col = teamColor(f.team), px = f.x * k, py = f.y * k, r = Math.max(3.5, k * 1.6);
+      mmCtx.fillStyle = '#1b1411'; mmCtx.beginPath(); mmCtx.moveTo(px, py - r * 1.6); mmCtx.lineTo(px + r * 1.4, py - r * 0.8); mmCtx.lineTo(px, py); mmCtx.closePath(); mmCtx.fill();
+      mmCtx.fillStyle = col; mmCtx.beginPath(); mmCtx.moveTo(px, py - r * 1.45); mmCtx.lineTo(px + r * 1.05, py - r * 0.8); mmCtx.lineTo(px, py - r * 0.15); mmCtx.closePath(); mmCtx.fill();
+      mmCtx.strokeStyle = f.state === 1 ? '#ffffff' : '#1b1411'; mmCtx.lineWidth = Math.max(1, S / 160); mmCtx.beginPath(); mmCtx.moveTo(px, py); mmCtx.lineTo(px, py - r * 1.7); mmCtx.stroke();
+    }
+  }
   for (let i = G.pings.length - 1; i >= 0; i--) {
     const p = G.pings[i], a = (now - p.t0) / (p.color ? 4500 : 3000);
     if (a >= 1) { G.pings.splice(i, 1); continue; }
@@ -651,6 +735,6 @@ function drawMinimap(now, x0, y0, x1, y1) {
 }
 
 export const commanderColor = (owner) => colorOf(owner);
-export { colorOf };
+export { colorOf, teamColor };
 export const heroOf = (pi) => { const p = G.ps[pi]; return p && p.heroId ? G.ents.get(p.heroId) : null; };
 export const abilityOf = (pi) => COMMANDERS[G.players[pi].commander].ability;

@@ -7,10 +7,10 @@
 //  (Restart the server afterwards; everyone must reload the page.)
 // ============================================================================
 
-export const VERSION = '1.0.3';
+export const VERSION = '1.1.0';
 export const TICK_RATE = 20;            // simulation ticks per second
 export const DT = 1 / TICK_RATE;
-export const MAX_PLAYERS = 8;
+export const MAX_PLAYERS = 10;
 
 export const RES = ['food', 'wood', 'spice', 'salt'];
 export const RES_INFO = {
@@ -32,14 +32,17 @@ export const PLAYER_COLORS = [
   { name: 'Carrot',    hex: '#f07d1e' },
   { name: 'Mint',      hex: '#25b9a7' },
   { name: 'Bubblegum', hex: '#ea62a6' },
+  { name: 'Cocoa',     hex: '#8f5b3d' },
+  { name: 'Slate',     hex: '#6b7a8f' },
 ];
+export const NEUTRAL_COLOR = '#8e8e8e';     // the wild minions of Capture the Flag
 
 export const AGE_NAMES = [null, 'Food Cart Age', 'Diner Age', 'Bistro Age', 'Five-Star Age'];
 export const AGE_SHORT = [null, 'I', 'II', 'III', 'IV'];
 
 // Lobby options ---------------------------------------------------------------
 export const OPTIONS = {
-  mode:     { label: 'Game mode', def: 'rt', choices: { rt: 'Real-time (classic)', turn: 'Turn-based (tactics)' } },
+  mode:     { label: 'Game mode', def: 'rt', choices: { rt: 'Real-time (classic)', turn: 'Turn-based (tactics)', ctf: 'Capture the Flag (heroes)' } },
   mapSize:  { label: 'Map size', def: 'auto', choices: { auto: 'Auto (fits the players)', small: 'Small (cozy)', medium: 'Medium', large: 'Large', huge: 'Huge' } },
   startRes: { label: 'Starting pantry', def: 'standard', choices: { standard: 'Standard', rich: 'Well stocked', feast: 'Feast' } },
   popCap:   { label: 'Staff limit', def: '100', choices: { '60': '60', '100': '100', '150': '150' } },
@@ -48,6 +51,8 @@ export const OPTIONS = {
   victory:  { label: 'Victory', def: 'hq', choices: { hq: 'Destroy the Kitchen HQ', conquest: 'Conquest (every station)' } },
   turnTime: { label: 'Turn timer (turn-based)', def: '0', choices: { '0': 'No limit', '60': '1 minute', '90': '90 seconds', '120': '2 minutes', '180': '3 minutes' } },
   turnLimit: { label: 'Round limit (turn-based)', def: '0', choices: { '0': 'Play to the end', '30': '30 rounds, best score wins', '50': '50 rounds, best score wins', '80': '80 rounds, best score wins' } },
+  ctfCaps:  { label: 'Captures to win (CTF)', def: '3', choices: { '3': 'First to 3 captures', '5': 'First to 5 captures', '7': 'First to 7 captures' } },
+  ctfTime:  { label: 'Time limit (CTF)', def: '15', choices: { '10': '10 minutes', '15': '15 minutes', '20': '20 minutes' } },
 };
 export const MAP_SIZES = { small: 96, medium: 128, large: 160, huge: 200 };
 const SIZE_ORDER = ['small', 'medium', 'large', 'huge'];
@@ -225,6 +230,23 @@ export const UNITS = {
     name: 'Zara Okoye', role: 'Hero', desc: 'Always moving, always selling, never missing with a skewer.',
     tags: ['hero'], hp: 360, atk: 11, range: 4.5, reload: 1.2, speed: 2.9, armor: 1, parmor: 2, sight: 7.5, pop: 0, radius: 0.42, proj: 'skewer', bonus: { cook: 0.6 },
   }),
+  // --- Capture the Flag heroes (no kitchen to run, so they only appear in that mode) ---
+  hero_dolly: U({
+    name: 'Dolores "Dolly" Quintero', role: 'Hero · melee tank', desc: 'A skillet in one hand, a pot lid in the other, and nobody gets past.',
+    tags: ['hero'], hp: 540, atk: 14, reload: 1.3, speed: 2.3, armor: 4, parmor: 4, sight: 7.5, pop: 0, radius: 0.46, bonus: { cook: 0.6 },
+  }),
+  hero_kofi: U({
+    name: 'Kofi Mensah', role: 'Hero · melee striker', desc: 'Twin cleavers and no patience. Arrives before you hear him.',
+    tags: ['hero'], hp: 330, atk: 17, reload: 0.75, speed: 3.0, armor: 1, parmor: 2, sight: 7.5, pop: 0, radius: 0.4, bonus: { cook: 0.6 },
+  }),
+  hero_ingrid: U({
+    name: 'Ingrid Halvorsen', role: 'Hero · ranged control', desc: 'Scoops of ice cream at forty miles an hour. Everything she touches slows down.',
+    tags: ['hero'], hp: 320, atk: 12, range: 5.5, reload: 1.4, speed: 2.5, armor: 1, parmor: 2, sight: 8, pop: 0, radius: 0.42, proj: 'macaron', splash: 0.7, bonus: { cook: 0.6 },
+  }),
+  hero_rafa: U({
+    name: 'Rafael "Rafa" Santos', role: 'Hero · ranged sniper', desc: 'Ladles sauce across the whole kitchen and never spills a drop.',
+    tags: ['hero'], hp: 300, atk: 15, range: 6.5, reload: 1.7, speed: 2.4, armor: 1, parmor: 1, sight: 8.5, pop: 0, radius: 0.42, proj: 'sauce', bonus: { cook: 0.6 },
+  }),
 };
 
 // ----------------------------------------------------------------------------
@@ -391,6 +413,19 @@ export const BUFFS = {
   a_zara:  { bit: 512 },                              // marker: kills nearby pay Spice
   feast:   { bit: 1024, regenFrac: 0.6 / 8, dmgTakenMul: 0.7 },
   stun:    { bit: 2048, stun: true },                 // stuck in caramel: cannot move or attack
+  // Capture the Flag heroes and items
+  fry:      { bit: 4096,   reloadMul: 0.6 },                        // Flash Fry: a burst of speed after the dash
+  chill:    { bit: 8192,   speedMul: 0.5, reloadMul: 1.4 },         // Brain Freeze
+  brace:    { bit: 16384,  dmgTakenMul: 0.65 },                     // Hold the Pass!
+  lastcall: { bit: 32768,  dmgTakenMul: 0.4, lifesteal: 1 },        // Last Call: every hit heals for the damage dealt
+  storm:    { bit: 65536,  pulse: true },                           // Cleaver Storm: hurts everything around every quarter second
+  bark:     { bit: 131072, dmgTakenMul: 0.35 },                     // Thick Bark (Hank's ultimate in Capture the Flag)
+  flagged:  { bit: 262144, speedMul: 0.85 },                        // carrying a flag
+  a_dolly:  { bit: 524288, dmgTakenMul: 0.92, regen: 1 },
+  a_kofi:   { bit: 1048576, dmgTakenMul: 1.1, hostile: true },      // auras marked hostile land on enemies instead
+  a_ingrid: { bit: 2097152, speedMul: 0.9, hostile: true },
+  a_rafa:   { bit: 4194304, atkMul: 1.12 },
+  energy:   { bit: 8388608, regenFrac: 0.35 / 4 },                  // an Energy Bar: 35% over 4 seconds
 };
 export const ULT_AGE = 3;                 // ultimates unlock in the Bistro Age
 export const AURA_RADIUS = 6.5;
@@ -459,6 +494,8 @@ export const COMMANDERS = {
     ability: { key: 'lowslow', name: 'Smoke Ring', cd: 85, dur: 10, radius: 9,
       desc: 'A wall of hickory smoke. Your units near Hank take 50% less damage for 10s.',
       tb: 'Your units within 3 tiles of Hank take 50% less damage until your next turn.' },
+    ctfUltimate: { key: 'bark', name: 'Thick Bark', cd: 150, dur: 8, radius: 6,
+      desc: 'Hank and every friendly hero within 6 tiles take 65% less damage for 8s. (Capture the Flag: there are no stations to lock down.)' },
     ultimate: { key: 'lockdown', name: 'Lockdown', cd: 170, dur: 15, radius: 0,
       desc: 'Shutters down, smokers up. For 15s ALL your stations take 75% less damage and your armed stations fire twice as fast.',
       tb: 'Until your next turn ALL your stations take 75% less damage, and your armed stations fire a second volley right now.' },
@@ -516,6 +553,8 @@ export const COMMANDERS = {
     ],
     mods: [{ misc: 'trainMul', mul: 0.75 }, { sel: 'veh', stat: 'cost', mul: 0.8 }, { sel: 'pantry', stat: 'cost', mul: 0.5 }, { sel: 'cook', stat: 'speed', mul: 1.1 }],
     aura: { key: 'a_zara', name: 'Tip Jar', desc: `Every enemy unit defeated near Zara pays you ${ZARA_TIP} Spice.`, tb: `Every enemy unit defeated within 2 tiles of Zara pays you ${ZARA_TIP} Spice.` },
+    ctfAbility: { key: 'rush', name: 'Rush Hour', cd: 60, dur: 6, radius: 0,
+      desc: 'Every hero on your team moves 40% faster for 6s, wherever they are. (Capture the Flag: there are no stations to hurry.)' },
     ability: { key: 'lunch', name: 'Lunch Rush', cd: 90, dur: 15, radius: 0,
       desc: 'The queue is around the block. ALL your stations train and research 3x faster for 15s.',
       tb: 'Everything your stations are training or researching is finished right now.' },
@@ -524,8 +563,71 @@ export const COMMANDERS = {
       tb: 'Four Delivery Scooters (one more each age) arrive next to Zara, ready to act, and stay for 3 of your turns. They cost nothing and need no staff room.' },
     quotes: ['Line\'s out the door. Move it!', 'Fresh, fast, and half the price.', 'You snooze, you lose the corner.'],
   },
+
+  // --- Capture the Flag heroes: no kitchen bonuses, no unique unit of their own (they never run a kitchen)
+  dolly: {
+    ctfOnly: true,
+    name: 'Dolores "Dolly" Quintero', title: 'The Line Boss', brigade: 'Capture the Flag hero',
+    blurb: 'Thirty years on the pass and she has never once stepped back. Dolly holds the door while the kitchen does its work.',
+    style: 'Melee tank · protects the team · holds the flag stand',
+    hero: 'hero_dolly', unique: 'pinroller',
+    bonuses: ['Melee tank', 'Shields nearby heroes', 'Hard to kill'],
+    mods: [],
+    aura: { key: 'a_dolly', name: 'Shift Lead', desc: 'Friendly heroes near Dolly take 8% less damage and regenerate 1 HP per second.' },
+    ability: { key: 'brace', name: 'Hold the Pass!', cd: 70, dur: 6, radius: 6,
+      desc: 'Dolly and every friendly hero within 6 tiles heal 15% at once and take 35% less damage for 6s.', tb: '' },
+    ultimate: { key: 'lastcall', name: 'Last Call', cd: 160, dur: 8, radius: 0,
+      desc: 'For 8s Dolly takes 60% less damage and every blow she lands heals her for the damage it does.', tb: '' },
+    quotes: ['Nobody leaves this line hungry, and nobody gets through it.', 'Hands! Hands! I need hands!', 'You call that a sear?'],
+  },
+  kofi: {
+    ctfOnly: true,
+    name: 'Kofi Mensah', title: 'The Flash', brigade: 'Capture the Flag hero',
+    blurb: 'Grew up running plates up four flights of stairs. Now he runs through walls of enemies with a cleaver in each hand.',
+    style: 'Melee striker · dashes in · deadly up close',
+    hero: 'hero_kofi', unique: 'dancer',
+    bonuses: ['Melee striker', 'Dashes onto a target', 'Fast and fragile'],
+    mods: [],
+    aura: { key: 'a_kofi', name: 'Backdraft', desc: 'Enemies near Kofi take 10% more damage.' },
+    ability: { key: 'dash', name: 'Flash Fry', cd: 50, dur: 3, radius: 7, dmg: 45, dmgPerAge: 15,
+      desc: 'Kofi dashes to the nearest enemy hero within 7 tiles (any enemy if none), hits it hard, and attacks 40% faster for 3s.', tb: '' },
+    ultimate: { key: 'storm', name: 'Cleaver Storm', cd: 150, dur: 5, radius: 2.5, dmg: 22, dmgPerAge: 6,
+      desc: 'For 5s Kofi becomes a whirlwind: every quarter second, every enemy within 2.5 tiles takes damage that ignores armour.', tb: '' },
+    quotes: ['Behind!', 'Hot pan coming through.', 'You blinked.'],
+  },
+  ingrid: {
+    ctfOnly: true,
+    name: 'Ingrid Halvorsen', title: 'The Ice Queen', brigade: 'Capture the Flag hero',
+    blurb: 'Runs the coldest dessert bar north of the river. Her scoops land hard and her temper lands harder.',
+    style: 'Ranged control · slows · freezes',
+    hero: 'hero_ingrid', unique: 'mortar',
+    bonuses: ['Ranged', 'Slows everything she touches', 'Freezes crowds'],
+    mods: [],
+    aura: { key: 'a_ingrid', name: 'Cold Front', desc: 'Enemies near Ingrid move 10% slower.' },
+    ability: { key: 'chill', name: 'Brain Freeze', cd: 55, dur: 5, radius: 6,
+      desc: 'Every enemy within 6 tiles of Ingrid moves 50% slower and attacks 40% slower for 5s.', tb: '' },
+    ultimate: { key: 'freeze', name: 'Deep Freeze', cd: 160, dur: 3, radius: 7,
+      desc: 'Every enemy within 7 tiles of Ingrid is frozen solid for 3s (heroes 2s) and chilled for 6s after that.', tb: '' },
+    quotes: ['Chill.', 'Service is at minus eighteen.', 'You will wait your turn, and you will like it.'],
+  },
+  rafa: {
+    ctfOnly: true,
+    name: 'Rafael "Rafa" Santos', title: 'The Saucier General', brigade: 'Capture the Flag hero',
+    blurb: 'Nobody has seen him miss. Nobody has seen him hurry, either.',
+    style: 'Ranged sniper · longest reach · picks off the wounded',
+    hero: 'hero_rafa', unique: 'skewer',
+    bonuses: ['Longest range of any hero', 'Sharpshooter aura', 'Line-shaped ultimate'],
+    mods: [],
+    aura: { key: 'a_rafa', name: "Sharpshooter's Eye", desc: 'Friendly heroes near Rafa deal 12% more damage.' },
+    ability: { key: 'snipe', name: 'Hot Shot', cd: 45, radius: 12, dmg: 70, dmgPerAge: 20,
+      desc: 'A single scalding ladle at the most wounded enemy hero within 12 tiles (the nearest enemy if none): heavy damage that ignores armour.', tb: '' },
+    ultimate: { key: 'flood', name: 'Sauce Flood', cd: 150, dur: 3, radius: 13, dmg: 110, dmgPerAge: 30, width: 2.2,
+      desc: 'A tidal wave of sauce 13 tiles long towards the nearest enemy: everything in its path takes heavy damage and is chilled for 3s.', tb: '' },
+    quotes: ['One ladle is enough.', 'Breathe out. Pour.', 'I never spill.'],
+  },
 };
-export const COMMANDER_KEYS = Object.keys(COMMANDERS);
+export const COMMANDER_KEYS = Object.keys(COMMANDERS).filter((k) => !COMMANDERS[k].ctfOnly);   // the ones that run a kitchen
+export const HERO_KEYS = Object.keys(COMMANDERS);                                             // everyone, for Capture the Flag
 
 // ----------------------------------------------------------------------------
 //  Stat computation: base data + commander bonuses + researched techs.
@@ -697,6 +799,69 @@ export function tbPath(from, goal) {
   return out.reverse();
 }
 export const tbDist = (ax, ay, bx, by) => Math.abs(ax - bx) + Math.abs(ay - by);
+
+// ----------------------------------------------------------------------------
+//  CAPTURE THE FLAG ("ctf")
+//  One hero per player, no kitchen to run. Camps of wild minions pay Tips
+//  (the match currency), Tips buy items that raise the hero's stats, and the
+//  flag at every base is there for the taking. Shared by server and browser.
+// ----------------------------------------------------------------------------
+export const CTF = {
+  mapSize: (teams) => (teams <= 2 ? 72 : Math.min(124, 60 + 8 * teams)),
+  heroAge: 2,              // heroes start with the stats they would have in the Diner Age
+  heroAtkMul: 1.5,         // ...and hit harder than in the long game, so duels are decided in seconds, not minutes
+  startTips: 120,
+  passiveTips: 1,          // Tips per second for everyone, so nobody is ever stuck
+  heroBounty: 90,          // Tips for felling a hero...
+  heroBountyPerTier: 12,   // ...plus this for every item tier the victim had bought
+  respawn: { base: 6, perMin: 1.1, max: 22 },     // seconds, growing with the match clock
+  abilityCdMul: 0.3,       // the real-time cooldowns are made for 40-minute matches; here they are much shorter
+  ultCdMul: 0.5,
+  ultUnlockMin: 3,         // ultimates unlock this many minutes in
+  fountain: { radius: 5.5, regenFrac: 0.08 },     // heal per second at your own kitchen
+  shopRadius: 7,           // how close to your kitchen you must be to buy (or be waiting to respawn)
+  flag: { pickup: 1.3, capture: 2.2, dropReturn: 25, carryMul: 0.85 },
+  sudden: 5,               // extra minutes of sudden death when the clock runs out level
+  minion: { levelEvery: 150, hp: 0.3, atk: 0.22, bounty: 0.3, leash: 9, regenFrac: 0.05 },
+  energy: { cost: 60, cd: 20 },                   // an Energy Bar heals 35% over 4s, usable anywhere
+  items: {                 // [bonus, cost] per tier
+    skillet:  { name: 'Cast-Iron Skillet', stat: 'atk', icon: ['tech', 'pans'], desc: 'Hits harder.', tiers: [[5, 140], [11, 320], [19, 600]] },
+    whites:   { name: "Chef's Whites", stat: 'armor', icon: ['tech', 'aprons2'], desc: 'Armour against blows and thrown things alike.', tiers: [[2, 120], [5, 280], [9, 520]] },
+    stew:     { name: 'Hearty Stew', stat: 'hp', icon: ['ability', 'mangia'], desc: 'More health.', tiers: [[130, 130], [300, 300], [520, 560]] },
+    clogs:    { name: 'Running Clogs', stat: 'speed', icon: ['tech', 'clogs'], desc: 'Faster on your feet.', tiers: [[0.35, 160], [0.7, 380]] },
+    espresso: { name: 'Double Espresso', stat: 'reload', icon: ['unit', 'barista'], desc: 'Attacks come quicker.', tiers: [[0.9, 150], [0.8, 340], [0.68, 620]] },
+    herbs:    { name: 'Herb Garden', stat: 'regen', icon: ['building', 'garden'], desc: 'Health comes back on its own.', tiers: [[3, 110], [7, 260], [13, 480]] },
+  },
+  camps: {                 // the wild minions, from the kitchen door outwards
+    // r = how far out from the centre (1 = at the base), ang = how far round the team's wedge (1 = the edge), mirrored left and right
+    dishpit: { name: 'Dish Pit Crew', units: ['cook', 'cook', 'cook', 'cook'], bounty: 10, respawn: 40, r: 0.72, ang: 0.45 },
+    cooks:   { name: 'Rogue Line Cooks', units: ['line', 'line', 'butcher'], bounty: 18, respawn: 55, r: 0.6, ang: 0 },
+    sauce:   { name: 'The Sauce Gang', units: ['saucier', 'saucier', 'line'], bounty: 22, respawn: 60, r: 0.82, ang: 0.9 },
+    riders:  { name: 'Delivery Pirates', units: ['scooter', 'scooter'], bounty: 30, respawn: 70, r: 0.38, ang: 0.55 },
+    brutes:  { name: 'Smokehouse Bouncers', units: ['brute', 'pinroller'], bounty: 45, respawn: 85, r: 0.3, ang: 0.95 },
+    critic:  { name: 'The Head Critic', units: ['truck'], boss: true, hpMul: 3, atkMul: 1.4, bounty: 160, respawn: 150, r: 0, ang: 0 },
+  },
+};
+/** The ability / ultimate a commander uses in Capture the Flag (a few swap for ones that make sense without a kitchen). */
+export const ctfKit = (C) => ({ ability: C.ctfAbility || C.ability, ultimate: C.ctfUltimate || C.ultimate });
+/** The hero's stats with items applied (fresh object). */
+export function ctfHeroStats(base, items) {
+  const S = { ...base, bonus: { ...base.bonus }, regen: 0, atk: base.atk * CTF.heroAtkMul };
+  for (const key in CTF.items) {
+    const it = CTF.items[key], lv = items[key] | 0;
+    if (!lv) continue;
+    const v = it.tiers[Math.min(lv, it.tiers.length) - 1][0];
+    if (it.stat === 'atk') S.atk += v;
+    else if (it.stat === 'armor') { S.armor += v; S.parmor += v; }
+    else if (it.stat === 'hp') S.hp += v;
+    else if (it.stat === 'speed') S.speed += v;
+    else if (it.stat === 'reload') S.reload *= v;
+    else if (it.stat === 'regen') S.regen += v;
+  }
+  S.hp = Math.round(S.hp); S.atk = Math.round(S.atk * 10) / 10; S.reload = Math.round(S.reload * 1000) / 1000;
+  return S;
+}
+export const ctfItemCost = (key, lv) => { const it = CTF.items[key]; return it && lv < it.tiers.length ? it.tiers[lv][1] : 0; };
 
 // Deterministic PRNG (mulberry32) — used by map generation so a seed fully
 // describes a map.

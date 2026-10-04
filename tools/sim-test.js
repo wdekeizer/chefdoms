@@ -5,11 +5,14 @@
 //   node tools/sim-test.js --seed 42 --minutes 40
 //   node tools/sim-test.js --players flint:hard,nonna:normal --map small
 //   node tools/sim-test.js --series 12             many quick matches, prints win table
+//   node tools/sim-test.js --mode ctf --n 10 --teams 2   a capture-the-flag brawl (5v5); --teams 0 = free for all
 import { Game } from '../game/sim.js';
 import { Bot } from '../game/ai.js';
 import { TacticsGame } from '../game/tactics.js';
 import { TacticsBot } from '../game/tactics-ai.js';
-import { COMMANDER_KEYS, TICK_RATE } from '../game/data.js';
+import { CtfGame } from '../game/ctf.js';
+import { CtfBot } from '../game/ctf-ai.js';
+import { COMMANDER_KEYS, HERO_KEYS, TICK_RATE } from '../game/data.js';
 
 const args = process.argv.slice(2);
 const arg = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 ? args[i + 1] : def; };
@@ -53,6 +56,24 @@ export function runTactics({ players, seed, rounds = 150, mapSize = 'auto', verb
   return { game: g, over: g.over, rounds: g.turn.n, wall: Date.now() - t0, ticks: g.tick };
 }
 
+/** Capture the flag between bots. */
+export function runCtf({ players, seed, caps = 3, time = 15, verbose = false }) {
+  const g = new CtfGame({ players, seed, ctfCaps: caps, ctfTime: time });
+  for (const P of g.players) if (!P.neutral) P.ai = new CtfBot(g, P, P.bot);
+  const t0 = Date.now(), ev = { take: 0, cap: 0, herodown: 0, item: 0 };
+  let lastLog = 0;
+  while (!g.over && g.tick < (time + 6) * 60 * TICK_RATE) {
+    g.step();
+    for (const e of g.events) { if (e[0] === 'flag') ev[e[1]] = (ev[e[1]] || 0) + 1; else if (ev[e[0]] !== undefined) ev[e[0]]++; }
+    g.delta();
+    if (verbose && g.tick - lastLog >= 60 * TICK_RATE) {
+      lastLog = g.tick;
+      console.log(`${(g.tick / TICK_RATE / 60).toFixed(0).padStart(2)}m  caps ${JSON.stringify(g.caps)}  ` + g.players.filter((P) => !P.neutral).map((P) => { const h = g.heroOf(P); return `${P.name} ${h ? Math.round(h.hp / h.S.hp * 100) + '%' : 'down'} ${Math.round(P.res.food)}t ${Object.values(P.items).reduce((a, b) => a + b, 0)}i`; }).join(' | '));
+    }
+  }
+  return { game: g, over: g.over, minutes: g.tick / TICK_RATE / 60, wall: Date.now() - t0, ev };
+}
+
 export function runMatch({ players, seed, minutes = 45, mapSize = 'medium', verbose = false, popCap = 100, startRes = 'standard' }) {
   const g = new Game({ players, mapSize, startRes, popCap, seed });
   for (const P of g.players) P.ai = new Bot(g, P, P.bot);
@@ -94,7 +115,34 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1].endsWith(
   const minutes = +arg('minutes', 45);
   const mapSize = arg('map', 'medium');
   const level = arg('level', 'normal');
-  if (arg('mode') === 'turn') {
+  if (arg('mode') === 'ctf') {
+    // node tools/sim-test.js --mode ctf [--n 10] [--teams 2] [--level hard] [--caps 3] [--time 15] [--series 6]
+    const n = +arg('n', 4), teams = +arg('teams', 2), caps = +arg('caps', 3), time = +arg('time', 15);
+    const heroes = (shuffle) => Array.from({ length: n }, (_, i) => { const k = HERO_KEYS[(i + shuffle) % HERO_KEYS.length]; return { name: k + (i + 1), commander: k, team: teams > 0 ? (i % teams) + 1 : i + 1, color: i, bot: level }; });
+    const players = arg('players') ? parsePlayers(arg('players'), n, level) : heroes(0);
+    if (series) {
+      const wins = {}, played = {};
+      let unfinished = 0, totalMin = 0;
+      for (let i = 0; i < series; i++) {
+        const ps = arg('players') ? players : heroes(i);
+        const r = runCtf({ players: ps, seed: 1000 + i * 7919, caps, time });
+        for (const p of ps) played[p.commander] = (played[p.commander] || 0) + 1;
+        if (r.over) { for (const P of r.game.players) if (P.team === r.over.team && !P.neutral) wins[P.commander] = (wins[P.commander] || 0) + 1; totalMin += r.minutes; }
+        else unfinished++;
+        console.log(`match ${i + 1}: ${r.over ? `team ${r.over.team} wins at ${r.minutes.toFixed(1)}m` : 'no winner'} caps ${JSON.stringify(r.game.caps)} takes ${r.ev.take} hero kills ${r.ev.herodown}  (${r.wall} ms)`);
+      }
+      console.log('\nhero        wins / played');
+      for (const k of HERO_KEYS) if (played[k]) console.log(`${k.padEnd(10)}  ${wins[k] || 0} / ${played[k]}`);
+      console.log(`unfinished: ${unfinished}, average length of finished matches: ${(totalMin / Math.max(1, series - unfinished)).toFixed(1)} min`);
+    } else {
+      console.log('players:', players.map((p) => `${p.name}(${p.bot}, team ${p.team})`).join(', '), '| seed', +arg('seed', 12345));
+      const r = runCtf({ players, seed: +arg('seed', 12345), caps, time, verbose: !flag('quiet') });
+      const g = r.game;
+      console.log(r.over ? `\nWinner: team ${r.over.team} (${g.players.filter((P) => P.team === r.over.team && !P.neutral).map((P) => P.name).join(', ')}) at ${r.minutes.toFixed(1)} min, captures ${JSON.stringify(g.caps)}` : `\nNo winner after ${r.minutes.toFixed(1)} min`);
+      console.table(g.summary().map((s) => ({ name: s.name, team: s.team, caps: s.caps, heroKills: s.kills, deaths: s.deaths, minions: s.minions, tips: Math.round(s.earned), items: Object.values(s.items).reduce((a, b) => a + b, 0), score: s.score.total })));
+      console.log(`${g.tick} ticks simulated in ${r.wall} ms (${(r.wall / g.tick).toFixed(3)} ms/tick)`);
+    }
+  } else if (arg('mode') === 'turn') {
     // node tools/sim-test.js --mode turn [--series 8] [--n 2] [--level hard] [--rounds 150]
     const rounds = +arg('rounds', 150), map = arg('map', 'auto');
     if (series) {
