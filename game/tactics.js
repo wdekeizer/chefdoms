@@ -9,6 +9,9 @@
 //      ingredient at the start of each of your turns.
 //    * a station trains one unit (or researches one upgrade) at a time.
 //
+//  A lobby option lets team-mates take their turn together (each presses End
+//  turn; the next team goes when all of them have).
+//
 //  TacticsGame extends the real-time Game so that everything around the rules
 //  (players, stats, upgrades, network snapshots, scoring, victory) is shared.
 //  All the numbers come from game/data.js (see the TB section there).
@@ -16,7 +19,7 @@
 import { Game, K_UNIT, K_BLDG, K_NODE, ST, POS_Q } from './sim.js';
 import {
   TICK_RATE, TILE, RES, NODES, BUILDINGS, TECHS, COMMANDERS, ULT_AGE, HERO_RESPAWN, ZARA_TIP, UNITS,
-  TB, tbUnit, tbBldg, tbTurns, tbCooldown, tbDamage, tbReach, tbPath, tbDist,
+  TB, tbUnit, tbBldg, tbTurns, tbCooldown, tbDamage, tbReach, tbPath, tbDist, tbAdjust, MARKET,
   mapSizeFor, computeStats, techCost, techTime, trainList, makeRng,
 } from './data.js';
 
@@ -24,7 +27,7 @@ const MOVE_PER_TICK = 0.36;           // how fast a unit slides along its path o
 const MELEE_TICKS = 6;                // time between a swing and its damage
 const PROJ_SPEED = 0.55;              // tiles per tick for thrown things
 // unit flags sent to the clients (in the "stance" slot of the unit record)
-export const F_MOVED = 1, F_DONE = 2, F_STUN = 4, F_TEMP = 8;
+export const F_MOVED = 1, F_DONE = 2, F_STUN = 4, F_TEMP = 8, F_COUNTERED = 16;
 const DX = [1, -1, 0, 0], DY = [0, 0, 1, -1];
 const cheb = (ax, ay, bx, by) => Math.max(Math.abs(ax - bx), Math.abs(ay - by));
 
@@ -82,7 +85,7 @@ export function generateTacticsMap(size, nPlayers, seed) {
     return false;
   };
   for (const s of starts) {
-    for (const [type, dMin, dMax] of [['veg', 2, 3], ['wood', 2, 3], ['spice', 3, 4], ['veg', 3, 5], ['salt', 4, 6], ['spice', 5, 7], ['wood', 5, 7]]) place(type, s, dMin, dMax);
+    for (const [type, dMin, dMax] of [['veg', 2, 3], ['wood', 2, 3], ['spice', 3, 4], ['wood', 3, 4], ['veg', 3, 5], ['salt', 4, 6], ['spice', 5, 7], ['wood', 5, 7]]) place(type, s, dMin, dMax);
     // a pond with a Fishing Spot a short walk from home
     for (let tries = 0; tries < 60; tries++) {
       const a = rng() * Math.PI * 2, d = 4 + rng() * 2;
@@ -95,7 +98,7 @@ export function generateTacticsMap(size, nPlayers, seed) {
     }
   }
   // contested spots between the bases, salt and spice first
-  const kinds = ['spice', 'salt', 'veg', 'wood', 'salt', 'spice'], neutral = [];
+  const kinds = ['wood', 'spice', 'salt', 'wood', 'veg', 'salt', 'spice', 'wood'], neutral = [];
   for (let k = 0, tries = 0, want = Math.round(nPlayers * 2.5 + N / 160); k < want && tries < 3000; tries++) {
     const x = 1 + ((rng() * (w - 2)) | 0), y = 1 + ((rng() * (h - 2)) | 0), i = y * w + x;
     if (fromStart(x, y) < 7 || taken[i] || tiles[i] === TILE.WATER || crowded(x, y) || landNear(x, y) < 3) continue;
@@ -153,7 +156,12 @@ export class TacticsGame extends Game {
     this.mapSize = mapSizeFor(opts.mapSize, opts.players.length);
     const map = generateTacticsMap(TB.mapSizes[this.mapSize], opts.players.length, this.seed);
     this.grid = new Int32Array(map.w * map.h);          // id of the unit standing on each tile
-    this.turn = { n: 1, cur: 0, deadline: 0 };
+    this.turn = { n: 1, cur: 0, deadline: 0, team: -1, ended: new Set() };
+    // team-mates take their turn together (only matters when some team has two or more kitchens)
+    const sizes = new Map();
+    for (const p of opts.players) sizes.set(p.team, (sizes.get(p.team) || 0) + 1);
+    this.teamTurns = opts.turnOrder === 'team' && [...sizes.values()].some((n) => n > 1);
+    this.turnSeq = 0;                                   // goes up every turn: a unit hits back once per enemy turn
     // the turn timer is in real seconds, whatever the game speed (which only changes how fast things animate)
     this.turnTicks = Math.round(Math.max(0, Number(opts.turnTime) || 0) * TICK_RATE * (Number(opts.speed) || 1));
     this.roundLimit = Math.max(0, Number(opts.turnLimit) || 0);
@@ -169,6 +177,7 @@ export class TacticsGame extends Game {
     const P = super.makePlayer(p, idx);
     P.maxPop = Math.max(10, Math.round((+this.opts.popCap || 100) * TB.popShare));
     P.abilityCd = 0; P.ultCd = 0; P.heroTurns = 0; P.lock = false; P.sugarNext = false; P.reserved = 0; P.income = { food: 0, wood: 0, spice: 0, salt: 0 };
+    tbAdjust(P.stats, P.commander);                     // grid-only tweaks (tougher ranged units, a lighter Hank)
     return P;
   }
 
@@ -187,6 +196,7 @@ export class TacticsGame extends Game {
     for (const P of this.players) this.refreshBuildings(P);
     for (const P of this.players) P.income = this.incomeOf(P);
     this.sample();                                      // round 0 of the end-of-match graphs
+    if (this.teamTurns) this.teamOrder = [...new Set(this.players.map((P) => P.team))];      // teams in seat order of their first kitchen
     this.beginTurn(0);
   }
 
@@ -199,7 +209,7 @@ export class TacticsGame extends Game {
     const b = {
       id: this.nextId++, kind: K_BLDG, type, owner, tx, ty, size: 1, x: tx + 0.5, y: ty + 0.5, S, T,
       hp: done ? T.hp : Math.ceil(T.hp * 0.4), prog: done ? 1 : 0, done: false, left: done ? 0 : turns, total: turns,
-      q: [], rally: null, cd: 0, tgt: 0, builders: 0, worker: 0, paid: null,
+      q: [], rally: null, trally: null, cd: 0, tgt: 0, builders: 0, worker: 0, paid: null,
       node: node ? node.id : 0, pays: node ? node.type : type === 'garden' ? 'garden' : null,
       inside: 0, lastHit: -9999, dead: false, _sig: '',
     };
@@ -239,7 +249,7 @@ export class TacticsGame extends Game {
   }
 
   recomputeStats(P) {
-    P.stats = computeStats(P.commander, P.age, P.techs);
+    P.stats = tbAdjust(computeStats(P.commander, P.age, P.techs), P.commander);
     for (const u of this.units) {
       if (u.owner !== P.idx || u.dead) continue;
       const old = u.S.hp;
@@ -288,6 +298,15 @@ export class TacticsGame extends Game {
   /** Can `a` (unit or station) hit something at distance d? */
   inRange(a, d) { const T = a.T; return a.kind === K_UNIT ? d >= (T.rng > 1 ? T.minRng : 1) && d <= T.rng : d >= 1 && d <= T.rng; }
 
+  /** May player pi act right now? (Their own turn, or their team's turn and they have not ended theirs yet.) */
+  isTurnOf(pi) {
+    const tn = this.turn, P = this.players[pi];
+    if (!P) return false;
+    return this.teamTurns ? P.team === tn.team && !tn.ended.has(pi) : pi === tn.cur;
+  }
+  /** The players taking the current turn. */
+  turnPlayers() { return this.teamTurns ? this.players.filter((P) => P.team === this.turn.team) : [this.players[this.turn.cur]]; }
+
   // ==========================================================================
   //  Main loop: animations, delayed effects, queued orders, the turn timer
   // ==========================================================================
@@ -308,10 +327,10 @@ export class TacticsGame extends Game {
     this.cleanup();
     if (tick % 10 === 0) this.checkVictory();
     if (this.over) return;
-    const P = this.players[this.turn.cur];
-    if (!P.alive) { if (!this.busy()) this.endTurn(); return; }
-    if (this.turnTicks && tick >= this.turn.deadline && !this.busy()) { this.events.push(['note', P.idx, 'timeup']); this.endTurn(); return; }
-    if (P.ai) P.ai.update();
+    const now = this.turnPlayers().filter((P) => P.alive);
+    if (!now.length || (this.teamTurns && now.every((P) => this.turn.ended.has(P.idx)))) { if (!this.busy()) this.endTurn(); return; }
+    if (this.turnTicks && tick >= this.turn.deadline && !this.busy()) { for (const P of now) this.events.push(['note', P.idx, 'timeup']); this.endTurn(); return; }
+    for (const P of now) if (P.ai && this.isTurnOf(P.idx)) P.ai.update();
   }
 
   slide(u) {
@@ -358,7 +377,7 @@ export class TacticsGame extends Game {
       inc[res] += TB.income[b.pays] * (g[stat] / base[stat]);
     }
     if (!hq) for (const r of RES) inc[r] -= TB.hqIncome[r];
-    const mul = (P.gatherBonus || 1) * (P.sugarNext ? 1.4 : 1);
+    const mul = TB.incomeMul * (P.gatherBonus || 1) * (P.sugarNext ? TB.sugarMul : 1);
     for (const r of RES) inc[r] = Math.round(inc[r] * mul);
     return inc;
   }
@@ -367,7 +386,21 @@ export class TacticsGame extends Game {
     const P = this.players[pi], tn = this.turn;
     tn.cur = pi;
     tn.deadline = this.turnTicks ? this.tick + this.turnTicks : 0;
+    this.turnSeq++;
+    if (this.teamTurns) {                                     // everyone on the team starts their turn at once
+      tn.team = P.team; tn.ended = new Set();
+      for (const Q of this.players) if (Q.team === tn.team && Q.alive) this.startPlayerTurn(Q.idx);
+      this.events.push(['turn', tn.n, pi, tn.team]);
+      return;
+    }
     if (!P.alive) return;
+    this.startPlayerTurn(pi);
+    this.events.push(['turn', tn.n, pi, -1]);
+  }
+
+  /** One player's turn starts: cooldowns tick, units get their moves back, income arrives, stations work, defences fire. */
+  startPlayerTurn(pi) {
+    const P = this.players[pi];
     // last turn's shields and boosts wear off
     P.lock = false;
     if (P.abilityCd > 0) P.abilityCd--;
@@ -404,7 +437,6 @@ export class TacticsGame extends Game {
     }
     P.income = this.incomeOf(P);
     this.volley(P);
-    this.events.push(['turn', tn.n, pi]);
   }
 
   /** The front of a station's queue is done: the unit walks out (if there is room) or the upgrade applies. */
@@ -412,7 +444,8 @@ export class TacticsGame extends Game {
     const it = b.q[0];
     if (!it) return false;
     if (it.k === 't') { b.q.shift(); this.completeTech(P, it.key); return true; }
-    const t = this.freeAround(b.tx, b.ty, 2, this.w / 2, this.h / 2)[0];
+    // out of the side facing the station's rally tile (set by right-clicking), else towards the middle of the map
+    const t = this.freeAround(b.tx, b.ty, 2, b.trally ? b.trally.x : this.w / 2, b.trally ? b.trally.y : this.h / 2)[0];
     if (!t) return false;                                   // boxed in: it waits inside
     b.q.shift();
     P.reserved -= it.pop;
@@ -421,7 +454,7 @@ export class TacticsGame extends Game {
     return true;
   }
 
-  /** Armed stations shoot at the start of their owner's turn: one target per projectile, nearest first. */
+  /** Armed stations shoot at the start of their owner's turn: one target per projectile, nearest first (units before stations). */
   volley(P) {
     for (const b of this.bldgs) {
       if (b.dead || !b.done || b.owner !== P.idx || !(b.S.atk > 0)) continue;
@@ -429,23 +462,50 @@ export class TacticsGame extends Game {
       for (const u of this.units) {
         if (u.dead || !this.hostile(P.idx, u.owner)) continue;
         const d = tbDist(b.tx, b.ty, u.tx, u.ty);
-        if (d <= b.T.rng) foes.push([d, u]);
+        if (d <= b.T.rng) foes.push([d, u, 0]);
+      }
+      for (const v of this.bldgs) {
+        if (v.dead || !this.hostile(P.idx, v.owner)) continue;
+        const d = tbDist(b.tx, b.ty, v.tx, v.ty);
+        if (d <= b.T.rng) foes.push([d, v, 1]);
       }
       if (!foes.length) continue;
-      foes.sort((x, y) => x[0] - y[0] || x[1].hp - y[1].hp);
+      foes.sort((x, y) => x[2] - y[2] || x[0] - y[0] || x[1].hp - y[1].hp);
       for (let i = 0; i < b.S.shots; i++) { const tg = foes[i % foes.length][1]; this.shoot(b, tg, i >= foes.length ? 3 : 0); }
     }
+  }
+
+  /** Player pi presses End turn. With team turns the team's turn ends once everyone on it has. */
+  endTurnFor(pi) {
+    if (!this.teamTurns) { if (pi === this.turn.cur) this.endTurn(); return; }
+    this.turn.ended.add(pi);
+    for (const u of this.units) if (u.owner === pi) { u.stuck = false; u.boost = false; }
+    if (this.turnPlayers().every((P) => !P.alive || this.turn.ended.has(P.idx))) this.endTurn();
   }
 
   endTurn() {
     const tn = this.turn, n = this.players.length;
     this.queue.length = 0;
-    for (const u of this.units) if (u.owner === tn.cur) { u.stuck = false; u.boost = false; }        // caramel wears off; SERVICE! was for this turn
+    for (const P of this.turnPlayers()) for (const u of this.units) if (u.owner === P.idx) { u.stuck = false; u.boost = false; }        // caramel wears off; SERVICE! was for this turn
+    if (this.teamTurns) {
+      const order = this.teamOrder, T = order.length, ti = order.indexOf(tn.team);
+      for (let k = 1; k <= T; k++) {
+        const team = order[(ti + k) % T], first = this.players.find((P) => P.team === team && P.alive);
+        if (!first) continue;
+        if (ti + k >= T) {                                     // every team has had a go: a new round
+          tn.n++; this.sample(); this.driftMarket(MARKET.driftTb);
+          if (this.roundLimit && tn.n > this.roundLimit && this.teamsAtStart > 1) { tn.n--; this.finishOnScore(); return; }
+        }
+        this.beginTurn(first.idx);
+        return;
+      }
+      return;
+    }
     for (let k = 1; k <= n; k++) {
       const next = (tn.cur + k) % n;
       if (!this.players[next].alive) continue;
       if (next <= tn.cur) {                                    // everyone has had a go: a new round
-        tn.n++; this.sample();
+        tn.n++; this.sample(); this.driftMarket(MARKET.driftTb);
         if (this.roundLimit && tn.n > this.roundLimit && this.teamsAtStart > 1) { tn.n--; this.finishOnScore(); return; }
       }
       this.beginTurn(next);
@@ -470,6 +530,7 @@ export class TacticsGame extends Game {
     const ranged = a.kind === K_BLDG || a.T.rng > 1;
     let mult = 1;
     if (a.kind === K_UNIT) {
+      if (a.S.tags.includes('ranged') && !a.S.tags.includes('siege') && !a.isHero) mult *= TB.rangedMul;   // the grid is hard on ranged units: they hit harder here
       if (a.boost) mult *= 1.25;
       const A = this.auraOf(a);
       if (A === 'a_flint' || A === 'a_ryo') mult *= 1.1;
@@ -480,7 +541,8 @@ export class TacticsGame extends Game {
       if (this.auraOf(d) === 'a_hank') mult *= 0.82;
     } else if (this.players[d.owner].lock) mult *= 0.25;
     const cover = d.kind === K_UNIT && this.tiles[d.ty * this.w + d.tx] === TILE.TREE ? TB.forestCover : 1;
-    return tbDamage(a.S, d.S, { hpFrac: a.kind === K_UNIT ? a.hp / a.S.hp : 1, ranged, counter, cover, mult });
+    // a station shooting at a station counts as a heavy blow, not a pepper flick off the walls
+    return tbDamage(a.S, d.S, { hpFrac: a.kind === K_UNIT ? a.hp / a.S.hp : 1, ranged: ranged && !(a.kind === K_BLDG && d.kind === K_BLDG), counter, cover, mult });
   }
   /** The aura a unit currently stands in (its own commander's, if the hero is close). */
   auraOf(u) {
@@ -491,6 +553,7 @@ export class TacticsGame extends Game {
   canCounter(d, a) {
     if (d.dead || d.kind !== K_UNIT || !(d.S.atk > 0) || a.kind !== K_UNIT) return false;
     if (d.stun > 0 || d.S.onlyBldg) return false;
+    if (d.counterSeq === this.turnSeq && (d.counters || 0) >= TB.counters) return false;   // it has already hit back this turn
     return this.inRange(d, tbDist(d.tx, d.ty, a.tx, a.ty));
   }
 
@@ -542,7 +605,11 @@ export class TacticsGame extends Game {
   /** A full exchange: a attacks tg, and tg hits back if it survives and can reach. */
   fight(a, tg) {
     this.shoot(a, tg, 0, false, () => {
-      if (!tg.dead && tg.hp > 0 && !a.dead && this.canCounter(tg, a)) this.shoot(tg, a, 2, true);
+      if (!tg.dead && tg.hp > 0 && !a.dead && this.canCounter(tg, a)) {
+        if (tg.counterSeq !== this.turnSeq) { tg.counterSeq = this.turnSeq; tg.counters = 0; }
+        tg.counters++;
+        this.shoot(tg, a, 2, true);
+      }
     });
   }
 
@@ -673,7 +740,9 @@ export class TacticsGame extends Game {
     const was = P.alive;
     super.eliminate(P);
     if (was) P.score.outRound = this.turn.n;
-    if (was && this.started && this.turn.cur === P.idx && !this.over) this.after(1, () => { if (!this.over && this.turn.cur === P.idx) this.endTurn(); });
+    if (!was || !this.started || this.over) return;
+    if (this.teamTurns) { if (P.team === this.turn.team) this.after(1, () => { if (!this.over && this.turnPlayers().every((Q) => !Q.alive || this.turn.ended.has(Q.idx))) this.endTurn(); }); }
+    else if (this.turn.cur === P.idx) this.after(1, () => { if (!this.over && this.turn.cur === P.idx) this.endTurn(); });
   }
 
   // ==========================================================================
@@ -685,7 +754,8 @@ export class TacticsGame extends Game {
     if (!P || !P.alive || this.over || !c || typeof c !== 'object') return;
     if (!this.started) this.start();                       // an order that arrives before the first tick still finds the first turn begun
     if (c.c === 'rg') { this.eliminate(P); this.checkVictory(); return; }
-    if (pi !== this.turn.cur) return;
+    if (c.c === 'trl') { this.setRally(pi, c); return; }                 // where recruits walk out can be chosen any time
+    if (!this.isTurnOf(pi)) return;
     if (this.turnTicks && this.tick >= this.turn.deadline) return;           // time is up: nothing more this turn
     if (this.busy() || this.queue.length) { if (this.queue.length < 40) this.queue.push([pi, c]); return; }
     this.exec(pi, c);
@@ -706,10 +776,17 @@ export class TacticsGame extends Game {
     return r.best.has(i) ? tbPath(r.from, i) : null;
   }
   note(pi, key) { this.events.push(['note', pi, key]); }
+  /** Where a station's recruits walk out: towards the tile right-clicked (the station itself clears it). */
+  setRally(pi, c) {
+    const b = this.ownBldg(pi, c.bid);
+    if (!b || !Number.isFinite(c.x) || !Number.isFinite(c.y)) return;
+    const x = c.x | 0, y = c.y | 0;
+    b.trally = !this.inb(x, y) || (x === b.tx && y === b.ty) ? null : { x, y };
+  }
 
   exec(pi, c) {
     const P = this.players[pi];
-    if (!P.alive || pi !== this.turn.cur || this.over) return;
+    if (!P.alive || !this.isTurnOf(pi) || this.over) return;
     switch (c.c) {
       case 'tmv': {                                    // move
         const u = this.ownUnit(pi, c.id);
@@ -822,9 +899,10 @@ export class TacticsGame extends Game {
         }
         break;
       }
+      case 'mkt': this.trade(P, c.give, c.get, c.n); break;
       case 'ab': this.useAbility(P); break;
       case 'ul': this.useUltimate(P); break;
-      case 'et': this.endTurn(); break;
+      case 'et': this.endTurnFor(pi); break;
     }
   }
 
@@ -867,11 +945,15 @@ export class TacticsGame extends Game {
   //  Network state and scores
   // ==========================================================================
   /** Low byte: what the unit has done this turn; above it: the movement points it has left. */
-  flagsOf(u) { return (u.moved ? F_MOVED : 0) | (u.acted || (u.stuck && u.moved) ? F_DONE : 0) | (u.stun > 0 || u.stuck ? F_STUN : 0) | (u.temp > 0 ? F_TEMP : 0) | (this.mvOf(u) << 8); }
+  flagsOf(u) {
+    return (u.moved ? F_MOVED : 0) | (u.acted || (u.stuck && u.moved) ? F_DONE : 0) | (u.stun > 0 || u.stuck ? F_STUN : 0) | (u.temp > 0 ? F_TEMP : 0)
+      | (u.counterSeq === this.turnSeq && (u.counters || 0) >= TB.counters ? F_COUNTERED : 0) | (this.mvOf(u) << 8);
+  }
   bldgRec(b) {
     const r = super.bldgRec(b);
     r[8] = b.q.length ? b.q[0].total - b.q[0].t : 0;      // turns until the front of the queue is done
     r[10] = b.done ? 0 : b.left;                           // turns of construction left
+    r[12] = b.trally ? [b.trally.x, b.trally.y] : 0;       // the tile its recruits walk out towards
     return r;
   }
   playerRec(P) {
@@ -884,7 +966,13 @@ export class TacticsGame extends Game {
     // the flags ride in the "stance" slot and the buff glows in the buff mask, so the usual snapshot code sends them
     for (const u of this.units) { u.stance = this.flagsOf(u); u.bmask = (u.boost ? 1 : 0) | (u.guard ? 4 : 0) | (u.feast ? 1024 : 0) | (u.stun > 0 || u.stuck ? 2048 : 0); }
   }
-  turnRec() { return [this.turn.n, this.turn.cur, this.turn.deadline]; }
+  /** [round, player, deadline, team (-1 = one kitchen at a time), bitmask of team-mates who have ended their turn] */
+  turnRec() {
+    const tn = this.turn;
+    let ended = 0;
+    if (this.teamTurns) for (const pi of tn.ended) ended |= 1 << pi;
+    return [tn.n, tn.cur, tn.deadline, this.teamTurns ? tn.team : -1, ended];
+  }
   delta() {
     this.syncFlags();
     const out = super.delta();
@@ -901,7 +989,7 @@ export class TacticsGame extends Game {
   startInfo() {
     const info = super.startInfo();
     info.mode = 'turn';
-    info.opts.mode = 'turn'; info.opts.turnTime = Number(this.opts.turnTime) || 0; info.opts.turnLimit = this.roundLimit;
+    info.opts.mode = 'turn'; info.opts.turnTime = Number(this.opts.turnTime) || 0; info.opts.turnLimit = this.roundLimit; info.opts.turnOrder = this.teamTurns ? 'team' : 'player';
     return info;
   }
 

@@ -10,7 +10,7 @@
 import { G, K_UNIT, K_BLDG, K_NODE, canSee, selected, setSelection, cmd, statsOf, maxHp } from './state.js';
 import { TILE, TB, RES, COMMANDERS, tbUnit, tbReach, tbPath, tbDist, tbDamage } from '/game/data.js';
 
-export const F_MOVED = 1, F_DONE = 2, F_STUN = 4, F_TEMP = 8;
+export const F_MOVED = 1, F_DONE = 2, F_STUN = 4, F_TEMP = 8, F_COUNTERED = 16;
 export const flagsOf = (e) => (e.sn || 0) & 255;
 export const mvLeft = (e) => (e.sn || 0) >> 8;
 const ST_MOVE = 1;
@@ -20,7 +20,11 @@ const DX = [1, -1, 0, 0], DY = [0, 0, 1, -1];
 /** T.plan = what the selected unit can do; T.hov = what the pointer is offering right now. */
 export const T = { plan: null, hov: null, sig: '', holdUntil: 0 };
 
-export const myTurn = () => !!G.tb && G.me >= 0 && !G.over && G.tb.cur === G.me && !!G.ps[G.me] && G.ps[G.me].alive;
+/** Is it player pi's side that is playing now (their turn, or their team's)? */
+export const playing = (pi) => !!G.tb && pi >= 0 && (G.tb.team >= 0 ? G.players[pi].team === G.tb.team : G.tb.cur === pi);
+/** Has player pi pressed End turn while their team-mates are still playing? */
+export const ended = (pi) => !!G.tb && G.tb.team >= 0 && !!(G.tb.ended & (1 << pi));
+export const myTurn = () => !!G.tb && G.me >= 0 && !G.over && playing(G.me) && !ended(G.me) && !!G.ps[G.me] && G.ps[G.me].alive;
 export const hostile = (a, b) => a >= 0 && b >= 0 && G.players[a].team !== G.players[b].team;
 export const tileOf = (e) => (e.kind === K_UNIT ? [Math.floor(e.x), Math.floor(e.y)] : [e.tx, e.ty]);
 /** Has this unit of mine still got something to do this turn? */
@@ -60,9 +64,10 @@ function auraAt(e, x, y) {
 function blow(a, ax, ay, d, dx, dy, counter, hp) {
   const AS = statsOf(a), DS = statsOf(d);
   if (!AS || !DS) return 0;
-  const ranged = a.kind === K_BLDG || tbUnit(AS).rng > 1;
+  const ranged = (a.kind === K_BLDG || tbUnit(AS).rng > 1) && !(a.kind === K_BLDG && d.kind === K_BLDG);
   let mult = 1;
   if (a.kind === K_UNIT) {
+    if (AS.tags.includes('ranged') && !AS.tags.includes('siege') && !AS.tags.includes('hero')) mult *= TB.rangedMul;
     if (a.bm & 1) mult *= 1.25;
     const A = auraAt(a, ax, ay);
     if (A === 'a_flint' || A === 'a_ryo') mult *= 1.1;
@@ -84,7 +89,7 @@ export function forecast(u, tg, stand) {
   let counter = 0;
   if (!kills && tg.kind === K_UNIT) {
     const DS = statsOf(tg);
-    if (DS && DS.atk > 0 && !DS.onlyBldg && !(flagsOf(tg) & F_STUN) && inRange(tbUnit(DS), tbDist(sx, sy, tx, ty))) counter = blow(tg, tx, ty, u, sx, sy, true, tg.hp - dmg);
+    if (DS && DS.atk > 0 && !DS.onlyBldg && !(flagsOf(tg) & (F_STUN | F_COUNTERED)) && inRange(tbUnit(DS), tbDist(sx, sy, tx, ty))) counter = blow(tg, tx, ty, u, sx, sy, true, tg.hp - dmg);
   }
   return { dmg, kills, counter };
 }
@@ -181,7 +186,7 @@ export function update() {
     if (performance.now() < T.holdUntil) { T.plan = null; return; }
     T.holdUntil = 0; G.tbDirty = true;
   }
-  const sig = [...G.sel].join() + '|' + G.tb.cur + '|' + (G.mode ? G.mode.type + (G.mode.b || '') : '') + '|' + (G.over ? 1 : 0);
+  const sig = [...G.sel].join() + '|' + G.tb.cur + ':' + G.tb.ended + '|' + (G.mode ? G.mode.type + (G.mode.b || '') : '') + '|' + (G.over ? 1 : 0);
   if (sig !== T.sig || G.tbDirty) { T.sig = sig; G.tbDirty = false; compute(); }
 }
 
@@ -286,6 +291,14 @@ export function click(wx, wy, right) {
   }
   if (right) {
     const own = selected().find((e) => e.owner === G.me && e.kind === K_UNIT);
+    const station = !own && selected().find((e) => e.owner === G.me && e.kind === K_BLDG && e.prog >= 100);
+    if (station) {                                         // a station: right-click picks the side its recruits walk out
+      cmd({ c: 'trl', bid: station.id, x: hov.tx, y: hov.ty });
+      const clear = hov.tx === station.tx && hov.ty === station.ty;
+      if (!clear) G.marks.push({ x: hov.tx + 0.5, y: hov.ty + 0.5, t0: performance.now(), color: '#ffffff' });
+      hooks.note(clear ? 'Recruits walk out wherever there is room' : 'Recruits from here will walk out on this side');
+      return;
+    }
     if (!own) return;
     if (!myTurn()) hooks.note('It is not your turn yet');
     else if (flagsOf(own) & F_DONE) hooks.note(flagsOf(own) & F_STUN ? 'Stuck in caramel: this unit misses its turn' : 'That unit is done for this turn');
@@ -322,7 +335,7 @@ export function wait(u) { if (myTurn() && u && u.owner === G.me) cmd({ c: 'twt',
 export function statusOf(e) {
   const f = flagsOf(e);
   if (f & F_STUN) return e.type.startsWith('hero_') ? 'Stuck in caramel: can walk, but not attack' : 'Stuck in caramel: misses a turn';
-  if (!G.tb || G.tb.cur !== e.owner) return f & F_TEMP ? 'Hired rider: heads home after a few turns' : '';
+  if (!playing(e.owner)) return f & F_TEMP ? 'Hired rider: heads home after a few turns' : f & F_COUNTERED ? 'Has hit back once this turn: no more counterattacks' : '';
   if (f & F_DONE) return 'Done for this turn';
   if (f & F_MOVED) return 'Has moved: can still act';
   return `Can move ${mvLeft(e)} and act`;

@@ -66,6 +66,27 @@ const lowFifth = (chord) => CH[chord][1].replace(/\d/, '2');
 
 const SIX = [0, 1, 2, 3, 2, 1], EIGHT = [0, 1, 2, 3, 2, 1, 2, 1], FOUR = [0, 1, 2, 3], OST = [0, 1, 2, 1, 3, 1, 2, 1];
 
+// Accompaniment RHYTHMS, so the plucked parts do not all tick along in even notes.
+// A step is [what, beats]: a chord tone 0-3, 'c' the whole chord (strummed), 'h' octave + third, '-' a rest.
+const pat = (chord, steps) => steps.map(([v, d]) => (v === '-' ? '-' : v === 'c' ? pad(chord, d).split(':')[0] : v === 'h' ? CH[chord][2] + '+' + CH[chord][3] : CH[chord][v]) + ':' + d).join(' ');
+const R = {                                   // four-beat bars
+  dotted: [[0, 1.5], [2, 0.5], [1, 1], [3, 1]],
+  tresillo: [[0, 1.5], [2, 1.5], [3, 1]],
+  skip: [[0, 0.75], [1, 0.25], [2, 0.75], [3, 0.25], [2, 0.75], [1, 0.25], [0, 1]],
+  roll: [[0, 0.25], [1, 0.25], [2, 0.25], [3, 0.25], ['h', 1.5], [1, 0.5], [2, 1]],
+  strum: [['c', 1], ['-', 0.5], ['c', 0.5], ['-', 0.5], ['c', 0.5], ['c', 1]],
+  oompah: [[0, 1], ['h', 1], [1, 1], ['h', 1]],
+  lilt: [[0, 1], [3, 0.5], [2, 0.5], ['-', 0.5], [1, 0.5], [2, 1]],
+  gallop: [[0, 0.5], [0, 0.25], [0, 0.25], [2, 0.5], [2, 0.25], [2, 0.25], [1, 0.5], [1, 0.25], [1, 0.25], [3, 0.5], [2, 0.5]],
+};
+const R6 = {                                  // six-beat bars
+  long: [[0, 3], ['h', 2], [1, 1]],
+  lilt: [[0, 2], [2, 1], [3, 2], [1, 1]],
+  rock: [[0, 1], [2, 1], [3, 1], [2, 1], ['h', 2]],
+  pulse: [['c', 1.5], ['-', 0.5], ['c', 1], ['c', 1.5], ['-', 0.5], [1, 1]],
+};
+const rh = (list, steps) => bars(list, (c) => pat(c, steps));
+
 /**
  * Build a track's parts from sections.
  *   voices:   { name: { inst, vol, rev } }
@@ -107,9 +128,9 @@ const grandKitchen = arrange(
   {
     I: { beats: 16, harp: bars(['C', 'Am', 'F', 'G'], (c) => arp(c, EIGHT, 0.5)) },
     A: { beats: 32, harp: gkHarpA, flute: gkTuneA, strings: gkPadA },
-    B: { beats: 32, harp: bars(GK_B, (c) => arp(c, EIGHT, 0.5)), flute: gkTuneB, strings: bars(GK_B, (c) => pad(c, 4)), bell: '-:3 E6:1 | -:4 | -:3 G6:1 | -:4 | -:3 E6:1 | -:4 | -:2 D6:1 F6:1 | G6:4' },
+    B: { beats: 32, harp: rh(GK_B, R.dotted), flute: gkTuneB, strings: bars(GK_B, (c) => pad(c, 4)), bell: '-:3 E6:1 | -:4 | -:3 G6:1 | -:4 | -:3 E6:1 | -:4 | -:2 D6:1 F6:1 | G6:4' },
     // the tune moves to the horn; the recorder floats a descant above it and the timpani mark the bars
-    C: { beats: 32, harp: gkHarpA, horn: shift(gkTuneA, -12), flute: 'G5:4 | E5:4 | A5:4 | G5:3 D5:1 | G5:4 | B5:4 | A5:2 B5:2 | C6:4', strings: gkPadA,
+    C: { beats: 32, harp: rh(GK_A, R.lilt) + ' | ' + pat('F', [[0, 1], [2, 1]]) + ' ' + pat('G', [[0, 1], [3, 1]]) + ' | ' + pat('C', R.lilt), horn: shift(gkTuneA, -12), flute: 'G5:4 | E5:4 | A5:4 | G5:3 D5:1 | G5:4 | B5:4 | A5:2 B5:2 | C6:4', strings: gkPadA,
       timp: bars(GK_A, (c) => `${low(c)}:4`) + ' | F2:2 G2:2 | C2:4' },
   },
   'I A B A C B A',
@@ -138,9 +159,9 @@ const morningPrep = arrange(
   {
     I: { beats: 48, lute: bars(MORNING.slice(0, 8), (c) => arp(c, SIX, 1)) },
     A: { beats: 96, lute: mpLute, flute: mpTune, strings: mpPad },
-    B: { beats: 96, harp: bars(MORNING_B, (c) => arp(c, SIX, 1)), flute: mpTuneB, strings: bars(MORNING_B, (c) => pad(c, 6)), drum: mpDrum },
-    A2: { beats: 96, lute: mpLute, flute: mpTune, strings: mpPad, horn: bars(MORNING, (c) => CH[c][2] + ':6'), drum: mpDrum, tamb: mpTamb },
-    C: { beats: 48, harp: bars(MORNING_C, (c) => arp(c, SIX, 1)), strings: bars(MORNING_C, (c) => pad(c, 6)),
+    B: { beats: 96, harp: rh(MORNING_B, R6.rock), flute: mpTuneB, strings: bars(MORNING_B, (c) => pad(c, 6)), drum: mpDrum },
+    A2: { beats: 96, lute: rh(MORNING, R6.lilt), flute: mpTune, strings: mpPad, horn: bars(MORNING, (c) => CH[c][2] + ':6'), drum: mpDrum, tamb: mpTamb },
+    C: { beats: 48, harp: rh(MORNING_C, R6.long), strings: bars(MORNING_C, (c) => pad(c, 6)),
       bell: 'D5:3 F5:3 | C5:6 | E5:3 G5:3 | F5:2 E5:1 D5:3 | D5:3 Bb4:3 | A4:6 | C#5:3 E5:3 | A5:6' },
     O: { beats: 24, lute: bars(['Dm', 'Dm', 'C', 'D5'], (c) => arp(c, SIX, 1)), flute: 'A4:6 | F4:6 | G4:6 | A4:6', strings: bars(['Dm', 'Dm', 'C', 'D5'], (c) => pad(c, 6)) },
   },
@@ -152,6 +173,7 @@ const morningPrep = arrange(
 // =========================================================================
 const MARKET = ['G', 'G', 'F', 'G', 'G', 'C', 'F', 'G', 'C', 'G', 'F', 'G', 'Em', 'C', 'Dm', 'G'];
 const MARKET_B = ['Em', 'Em', 'C', 'G', 'Em', 'C', 'D', 'D', 'C', 'G', 'Am', 'Em', 'C', 'D', 'G', 'G'];
+const MARKET_C = ['C', 'C', 'G', 'G', 'F', 'F', 'C', 'D', 'C', 'C', 'G', 'Em', 'F', 'C', 'D', 'G'];
 const mdTune =
   'G4:.5 A4:.5 B4:1 D5:1 B4:1 | A4:.5 B4:.5 A4:.5 G4:.5 D4:2 | F4:.5 G4:.5 A4:1 C5:1 A4:1 | B4:1 A4:1 G4:2 | ' +
   'G4:.5 A4:.5 B4:1 D5:1 E5:1 | E5:1 D5:.5 C5:.5 E5:1 G5:1 | F5:1 E5:.5 D5:.5 C5:1 A4:1 | B4:1 A4:1 G4:2 | ' +
@@ -174,9 +196,12 @@ const marketDay = arrange(
       flute: 'D5:4 B4:4 C5:4 D5:4 | D5:4 E5:4 C5:4 B4:4 | G5:4 D5:4 C5:4 D5:4 | B4:4 C5:4 D5:4 D5:4' },
     B: { beats: 64, lute: mdTuneB, harp: mdBass(MARKET_B), strings: bars(MARKET_B, (c) => pad(c, 4)), drum: mdDrum(16),
       flute: 'B4:4 | G4:4 | E5:4 | D5:4 | B4:4 | C5:4 | A4:4 | D5:4 | E5:4 | D5:4 | C5:4 | B4:4 | E5:4 | F#5:4 | G5:2 D5:2 | G5:4' },
+    // the band breaks into a new tune: the lute strums, the recorder sings
+    C: { beats: 64, lute: rh(MARKET_C, R.strum), harp: mdBass(MARKET_C), drum: mdDrum(16), tamb: mdTamb(16),
+      flute: 'C5:2 E5:2 | G5:3 E5:1 | D5:2 B4:2 | G4:4 | A4:2 C5:2 | F5:2 E5:1 D5:1 | E5:2 C5:2 | D5:4 | E5:1 G5:1 E5:1 C5:1 | G5:2 E5:2 | D5:1 B4:1 G4:2 | B4:2 E5:2 | F5:2 A4:2 | E5:2 C5:2 | A4:1 B4:1 C5:1 D5:1 | G4:4' },
     O: { beats: 16, lute: 'B4:1 A4:1 G4:2 | B4:1 A4:1 G4:2 | G4+B4+D5:8', harp: 'G2:2 D3:2 | G2:2 D3:2 | G2+D3+G3:8', strings: pad('G', 8) + ' ' + pad('G', 8) },
   },
-  'I A A2 B A2 O',
+  'I A A2 B C A2 O',
 );
 
 // =========================================================================
@@ -187,6 +212,8 @@ const jig = (c) => `${CH[c][0]}:2 ${CH[c][1]}:1 ${CH[c][2]}:2 ${CH[c][1]}:1`;
 const hdTuneA = 'A4:2 B4:1 C5:2 E5:1 | D5:2 B4:1 G4:3 | A4:1 B4:1 C5:1 E5:2 C5:1 | B4:3 E4:3 | A4:2 B4:1 C5:2 E5:1 | G5:2 E5:1 D5:2 B4:1 | G4:1 A4:1 B4:1 D5:2 B4:1 | A4:6';
 const hdTuneB = 'E5:2 G5:1 E5:2 C5:1 | D5:2 G5:1 D5:2 B4:1 | C5:2 E5:1 A5:2 E5:1 | G5:3 E5:3 | F5:2 A5:1 F5:2 C5:1 | E5:2 G5:1 E5:2 C5:1 | D5:1 E5:1 D5:1 B4:2 G4:1 | A4:6';
 const hdDrum = times('C2:2 C2:1 C2:2 C2:1', 8), hdTamb = times('-:2 C5:1 -:2 C5:1', 8);
+const HARVEST_C = ['C', 'F', 'C', 'G', 'C', 'F', 'G', 'C'];
+const hdTuneC = 'G5:2 E5:1 C5:2 E5:1 | F5:2 A5:1 F5:2 C5:1 | E5:2 G5:1 C6:2 G5:1 | D5:3 B4:3 | C5:2 E5:1 G5:2 E5:1 | F5:2 A5:1 C6:2 A5:1 | G5:1 F5:1 E5:1 D5:2 B4:1 | C5:6';
 const harvestDance = arrange(
   {
     harp: { inst: 'harp', vol: 0.46, rev: 0.25 }, flute: { inst: 'flute', vol: 0.48, rev: 0.35 }, lute: { inst: 'lute', vol: 0.58, rev: 0.25 },
@@ -198,9 +225,12 @@ const harvestDance = arrange(
     L: { beats: 48, harp: bars(HARVEST_A, jig), lute: shift(hdTuneA, -12), drum: hdDrum },
     B: { beats: 48, harp: bars(HARVEST_B, jig), flute: hdTuneB, lute: shift(hdTuneB, -12), strings: bars(HARVEST_B, (c) => pad(c, 6)), drum: hdDrum, tamb: hdTamb },
     T: { beats: 48, harp: bars(HARVEST_A, jig), flute: hdTuneA, lute: shift(hdTuneA, -12), strings: bars(HARVEST_A, (c) => pad(c, 6)), drum: hdDrum, tamb: hdTamb },
+    C: { beats: 48, harp: rh(HARVEST_C, R6.rock), flute: hdTuneC, strings: bars(HARVEST_C, (c) => pad(c, 6)), drum: hdDrum, tamb: hdTamb },
+    D: { beats: 48, harp: rh(HARVEST_A, R6.pulse), lute: shift(hdTuneA, -12), drum: times('C2:1 -:1 C2:1 C2:2 C2:1', 8) },
+    E: { beats: 48, harp: rh(HARVEST_B, R6.lilt), lute: shift(hdTuneB, -12), strings: bars(HARVEST_B, (c) => pad(c, 6)), tamb: hdTamb },
     O: { beats: 24, harp: bars(['Am', 'G', 'Em'], jig) + ' | A2+E3+A3:6', flute: 'A4:2 B4:1 C5:2 E5:1 | D5:2 B4:1 G4:3 | G4:1 A4:1 B4:1 D5:2 B4:1 | A4:6', drum: 'C2:2 C2:1 C2:2 C2:1 | C2:2 C2:1 C2:2 C2:1 | C2:2 C2:1 C2:2 C2:1 | C2:6' },
   },
-  'I A A B B L L B T T O',
+  'I A A B B L L C C D E E B T T O',
 );
 
 // =========================================================================
@@ -218,9 +248,9 @@ const longTable = arrange(
   {
     I: { beats: 32, harp: ltHarp(TABLE_A) },
     A: { beats: 32, harp: ltHarp(TABLE_A), horn: ltTuneA, strings: ltPad(TABLE_A) },
-    B: { beats: 32, harp: ltHarp(TABLE_B), flute: ltTuneB, strings: ltPad(TABLE_B) },
+    B: { beats: 32, harp: rh(TABLE_B, R.roll), flute: ltTuneB, strings: ltPad(TABLE_B) },
     A2: { beats: 32, harp: ltHarp(TABLE_A), horn: ltTuneA, flute: 'A5:4 | E5:4 | F5:4 | C5:4 | D5:4 | F5:4 | E5:4 | D5:4', strings: ltPad(TABLE_A), timp: bars(TABLE_A, (c) => `${low(c)}:4`) },
-    B2: { beats: 32, harp: ltHarp(TABLE_B), flute: ltTuneB, horn: bars(TABLE_B, (c) => CH[c][2] + ':4'), choir: ltPad(TABLE_B) },
+    B2: { beats: 32, harp: rh(TABLE_B, R.dotted), flute: ltTuneB, horn: bars(TABLE_B, (c) => CH[c][2] + ':4'), choir: ltPad(TABLE_B) },
     O: { beats: 16, harp: ltHarp(['Dm', 'Gm', 'A']) + ' | D3+A3+D4:4', strings: ltPad(['Dm', 'Gm', 'A', 'D5']), horn: 'D4:4 | G4:4 | E4:4 | D4:4' },
   },
   'I A B A2 B2 A2 O',
@@ -234,6 +264,8 @@ const srTuneA = 'E5:1.5 D5:.5 B4:2 | G4:1 A4:1 B4:2 | D5:1 B4:1 G4:1 B4:1 | A4:3
 const srTuneB = 'G5:2 D5:1 B4:1 | A4:1 D5:1 F#5:2 | G5:1 E5:1 B4:2 | C5:1 E5:1 G5:2 | B4:1 D5:1 G5:1 D5:1 | F#5:1 D5:1 A4:2 | G4:1 C5:1 E5:1 C5:1 | B4:2 E4:2';
 const walk = (c) => `${CH[c][0]}:1 ${CH[c][1]}:1 ${CH[c][2]}:1 ${CH[c][1]}:1`;
 const srDrum = times('C2:1 C2:.5 C2:.5 C2:1 C2:1', 8), srTamb = times('-:1 C5:1 -:1 C5:1', 8);
+const ROAD_C = ['C', 'G', 'D', 'Em', 'C', 'G', 'Am', 'D'];
+const srTuneC = 'E5:2 G5:2 | D5:2 B4:2 | A4:1 D5:1 F#5:2 | G5:3 E5:1 | E5:1 G5:1 C6:2 | B5:2 G5:1 D5:1 | C5:1 E5:1 A5:2 | F#5:2 D5:2';
 const saltRoad = arrange(
   {
     lute: { inst: 'lute', vol: 0.5, rev: 0.28 }, flute: { inst: 'flute', vol: 0.48, rev: 0.4 }, harp: { inst: 'harp', vol: 0.5, rev: 0.3 },
@@ -243,11 +275,13 @@ const saltRoad = arrange(
     I: { beats: 16, lute: bars(['Em', 'Em', 'G', 'D'], walk) },
     A: { beats: 32, lute: bars(ROAD_A, walk), flute: srTuneA, drum: srDrum },
     H: { beats: 32, lute: bars(ROAD_A, walk), harp: shift(srTuneA, -12), strings: bars(ROAD_A, (c) => pad(c, 4)), drum: srDrum, tamb: srTamb },
-    B: { beats: 32, lute: bars(ROAD_B, walk), flute: srTuneB, strings: bars(ROAD_B, (c) => pad(c, 4)), drum: srDrum, tamb: srTamb },
+    B: { beats: 32, lute: rh(ROAD_B, R.tresillo), flute: srTuneB, strings: bars(ROAD_B, (c) => pad(c, 4)), drum: srDrum, tamb: srTamb },
+    C: { beats: 32, lute: rh(ROAD_C, R.skip), flute: srTuneC, strings: bars(ROAD_C, (c) => pad(c, 4)), drum: srDrum },
+    D: { beats: 32, harp: rh(ROAD_A, R.roll), flute: srTuneA, tamb: srTamb },
     T: { beats: 32, lute: bars(ROAD_A, walk), flute: srTuneA, harp: shift(srTuneA, -12), strings: bars(ROAD_A, (c) => pad(c, 4)), drum: srDrum, tamb: srTamb },
     O: { beats: 16, lute: bars(['Em', 'C', 'D'], walk) + ' | E2+B2+E3:4', flute: 'E5:2 B4:2 | E5:2 C5:2 | D5:2 F#4:2 | E4:4', strings: bars(['Em', 'C', 'D', 'Em'], (c) => pad(c, 4)) },
   },
-  'I A H B A B T O',
+  'I A H B C A D B T O',
 );
 
 // =========================================================================
@@ -261,9 +295,9 @@ const starlitPantry = arrange(
   {
     P: { beats: 32, choir: spChoirA, bell: spBellA },
     A: { beats: 32, choir: spChoirA, bell: spBellA, harp: bars(STAR_A, (c) => arp(c, FOUR, 1)) },
-    B: { beats: 32, choir: 'D3+A3+F4:4 | Bb2+F3+D4:4 | F3+C4+A4:4 | C3+G3+E4:4 | D3+A3+F4:4 | Bb2+F3+D4:4 | G3+D4+Bb4:4 | A3+E4+C#5:4', harp: bars(STAR_B, (c) => arp(c, FOUR, 1)),
+    B: { beats: 32, choir: 'D3+A3+F4:4 | Bb2+F3+D4:4 | F3+C4+A4:4 | C3+G3+E4:4 | D3+A3+F4:4 | Bb2+F3+D4:4 | G3+D4+Bb4:4 | A3+E4+C#5:4', harp: rh(STAR_B, R.roll),
       bell: '-:2 A5:2 | F5:1 -:1 D6:2 | -:1 C6:1 A5:2 | G5:3 -:1 | -:2 F5:1 A5:1 | D6:2 -:2 | -:1 Bb5:1 D6:1 G5:1 | E5:4' },
-    F: { beats: 32, choir: spChoirA, harp: bars(STAR_A, (c) => arp(c, FOUR, 1)), flute: 'E5:4 | C5:2 A4:2 | G4:3 C5:1 | B4:4 | C5:2 E5:2 | A5:3 E5:1 | F5:2 D5:2 | E5:4' },
+    F: { beats: 32, choir: spChoirA, harp: rh(STAR_A, R.lilt), flute: 'E5:4 | C5:2 A4:2 | G4:3 C5:1 | B4:4 | C5:2 E5:2 | A5:3 E5:1 | F5:2 D5:2 | E5:4' },
   },
   'P A B F B A',
 );
@@ -291,8 +325,8 @@ const moonlitOrchard = arrange(
   { harp: { inst: 'harp', vol: 0.36, rev: 0.6 }, choir: { inst: 'choir', vol: 0.34, rev: 0.8 }, bell: { inst: 'bell', vol: 0.28, rev: 0.8 }, flute: { inst: 'flute', vol: 0.3, rev: 0.7 } },
   {
     H: { beats: 32, harp: moHarp },
-    A: { beats: 32, harp: moHarp, choir: moPad, bell: '-:1 A5:1 C6:2 | B5:2 G5:2 | -:1 G5:1 B5:1 E6:1 | C6:3 -:1 | -:1 A5:1 F5:2 | G5:1 B5:1 D6:2 | E6:2 C6:1 G5:1 | -:4' },
-    F: { beats: 32, harp: moHarp, choir: moPad, flute: 'A4:2 C5:1 F5:1 | D5:3 B4:1 | B4:1 G4:1 E4:2 | A4:1 C5:1 E5:2 | F5:2 C5:1 A4:1 | B4:2 D5:2 | C5:1 E5:1 G5:2 | G5:2 E5:2' },
+    A: { beats: 32, harp: rh(ORCHARD, R.dotted), choir: moPad, bell: '-:1 A5:1 C6:2 | B5:2 G5:2 | -:1 G5:1 B5:1 E6:1 | C6:3 -:1 | -:1 A5:1 F5:2 | G5:1 B5:1 D6:2 | E6:2 C6:1 G5:1 | -:4' },
+    F: { beats: 32, harp: rh(ORCHARD, R.skip), choir: moPad, flute: 'A4:2 C5:1 F5:1 | D5:3 B4:1 | B4:1 G4:1 E4:2 | A4:1 C5:1 E5:2 | F5:2 C5:1 A4:1 | B4:2 D5:2 | C5:1 E5:1 G5:2 | G5:2 E5:2' },
     S: { beats: 32, choir: moPad, bell: 'C6:4 | -:2 D6:2 | B5:4 | -:2 A5:2 | A5:4 | -:2 G5:2 | G5:2 E5:2 | C5:4' },
   },
   'H A F S A F',
@@ -305,6 +339,8 @@ const BATTLE = ['Dm', 'Dm', 'Bb', 'C', 'Dm', 'Dm', 'Gm', 'A', 'F', 'C', 'Dm', 'B
 const BATTLE_B = ['F', 'F', 'C', 'C', 'Gm', 'Gm', 'A', 'A', 'Bb', 'Bb', 'F', 'F', 'Gm', 'A', 'Dm', 'Dm'];
 const march = (c) => { const r = low(c), f = lowFifth(c); return `${r}:1.5 ${r}:.5 ${r}:1 ${f}:.5 ${f}:.5`; };
 const taSnare = times('-:1 C4:.75 C4:.75 C4:.5 C4:.5 C4:.25 C4:.25', 16), taDrum = times('C2:2 C2:2', 16);
+const TA_C = ['F', 'C', 'Dm', 'Am', 'Bb', 'F', 'Gm', 'A'], TA_D = ['Dm', 'Dm', 'Gm', 'Gm', 'Bb', 'Bb', 'A', 'A'];
+const taSnare8 = times('-:1 C4:.75 C4:.75 C4:.5 C4:.5 C4:.25 C4:.25', 8), taDrum8 = times('C2:2 C2:2', 8);
 const toArms = arrange(
   {
     horn: { inst: 'horn', vol: 0.5, rev: 0.35 }, stac: { inst: 'stac', vol: 0.34, rev: 0.3 }, choir: { inst: 'choir', vol: 0.26, rev: 0.6 },
@@ -325,8 +361,14 @@ const toArms = arrange(
         'D5:2 F5:2 | F5:1 D5:1 Bb4:2 | C5:1 A4:1 F4:2 | A4:3 C5:1 | Bb4:1 A4:1 G4:1 Bb4:1 | A4:1 C#5:1 E5:1 A4:1 | D5:4 | D5:2 A4:2',
       stac: bars(BATTLE_B, (c) => arp(c, OST, 0.5)), choir: bars(BATTLE_B, (c) => pad(c, 4)), timp: bars(BATTLE_B, march), snare: taSnare, drum: taDrum,
     },
+    // the bridge: the strings gallop instead of ticking, the horn climbs
+    C: { beats: 32, horn: 'C5:2 A4:2 | G4:1 A4:1 C5:2 | D5:2 F5:2 | E5:3 C5:1 | D5:1 F5:1 Bb5:2 | A5:2 F5:2 | G5:1 F5:1 E5:1 D5:1 | C#5:2 E5:2',
+      stac: rh(TA_C, R.gallop), choir: bars(TA_C, (c) => pad(c, 4)), timp: bars(TA_C, march), snare: taSnare8, drum: taDrum8 },
+    // the drum break: timpani, snare rolls and the choir, before the tune comes home
+    D: { beats: 32, stac: bars(TA_D, (c) => arp(c, OST, 0.5)), choir: bars(TA_D, (c) => pad(c, 4)), timp: bars(TA_D, march),
+      snare: times('C4:.25 C4:.25 C4:.25 C4:.25 -:1 C4:.5 C4:.5 -:1', 8), drum: taDrum8 },
   },
-  'A B A',
+  'A B C A D B A',
 );
 
 // =========================================================================
@@ -337,6 +379,8 @@ const koTuneA = 'A4:1 A4:.5 B4:.5 C5:2 | E5:1.5 D5:.5 C5:1 B4:1 | A4:1 C5:1 F5:2
 const koTuneB = 'E5:2 G5:2 | D5:1.5 E5:.5 D5:1 B4:1 | C5:1 E5:1 A5:2 | G5:1 E5:1 B4:2 | A4:1 C5:1 F5:1 A5:1 | G5:2 E5:2 | F5:1 D5:1 A4:1 D5:1 | E5:2 G#4:2';
 const gallop = (c) => { const r = low(c), f = lowFifth(c); return `${r}:1 ${r}:.5 ${r}:.5 ${r}:1 ${f}:1`; };
 const koSnare = times('-:.5 C4:.5 C4:.5 C4:.5 -:.5 C4:.5 C4:.25 C4:.25 C4:.5', 8), koDrum = times('C2:1 C2:1 C2:1 C2:1', 8), koTamb = times('-:.5 C5:.5 -:.5 C5:.5 -:.5 C5:.5 -:.5 C5:.5', 8);
+const KNIVES_C = ['F', 'G', 'Em', 'Am', 'Dm', 'G', 'C', 'E'];
+const koTuneC = 'A4:2 C5:2 | B4:1.5 C5:.5 D5:2 | G5:2 E5:2 | E5:1 C5:1 A4:2 | F5:2 D5:2 | B4:1 D5:1 G5:2 | E5:1 D5:1 C5:1 E5:1 | G#5:2 E5:2';
 const knivesOut = arrange(
   {
     horn: { inst: 'horn', vol: 0.5, rev: 0.35 }, flute: { inst: 'flute', vol: 0.34, rev: 0.4 }, stac: { inst: 'stac', vol: 0.34, rev: 0.3 }, choir: { inst: 'choir', vol: 0.24, rev: 0.6 },
@@ -344,11 +388,14 @@ const knivesOut = arrange(
   },
   {
     I: { beats: 16, stac: bars(['Am', 'Am', 'F', 'E'], (c) => arp(c, OST, 0.5)), timp: bars(['Am', 'Am', 'F', 'E'], gallop), drum: times('C2:1 C2:1 C2:1 C2:1', 4) },
-    A: { beats: 32, horn: koTuneA, stac: bars(KNIVES_A, (c) => arp(c, OST, 0.5)), timp: bars(KNIVES_A, gallop), snare: koSnare, drum: koDrum },
+    A: { beats: 32, horn: koTuneA, stac: rh(KNIVES_A, R.gallop), timp: bars(KNIVES_A, gallop), snare: koSnare, drum: koDrum },
     A2: { beats: 32, horn: koTuneA, flute: shift(koTuneA, 12), stac: bars(KNIVES_A, (c) => arp(c, OST, 0.5)), choir: bars(KNIVES_A, (c) => pad(c, 4)), timp: bars(KNIVES_A, gallop), snare: koSnare, drum: koDrum, tamb: koTamb },
     B: { beats: 32, horn: koTuneB, stac: bars(KNIVES_B, (c) => arp(c, OST, 0.5)), choir: bars(KNIVES_B, (c) => pad(c, 4)), timp: bars(KNIVES_B, gallop), snare: koSnare, drum: koDrum, tamb: koTamb },
+    C: { beats: 32, horn: koTuneC, stac: rh(KNIVES_C, R.tresillo), choir: bars(KNIVES_C, (c) => pad(c, 4)), timp: bars(KNIVES_C, gallop), snare: koSnare, drum: koDrum },
+    D: { beats: 32, flute: koTuneA, stac: rh(KNIVES_A, R.skip), timp: bars(KNIVES_A, gallop), drum: koDrum, tamb: koTamb },
+    O: { beats: 16, horn: 'A4:2 C5:2 | F5:2 E5:2 | E5:2 G#4:2 | A4:4', stac: bars(['Am', 'F', 'E', 'Am'], (c) => arp(c, OST, 0.5)), timp: bars(['Am', 'F', 'E', 'Am'], gallop), drum: times('C2:1 C2:1 C2:1 C2:1', 4) },
   },
-  'I A A2 B A2 B',
+  'I A A2 B C A2 D C B A2 B O',
 );
 
 // =========================================================================
@@ -360,6 +407,8 @@ const ssTuneB = 'F5:3 D5:3 | C5:4 A4:2 | Bb4:2 D5:2 G5:2 | F#5:6 | G5:3 Eb5:3 | 
 const tramp = (c) => `${CH[c][0]}:1 ${CH[c][0]}:1 ${CH[c][1]}:1 ${CH[c][2]}:1 ${CH[c][1]}:1 ${CH[c][0]}:1`;
 const pound = (c) => `${low(c)}:3 ${low(c)}:2 ${lowFifth(c)}:1`;
 const ssDrum = times('C2:3 C2:3', 8), ssSnare = times('-:2 C4:1 -:2 C4:.5 C4:.5', 8);
+const SIEGE_C = ['Eb', 'Bb', 'Cm', 'Gm', 'Eb', 'Bb', 'D', 'D'];
+const ssTuneC = 'G4:3 Bb4:3 | D5:4 F5:2 | Eb5:3 C5:3 | D5:6 | Eb5:2 G5:2 Bb5:2 | F5:3 D5:3 | F#5:2 A5:2 F#5:2 | D5:6';
 const siegeSupper = arrange(
   {
     horn: { inst: 'horn', vol: 0.52, rev: 0.4 }, stac: { inst: 'stac', vol: 0.36, rev: 0.3 }, choir: { inst: 'choir', vol: 0.28, rev: 0.65 },
@@ -370,8 +419,14 @@ const siegeSupper = arrange(
     A: { beats: 48, horn: ssTuneA, stac: bars(SIEGE_A, tramp), timp: bars(SIEGE_A, pound), drum: ssDrum, snare: ssSnare },
     A2: { beats: 48, horn: ssTuneA, stac: bars(SIEGE_A, tramp), choir: bars(SIEGE_A, (c) => pad(c, 6)), timp: bars(SIEGE_A, pound), drum: ssDrum, snare: ssSnare },
     B: { beats: 48, horn: ssTuneB, stac: bars(SIEGE_B, tramp), choir: bars(SIEGE_B, (c) => pad(c, 6)), timp: bars(SIEGE_B, pound), drum: ssDrum, snare: ssSnare },
+    B2: { beats: 48, horn: ssTuneB, stac: rh(SIEGE_B, R6.rock), timp: bars(SIEGE_B, pound), drum: ssDrum, snare: ssSnare },
+    C: { beats: 48, horn: ssTuneC, stac: rh(SIEGE_C, R6.pulse), timp: bars(SIEGE_C, pound), drum: ssDrum },
+    C2: { beats: 48, horn: ssTuneC, stac: rh(SIEGE_C, R6.pulse), choir: bars(SIEGE_C, (c) => pad(c, 6)), timp: bars(SIEGE_C, pound), drum: ssDrum, snare: ssSnare },
+    D: { beats: 48, choir: bars(['Gm', 'Gm', 'Cm', 'Cm', 'Eb', 'Eb', 'D', 'D'], (c) => pad(c, 6)), timp: bars(['Gm', 'Gm', 'Cm', 'Cm', 'Eb', 'Eb', 'D', 'D'], pound), drum: ssDrum,
+      snare: times('C4:.5 C4:.5 C4:.5 C4:.5 C4:.5 C4:.5 -:3', 8) },
+    O: { beats: 24, horn: 'G4:3 D5:3 | G5:6 | D5:3 F#5:3 | G5:6', stac: bars(['Gm', 'Gm', 'D', 'Gm'], tramp), timp: bars(['Gm', 'Gm', 'D', 'Gm'], pound), drum: times('C2:3 C2:3', 4) },
   },
-  'I A A2 B A2 B',
+  'I A A2 B B2 C C2 A2 D B C2 A2 B2 O',
 );
 
 // ------------------------------------------------------------------ the list
@@ -380,15 +435,15 @@ export const TRACKS = [
   { id: 'lobby', name: 'The Grand Kitchen', mood: 'lobby', bpm: 88, loops: 99, parts: grandKitchen },
   { id: 'morning', name: 'Morning Prep', mood: 'calm', bpm: 192, loops: 1, parts: morningPrep },
   { id: 'market', name: 'Market Day', mood: 'calm', bpm: 116, loops: 1, parts: marketDay },
-  { id: 'harvest', name: 'Harvest Dance', mood: 'calm', bpm: 320, loops: 1, parts: harvestDance },
+  { id: 'harvest', name: 'Harvest Dance', mood: 'calm', bpm: 290, loops: 1, parts: harvestDance },
   { id: 'table', name: 'The Long Table', mood: 'calm', bpm: 80, loops: 1, parts: longTable },
   { id: 'road', name: 'Salt Road', mood: 'calm', bpm: 104, loops: 1, parts: saltRoad },
   { id: 'starlit', name: 'Starlit Pantry', mood: 'ambient', bpm: 60, loops: 1, parts: starlitPantry },
   { id: 'simmer', name: 'Deep Simmer', mood: 'ambient', bpm: 54, loops: 1, parts: deepSimmer },
   { id: 'orchard', name: 'Moonlit Orchard', mood: 'ambient', bpm: 66, loops: 1, parts: moonlitOrchard },
-  { id: 'battle', name: 'To Arms, Brigade!', mood: 'battle', bpm: 138, loops: 2, parts: toArms },
-  { id: 'knives', name: 'Knives Out', mood: 'battle', bpm: 152, loops: 2, parts: knivesOut },
-  { id: 'siege', name: 'Siege of the Supper Club', mood: 'battle', bpm: 300, loops: 2, parts: siegeSupper },
+  { id: 'battle', name: 'To Arms, Brigade!', mood: 'battle', bpm: 138, loops: 1, parts: toArms },
+  { id: 'knives', name: 'Knives Out', mood: 'battle', bpm: 146, loops: 1, parts: knivesOut },
+  { id: 'siege', name: 'Siege of the Supper Club', mood: 'battle', bpm: 250, loops: 1, parts: siegeSupper },
 ];
 
 export const STINGERS = {

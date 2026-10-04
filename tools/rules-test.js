@@ -63,6 +63,15 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
   const moods = (m) => TRACKS.filter((t) => t.mood === m);
   ok(moods('calm').length >= 5 && moods('ambient').length >= 3 && moods('battle').length >= 3 && moods('calm').every((t) => secs(t) >= 90) && moods('ambient').every((t) => secs(t) >= 150),
     'the soundtrack has five calm, three ambient and three battle pieces, each a full-length arrangement', TRACKS.map((t) => `${t.id} ${Math.round(secs(t))}s`).join(', '));
+  ok(TRACKS.every((t) => secs(t) >= 135), 'every piece runs well over two minutes before it repeats', TRACKS.filter((t) => secs(t) < 135).map((t) => `${t.id} ${Math.round(secs(t))}s`).join(', '));
+  // the plucked accompaniment must not be the same even pulse everywhere: count distinct rhythms (onset patterns) in the harp/lute parts
+  const rhythms = new Set();
+  for (const t of TRACKS) for (const p of t.parts) {
+    if (p.inst !== 'harp' && p.inst !== 'lute') continue;
+    const ev = parseSeq(p.seq).ev, durs = new Set(ev.map((e) => e.d));
+    rhythms.add([...durs].sort().join(','));
+  }
+  ok(rhythms.size >= 8, 'the harp and lute parts use many different rhythms, not one shared pulse', rhythms.size + ' distinct');
 }
 
 // ---------------------------------------------------------------------- economy
@@ -527,7 +536,7 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     const g = mkT();
     const P0 = g.players[0], hq = hqOf(g, 0);
     ok(g.w === TB.mapSizes.small && hq.size === 1 && hq.hp === tbBldg(hq.S).hp && mineT(g, 0, 'cook').length === 2 && mineT(g, 0, 'line').length === 1 && P0.heroId > 0, 'tactics: a small grid, one-tile stations, a hero, a Line Cook and two Prep Cooks each');
-    ok(g.turn.n === 1 && g.turn.cur === 0 && P0.res.food === g.players[1].res.food + TB.hqIncome.food, 'tactics: player 1 goes first and collects the Kitchen HQ income');
+    ok(g.turn.n === 1 && g.turn.cur === 0 && P0.res.food === g.players[1].res.food + Math.round(TB.hqIncome.food * TB.incomeMul), 'tactics: player 1 goes first and collects the Kitchen HQ income');
     ok(g.nodes.some((n) => n.type === 'wood') && g.startInfo().mode === 'turn' && Array.isArray(g.full().tb), 'tactics: the map has Timber Stands and clients are told it is a turn-based match');
     const line = mineT(g, 0, 'line')[0], foe = mineT(g, 1, 'line')[0];
     const at = [foe.tx, foe.ty];
@@ -793,6 +802,211 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
       for (const P of f.players) { for (const r in P.res) if (!Number.isFinite(P.res[r]) || P.res[r] < 0) sane = false; if (P.pop < 0 || P.reserved < 0) sane = false; }
     }
     ok(sane, 'tactics: thousands of malformed orders never crash the game or put two units on one tile', boom ? boom.stack : '');
+  }
+}
+
+// ------------------------------------------- v1.2.0: market, balance, team turns
+{
+  const { MARKET, marketQuote, TB, BUILDINGS: BLD, CTF, tbDamage, tbDist } = await import('../game/data.js');
+  const { TacticsGame, F_COUNTERED } = await import('../game/tactics.js');
+  const { TacticsBot } = await import('../game/tactics-ai.js');
+  const { CtfGame } = await import('../game/ctf.js');
+  const { CtfBot } = await import('../game/ctf-ai.js');
+
+  // ---- the Farmers Market (real time)
+  {
+    const g = mk(['flint', 'nonna'], { seed: 4 });
+    const P = g.players[0];
+    const s0 = { ...P.res };
+    g.command(0, { c: 'mkt', give: 'spice', get: 'wood', n: 1 });
+    run(g, 0.1);
+    ok(P.res.spice === s0.spice && P.res.wood === s0.wood, 'market: no trading without a Farmers Market');
+    const [tx, ty] = spot(g, 0, 'market');
+    g.addBuilding(0, 'market', tx, ty, true);
+    const q1 = marketQuote(g.market, 'spice', 'wood');
+    g.command(0, { c: 'mkt', give: 'spice', get: 'wood', n: 1 });
+    ok(P.res.spice === s0.spice - MARKET.lot && P.res.wood === s0.wood + q1 && q1 > MARKET.lot, 'market: 100 Spice buys more than 100 Firewood (Spice is worth more)', `${q1} wood`);
+    ok(g.market.spice < 1 && g.market.wood > 1, 'market: selling makes a thing cheaper and buying makes it dearer');
+    const q2 = marketQuote(g.market, 'spice', 'wood');
+    ok(q2 < q1, 'market: so the same trade pays less the second time', `${q1} -> ${q2}`);
+    const back = marketQuote(g.market, 'wood', 'spice');
+    ok(back < MARKET.lot * 100 / 160 * 1.2 && back < (MARKET.lot * MARKET.lot) / q1, 'market: trading straight back loses on the fee and the spread', `100 wood -> ${back} spice`);
+    const w0 = P.res.wood;
+    g.command(0, { c: 'mkt', give: 'wood', get: 'salt', n: 5 });
+    ok(P.res.wood === w0 - 5 * MARKET.lot, 'market: five lots at once');
+    const before = { ...P.res };
+    for (const c of [{ give: 'wood', get: 'wood' }, { give: 'gold', get: 'wood' }, { give: '__proto__', get: 'food' }, { give: 'food' }, { give: 'food', get: 'wood', n: 1e9 }]) g.command(0, { c: 'mkt', ...c });
+    ok(P.res.food >= before.food - 10 * MARKET.lot && Object.values(P.res).every((v) => Number.isFinite(v) && v >= 0) && P.res.wood >= before.wood, 'market: junk trades are refused or capped at ten lots');
+    const f = g.market.spice;
+    run(g, 31);
+    ok(g.market.spice > f && g.market.spice < 1, 'market: prices drift back towards normal over time', `${f.toFixed(3)} -> ${g.market.spice.toFixed(3)}`);
+    const d = g.delta();
+    ok(Array.isArray(g.full().mk) && g.full().mk.length === 4, 'market: snapshots carry the prices');
+    ok(BLD.restaurant.cost.salt === 500, 'the Signature Restaurant costs 500 Salt');
+  }
+
+  // ---- turn-based: income, wood, stats, counters, towers, rally, market
+  const mkT = (cmds, opts = {}) => {
+    const g = new TacticsGame({ players: cmds.map((c, i) => ({ name: 'P' + i, commander: c, team: opts.teams ? opts.teams[i] : i, color: i })), mapSize: opts.size || 'small', startRes: 'feast', popCap: 100, seed: opts.seed || 5, turnOrder: opts.order || 'player' });
+    g.step();
+    return g;
+  };
+  const settle = (g) => { for (let i = 0; i < 600 && (g.busy() || g.queue.length); i++) g.step(); g.step(); };
+  const mineT = (g, pi, type) => g.units.filter((u) => u.owner === pi && !u.dead && u.type === type);
+  const place = (g, u, x, y) => { const i = u.ty * g.w + u.tx; if (g.grid[i] === u.id) g.grid[i] = 0; u.tx = x; u.ty = y; u.x = x + 0.5; u.y = y + 0.5; g.grid[y * g.w + x] = u.id; };
+  {
+    const g = mkT(['odile', 'hank']);
+    const P = g.players[0];
+    const woods = g.nodes.filter((n) => n.type === 'wood').length;
+    ok(woods >= 3 * g.players.length, 'tactics: Timber Stands are no longer scarce', `${woods} on the map`);
+    const plain = g.incomeOf(P);
+    P.sugarNext = true; const sweet = g.incomeOf(P); P.sugarNext = false;
+    ok(Math.abs(sweet.food / plain.food - TB.sugarMul) < 0.05 && TB.sugarMul === 1.2, 'tactics: Sugar Rush makes stations pay 20% more, not 40%', `${plain.food} -> ${sweet.food}`);
+    const sauc = g.spawnUnit(0, 'saucier', 2.5, 2.5), line = g.spawnUnit(1, 'line', 3.5, 2.5);
+    ok(sauc.S.hp === Math.round(38 * TB.rangedHp), 'tactics: ranged units are tougher on the grid', `${sauc.S.hp} HP`);
+    const raw = tbDamage(sauc.S, line.S, { ranged: true });
+    ok(Math.abs(g.damageFor(sauc, line, false) - raw * TB.rangedMul) <= 1, 'tactics: and hit harder', `${raw} -> ${g.damageFor(sauc, line, false)}`);
+    const hank = g.heroOf(g.players[1]);
+    ok(hank.S.hp === 420, 'tactics: Big Hank has 420 HP in the Food Cart Age...', String(hank.S.hp));
+    g.completeTech(g.players[1], 'age2');
+    ok(g.heroOf(g.players[1]).S.hp === 525, '...and 525 in the Diner Age', String(g.heroOf(g.players[1]).S.hp));
+    g.killEntity(sauc, -1); g.killEntity(line, -1); settle(g);
+  }
+  // one counterattack per turn
+  {
+    const g = mkT(['flint', 'nonna'], { seed: 9 });
+    for (const P of g.players) if (P.heroId) g.killEntity(g.ents.get(P.heroId), -1);
+    settle(g);
+    const d = mineT(g, 1, 'line')[0];
+    const around = g.freeAround(d.tx, d.ty, 1).filter((t) => tbDist(t[0], t[1], d.tx, d.ty) === 1);
+    const a1 = g.spawnUnit(0, 'line', around[0][0] + 0.5, around[0][1] + 0.5), a2 = g.spawnUnit(0, 'line', around[1][0] + 0.5, around[1][1] + 0.5);
+    d.hp = 1000; d.S = { ...d.S, hp: 1000 };
+    const h1 = a1.hp, h2 = a2.hp;
+    g.command(0, { c: 'tat', id: a1.id, tid: d.id }); settle(g);
+    const first = a1.hp < h1, flagged = !!(g.flagsOf(d) & F_COUNTERED);
+    g.command(0, { c: 'tat', id: a2.id, tid: d.id }); settle(g);
+    ok(first && flagged && a2.hp === h2, 'tactics: a unit hits back only once per enemy turn', `first ${h1}->${a1.hp}, second ${h2}->${a2.hp}`);
+    g.command(0, { c: 'et' }); settle(g); g.command(1, { c: 'et' }); settle(g);
+    ok(!(g.flagsOf(d) & F_COUNTERED), 'tactics: and can hit back again next turn');
+  }
+  // towers shoot stations, recruits walk out where you point, the market works on your turn only
+  {
+    const g = mkT(['hank', 'zara'], { seed: 12 });
+    const A = g.players[0], B = g.players[1];
+    for (const P of g.players) if (P.heroId) g.killEntity(g.ents.get(P.heroId), -1);
+    settle(g);
+    for (const u of g.units.slice()) if (u.owner === 1) g.killEntity(u, -1);                 // no enemy units about: only stations to shoot
+    settle(g);
+    const hq = g.bldgs.find((b) => b.owner === 0 && b.type === 'hq');
+    const spotT = g.freeAround(hq.tx, hq.ty, 3).find((t) => tbDist(t[0], t[1], hq.tx, hq.ty) === 2);
+    const tower = g.addBuilding(0, 'tower', spotT[0], spotT[1], true);
+    const spotE = g.freeAround(tower.tx, tower.ty, 2).find((t) => tbDist(t[0], t[1], tower.tx, tower.ty) === 2);
+    const shed = g.addBuilding(1, 'house', spotE[0], spotE[1], true);
+    const hp0 = shed.hp;
+    g.command(0, { c: 'et' }); settle(g); g.command(1, { c: 'et' }); settle(g);
+    ok(shed.hp < hp0, 'tactics: towers (and the Kitchen HQ) shoot enemy stations too', `${hp0} -> ${shed.hp}`);
+    // rally: recruits walk out on the chosen side
+    const sides = g.freeAround(hq.tx, hq.ty, 1).filter((t) => tbDist(t[0], t[1], hq.tx, hq.ty) === 1);
+    const far = sides[sides.length - 1];
+    const rx = hq.tx + (far[0] - hq.tx) * 3, ry = hq.ty + (far[1] - hq.ty) * 3;
+    g.command(1, { c: 'trl', bid: hq.id, x: rx, y: ry });
+    ok(!hq.trally, 'tactics: nobody else can set your rally');
+    g.command(0, { c: 'trl', bid: hq.id, x: rx, y: ry });
+    ok(hq.trally && hq.trally.x === rx, 'tactics: right-clicking a tile sets where a station\'s recruits walk out');
+    g.command(0, { c: 'tr', bid: hq.id, u: 'cook' }); settle(g);
+    const before = new Set(mineT(g, 0, 'cook').map((u) => u.id));
+    g.command(0, { c: 'et' }); settle(g); g.command(1, { c: 'et' }); settle(g);
+    const fresh = mineT(g, 0, 'cook').find((u) => !before.has(u.id));
+    ok(fresh && Math.sign(fresh.tx - hq.tx) === Math.sign(far[0] - hq.tx) && Math.sign(fresh.ty - hq.ty) === Math.sign(far[1] - hq.ty), 'tactics: and the next one does', fresh ? `${fresh.tx},${fresh.ty} (hq ${hq.tx},${hq.ty}, side ${far})` : 'none');
+    // market on the grid
+    const mspot = g.freeAround(hq.tx, hq.ty, 4).find((t) => tbDist(t[0], t[1], hq.tx, hq.ty) >= 2 && !g.grid[t[1] * g.w + t[0]]);
+    g.addBuilding(0, 'market', mspot[0], mspot[1], true);
+    const w0 = A.res.wood;
+    g.command(0, { c: 'mkt', give: 'wood', get: 'salt', n: 1 }); settle(g);
+    ok(A.res.wood === w0 - MARKET.lot, 'tactics: the Farmers Market trades during your turn');
+    g.command(0, { c: 'et' }); settle(g);
+    const w1 = A.res.wood;
+    g.command(0, { c: 'mkt', give: 'wood', get: 'salt', n: 1 }); settle(g);
+    ok(A.res.wood === w1, 'tactics: but not during someone else\'s');
+  }
+  // team turns
+  {
+    const g = mkT(['flint', 'nonna', 'ryo', 'zara'], { teams: [0, 0, 1, 1], order: 'team', size: 'medium' });
+    ok(g.teamTurns && g.turn.team === 0 && g.isTurnOf(0) && g.isTurnOf(1) && !g.isTurnOf(2), 'team turns: team-mates play at the same time');
+    const r = g.turnRec();
+    ok(r.length === 5 && r[3] === 0 && r[4] === 0, 'team turns: clients are told which team is playing');
+    const u1 = mineT(g, 1, 'line')[0], u2 = mineT(g, 2, 'line')[0];
+    const mv = (u) => { const reach = g.reach(u); const i = [...reach.best.keys()].find((k) => !g.grid[k] && k !== u.ty * g.w + u.tx); return [i % g.w, (i / g.w) | 0]; };
+    const [x1, y1] = mv(u1), [x2, y2] = mv(u2);
+    g.command(1, { c: 'tmv', id: u1.id, x: x1, y: y1 }); g.command(2, { c: 'tmv', id: u2.id, x: x2, y: y2 }); settle(g);
+    ok(u1.tx === x1 && u2.tx !== x2, 'team turns: the second kitchen of the playing team can act; the other team cannot');
+    g.command(0, { c: 'et' }); settle(g);
+    ok(g.turn.team === 0 && !g.isTurnOf(0) && g.isTurnOf(1) && (g.turnRec()[4] & 1), 'team turns: ending yours waits for your team-mate');
+    g.command(1, { c: 'et' }); settle(g);
+    ok(g.turn.team === 1 && g.isTurnOf(2) && g.isTurnOf(3) && g.turn.n === 1, 'team turns: when both have ended, the other team plays');
+    g.command(2, { c: 'et' }); g.command(3, { c: 'et' }); settle(g);
+    ok(g.turn.team === 0 && g.turn.n === 2, 'team turns: then a new round');
+    // bots play team turns too
+    const b = new TacticsGame({ players: ['flint', 'nonna', 'ryo', 'zara'].map((c, i) => ({ name: 'B' + i, commander: c, team: i < 2 ? 0 : 1, color: i, bot: 'normal' })), mapSize: 'medium', startRes: 'standard', popCap: 100, seed: 3, turnOrder: 'team' });
+    for (const P of b.players) { P.ai = new TacticsBot(b, P, 'normal'); P.ai.L = { ...P.ai.L, pace: 1 }; }
+    let boom = null;
+    try { for (let i = 0; i < 200000 && b.turn.n <= 12 && !b.over; i++) { b.step(); b.delta(); } } catch (e) { boom = e; }
+    ok(!boom && b.turn.n > 12, 'team turns: four bots play twelve rounds two at a time', boom ? boom.stack : `round ${b.turn.n}`);
+    const solo = mkT(['flint', 'nonna'], { order: 'team' });
+    ok(!solo.teamTurns, 'team turns: with one kitchen per team the option changes nothing');
+  }
+
+  // ---- capture the flag: slows, buff camps, fair bots
+  {
+    const g = new CtfGame({ players: [{ name: 'A', commander: 'ingrid', team: 1, color: 0 }, { name: 'B', commander: 'kofi', team: 2, color: 1 }], seed: 3, ctfCaps: 3, ctfTime: 15 });
+    run(g, 1);
+    const A = g.players[0], B = g.players[1], ha = g.heroOf(A), hb = g.heroOf(B);
+    const cplace = (u, x, y) => { u.x = x; u.y = y; u.order = null; u.path = null; u.st = ST.IDLE; };
+    cplace(ha, 30, 30); cplace(hb, 32, 30); g.step();
+    g.command(0, { c: 'ab' }); g.step();
+    ok(Math.abs((A.abilityReady - g.tick) / TICK_RATE - COMMANDERS.ingrid.ability.ctfCd) < 0.2 && COMMANDERS.ingrid.ability.ctfCd >= 30, 'ctf: Brain Freeze has a longer cooldown of its own', `${((A.abilityReady - g.tick) / TICK_RATE).toFixed(1)}s`);
+    // buff camps
+    const pep = g.camps.find((k) => k.type === 'pepper'), sug = g.camps.find((k) => k.type === 'sugar');
+    ok(pep && sug && pep.alive === 1 && sug.alive === 1 && Math.abs(pep.y - sug.y) > g.h * 0.5, 'ctf: a buff camp at the top of the map and one at the bottom', pep && sug ? `${pep.y.toFixed(0)} / ${sug.y.toFixed(0)}` : '');
+    const guard = g.ents.get([...pep.units][0]);
+    cplace(hb, pep.x - 1.5, pep.y); g.step();
+    g.applyDamage(1, hb.id, guard, guard.hp + 50, {}, false); run(g, 0.3);
+    ok(hb.buffs && hb.buffs.b_pepper && hb.bAtk > 1.15, 'ctf: the last hit on a buff camp wears its buff', JSON.stringify(hb.buffs));
+    // vision
+    cplace(ha, 10, 10); cplace(hb, 60, 60); g.step();
+    ok(!g.seenBy(1, hb) && g.seenBy(2, hb), 'ctf: an enemy hero far from your heroes and kitchen is out of sight');
+    cplace(hb, 12, 10); g.step();
+    ok(g.seenBy(1, hb), 'ctf: and in sight once close');
+  }
+  {
+    // the bot only hunts a carrier it can see (or a reveal pointed at)
+    const g = new CtfGame({ players: [{ name: 'Human', commander: 'kofi', team: 1, color: 0 }, { name: 'Bot', commander: 'dolly', team: 2, color: 1, bot: 'hard' }], seed: 6, ctfCaps: 3, ctfTime: 15 });
+    run(g, 1);
+    const H = g.players[0], Bt = g.players[1];
+    Bt.ai = new CtfBot(g, Bt, 'hard');
+    const hh = g.heroOf(H), bh = g.heroOf(Bt), flag = g.flagOf(2);
+    const cplace = (u, x, y) => { u.x = x; u.y = y; u.order = null; u.path = null; u.st = ST.IDLE; };
+    cplace(hh, flag.hx, flag.hy); g.step(); g.step();
+    ok(flag.state === 1 && flag.carrier === hh.id, 'ctf bots: (setup) the human has the bot\'s flag');
+    const reveals = [];
+    const hide = g.flagOf(1);
+    cplace(bh, hide.hx + 4, hide.hy - 18);                                  // the bot's hero is far off, out of sight
+    cplace(hh, hide.hx - 2, hide.hy + 20);
+    let chased = false;
+    for (let i = 0; i < 6 * TICK_RATE; i++) {
+      hh.x = hide.hx - 2; hh.y = hide.hy + 20; hh.order = null;
+      g.step();
+      for (const e of g.events) if (e[0] === 'reveal') reveals.push(e);
+      g.delta();
+      if (bh.order && bh.order.t === 'attack' && bh.order.id === hh.id) chased = true;
+    }
+    ok(!g.seenBy(2, hh) && !chased, 'ctf bots: a carrier out of sight is not hunted down on the spot');
+    for (let i = 0; i < (CTF.reveal + 1) * TICK_RATE; i++) { hh.x = hide.hx - 2; hh.y = hide.hy + 20; g.step(); for (const e of g.events) if (e[0] === 'reveal') reveals.push(e); g.delta(); }
+    ok(reveals.length >= 1 && reveals[0][1] === 2, `ctf: a carrier shows up on everyone's minimap every ${CTF.reveal}s`, String(reveals.length));
+    cplace(bh, hh.x + 3, hh.y); g.step();
+    let attacked = false;
+    for (let i = 0; i < 3 * TICK_RATE && !attacked; i++) { g.step(); g.delta(); if (bh.order && bh.order.t === 'attack' && bh.order.id === hh.id) attacked = true; }
+    ok(attacked, 'ctf bots: but once the carrier is in sight the bot goes for it');
   }
 }
 

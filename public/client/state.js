@@ -2,7 +2,7 @@
 //  Client-side game state: a mirror of what the server streams to us, plus
 //  purely local things (selection, camera, fog of war, visual effects).
 // ============================================================================
-import { UNITS, BUILDINGS, NODES, COMMANDERS, CTF, computeStats, tbUnit, tbBldg, ctfHeroStats } from '/game/data.js';
+import { UNITS, BUILDINGS, NODES, COMMANDERS, CTF, computeStats, tbUnit, tbBldg, tbAdjust, ctfHeroStats } from '/game/data.js';
 
 export const K_UNIT = 0, K_BLDG = 1, K_NODE = 2;
 export const ST_INSIDE = 6;               // unit state: sheltering inside a station (hidden)
@@ -63,7 +63,8 @@ export const statsOf = (e) => {
 // ---------------------------------------------------------------- match setup
 export function beginMatch(m) {
   G.me = m.you; G.players = m.players; G.opts = m.opts || {};
-  G.tb = m.mode === 'turn' ? { n: 1, cur: 0, deadline: 0, time: Number(G.opts.turnTime) || 0, limit: Number(G.opts.turnLimit) || 0 } : null;
+  G.tb = m.mode === 'turn' ? { n: 1, cur: 0, deadline: 0, team: -1, ended: 0, time: Number(G.opts.turnTime) || 0, limit: Number(G.opts.turnLimit) || 0, teams: G.opts.turnOrder === 'team' } : null;
+  G.market = { food: 1, wood: 1, spice: 1, salt: 1 };
   G.ctf = m.mode === 'ctf' && m.ctf ? {
     ...m.ctf, caps: {}, sudden: false, lvl: 0,
     flags: m.ctf.flags.map((f) => ({ team: f.team, hx: f.x, hy: f.y, x: f.x, y: f.y, state: 0, carrier: 0, dropAt: 0 })),
@@ -151,6 +152,7 @@ function tbStation(e, r) {
   e.qleft = r[8] || 0; e.qpct = 0;
   e.left = r[10] || 0; e.rally = null;
   e.pays = r[11] || 0; e.inside = 0;
+  e.trally = r[12] || null;                 // [x, y]: the side its recruits walk out
 }
 
 function movePos(e, x, y, now) {
@@ -183,6 +185,7 @@ function updatePlayer(r) {
   const items = G.ctf && r[21] ? r[21].join('') : '';
   if (sig + items !== p.sig) {
     p.sig = sig + items; p.age = r[7]; p.techs = r[8]; p.stats = computeStats(G.players[r[0]].commander, p.age, p.techs);
+    if (G.tb) tbAdjust(p.stats, G.players[r[0]].commander);                // the grid's own tweaks, as on the server
     if (G.ctf && r[21]) {                                      // capture the flag: the hero wears what it bought
       const C = COMMANDERS[G.players[r[0]].commander], keys = Object.keys(CTF.items);
       p.items = {}; keys.forEach((k, i) => { p.items[k] = r[21][i] | 0; });
@@ -208,7 +211,8 @@ export function applySnapshot(m) {
   G.snapAt = now;
   G.tick = m.k;
   if (m.p) for (const r of m.p) updatePlayer(r);
-  if (m.tb && G.tb) { G.tb.n = m.tb[0]; G.tb.cur = m.tb[1]; G.tb.deadline = m.tb[2]; }
+  if (m.tb && G.tb) { G.tb.n = m.tb[0]; G.tb.cur = m.tb[1]; G.tb.deadline = m.tb[2]; G.tb.team = m.tb[3] ?? -1; G.tb.ended = m.tb[4] || 0; }
+  if (m.mk) { G.market = { food: m.mk[0] / 1000, wood: m.mk[1] / 1000, spice: m.mk[2] / 1000, salt: m.mk[3] / 1000 }; G.marketAt = performance.now(); }
   if (G.ctf) {
     if (m.ctf) { G.ctf.caps = m.ctf.caps || {}; G.ctf.sudden = !!m.ctf.sudden; G.ctf.lvl = m.ctf.lvl || 0; }
     if (m.flags) for (const r of m.flags) { const f = G.ctf.flags.find((x) => x.team === r[0]); if (!f) continue; f.state = r[1]; f.carrier = r[4]; f.dropAt = r[5]; if (r[1] !== 1) { f.x = r[2] / G.Q; f.y = r[3] / G.Q; } }

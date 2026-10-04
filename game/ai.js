@@ -4,7 +4,7 @@
 //  game.command), so it cannot cheat on resources. It does read the full game
 //  state, i.e. it is not limited by fog of war.
 // ============================================================================
-import { RES, TICK_RATE, COMMANDERS, TECHS, BUILDINGS, ULT_AGE, techCost } from './data.js';
+import { RES, TICK_RATE, COMMANDERS, TECHS, BUILDINGS, ULT_AGE, MARKET, techCost } from './data.js';
 
 const LEVELS = {
   easy: {
@@ -88,6 +88,7 @@ export class Bot {
     } else this.hopeless = 0;
     this.reserve = null;
     this.strategy();
+    this.market();
     this.economy();
     this.builders();
     this.military();
@@ -209,6 +210,7 @@ export class Bot {
       const veh = P.commander === 'zara';
       wants.push(veh ? 'garage' : 'sauce', 'lab', veh ? 'sauce' : 'garage');
     }
+    if (a >= 2 && L.techs) wants.push('market');
     if (a >= 3) wants.push('restaurant', 'workshop');
     for (const t of wants) {
       if (c.n(t)) continue;
@@ -235,6 +237,22 @@ export class Bot {
     }
   }
 
+  /** At the Farmers Market: swap a big pile for what we are saving up for (or are about to run out of). */
+  market() {
+    const g = this.g, P = this.P, res = P.res;
+    if (!this.c.done('market').length) return;
+    const need = this.reserve || {};
+    let get = null, worst = 0;
+    for (const r of RES) {
+      const want = Math.max(need[r] || 0, r === 'salt' && P.age < 2 ? 0 : 160);
+      if (want - res[r] > worst) { worst = want - res[r]; get = r; }
+    }
+    if (!get) return;
+    let give = null, most = 450;
+    for (const r of RES) if (r !== get && res[r] - (need[r] || 0) > most) { most = res[r] - (need[r] || 0); give = r; }
+    if (give) g.command(P.idx, { c: 'mkt', give, get, n: 1 });
+  }
+
   // ------------------------------------------------------------------ economy
   weights() {
     const P = this.P, a = P.age;
@@ -245,7 +263,7 @@ export class Bot {
     if (this.c.cooks.length <= 5) { W.food = 0.7; W.wood = 0.3; W.spice = 0; W.salt = 0; }   // rebuilding from scratch
     if (a >= 2) W.wood += 0.04;
     if (P.res.food < 120 && P.res.wood < 120 && !this.g.findNode('veg', P.home.x, P.home.y, 22) && !this.g.findNode('fish', P.home.x, P.home.y, 20)) W.wood *= 2;   // gardens need firewood
-    if (a >= 3 && !this.c.n('restaurant') && P.res.salt < 380) W.salt = 0.16;
+    if (a >= 3 && !this.c.n('restaurant') && P.res.salt < 520) W.salt = 0.16;
     else if (a >= 2 && P.res.salt > 500) W.salt = 0.02;
     let sum = 0;
     for (const r of RES) {

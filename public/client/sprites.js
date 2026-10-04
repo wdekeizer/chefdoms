@@ -1254,6 +1254,28 @@ const B_ART = dict({
     scaled(c, 2.52, 2.9, 0.68, () => catapultArt(c, WOOD, 'idle', 0, true));
     logPiece(c, 2.3, 1.72, 0.5, 0.075, 0); logPiece(c, 2.34, 1.57, 0.44, 0.07, 0); logPiece(c, 2.28, 1.87, 0.54, 0.075, 0);
   },
+  market(c, tc) {                                  // two market stalls under striped awnings, a balance on the sign
+    pad(c, 3); bshadow(c, 0.22, 1.0, 2.8, 2.8);
+    box(c, 0.2, 0.86, 2.6, 1.2, 0.05, WOOD_L); for (let y = 1.0; y < 2.0; y += 0.2) pen(c, dk(WOOD_L, 0.14), LW, [0.24, y, 2.76, y]);   // back boards
+    for (const x of [0.26, 1.44, 1.56, 2.74]) limb(c, x, 2.7, x, 0.92, 0.07, WOOD_D);                                               // posts
+    awning(c, 0.16, 1.48, 0.7, 1.12, tc, 5); awning(c, 1.52, 2.84, 0.7, 1.12, tc, 5);
+    // left stall: produce
+    box(c, 0.2, 2.0, 1.32, 0.66, 0.04, WOOD); pen(c, WOOD_D, LW * 1.2, [0.22, 2.22, 1.5, 2.22]); box(c, 0.16, 1.94, 1.4, 0.1, 0.03, WOOD_L);
+    crate(c, 0.3, 1.94, 0.5, 0.3); crate(c, 0.9, 1.94, 0.5, 0.3);
+    for (let i = 0; i < 4; i++) { ball(c, 0.38 + i * 0.11, 1.62, 0.07, '#e5402e'); ball(c, 0.98 + i * 0.11, 1.62, 0.07, i % 2 ? '#6dbb4a' : '#8fd05a'); }
+    carrot(c, 0.62, 1.5, 0.45, PI / 2 - 0.4); carrot(c, 1.22, 1.5, 0.45, PI / 2 + 0.3);
+    // right stall: spice sacks and a heap of salt
+    box(c, 1.48, 2.0, 1.32, 0.66, 0.04, WOOD); pen(c, WOOD_D, LW * 1.2, [1.5, 2.22, 2.78, 2.22]); box(c, 1.44, 1.94, 1.4, 0.1, 0.03, WOOD_L);
+    sack(c, 1.74, 1.92, 0.95, '#c98a4a'); ell(c, 1.74, 1.6, 0.11, 0.05, '#d8452a', 0, LW * 0.7);
+    sack(c, 2.06, 1.92, 0.95, '#b7743c'); ell(c, 2.06, 1.6, 0.11, 0.05, '#f2b531', 0, LW * 0.7);
+    c.beginPath(); c.moveTo(2.22, 1.92); c.quadraticCurveTo(2.48, 1.46, 2.72, 1.92); c.closePath(); ink(c, '#f4f6f8');                 // salt
+    // the sign: a balance
+    limb(c, 1.5, 0.74, 1.5, 0.5, 0.06, WOOD_D);
+    roundSign(c, 1.5, 0.26, 0.34, '#fff8ea', () => {
+      pen(c, IRON, 0.05, [0, -0.3, 0, 0.3]); pen(c, IRON, 0.05, [-0.32, -0.16, 0.32, -0.16]); pen(c, IRON, 0.035, [-0.16, 0.3, 0.16, 0.3]);
+      for (const sx of [-0.28, 0.28]) { pen(c, IRON, 0.025, [sx, -0.16, sx - 0.1, 0.06]); pen(c, IRON, 0.025, [sx, -0.16, sx + 0.1, 0.06]); c.beginPath(); c.moveTo(sx - 0.14, 0.06); c.quadraticCurveTo(sx, 0.18, sx + 0.14, 0.06); c.closePath(); ink(c, GOLD, 0.025); }
+    });
+  },
   tower(c, tc) {
     pad(c, 2); shadow(c, 1.12, 1.78, 0.86, 0.26, 0.27);
     box(c, 0.2, 1.6, 1.6, 0.3, 0.14, dk(STONE, 0.14)); ell(c, 1, 1.62, 0.8, 0.2, STONE);

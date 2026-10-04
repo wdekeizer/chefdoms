@@ -4,7 +4,7 @@
 import { G, K_UNIT, K_BLDG, canSee, isAlly, maxHp, statsOf, updateFog, isSpectator, campOf } from './state.js';
 import * as SPR from './sprites.js';
 import { BUILDINGS, RES, TILE, PLAYER_COLORS, AURA_RADIUS, COMMANDERS, BUFFS, NODES, RES_INFO, TB, CTF, NEUTRAL_COLOR } from '/game/data.js';
-import { T as TAC, flagsOf, F_DONE, myTurn, nodeIncome } from './tactics.js';
+import { T as TAC, flagsOf, F_DONE, myTurn, playing, nodeIncome } from './tactics.js';
 
 export const ZOOMS = [16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96];   // device px per tile (sprite cache buckets)
 const ANIMS = ['idle', 'walk', 'attack', 'gather', 'build', 'heal'];
@@ -150,7 +150,8 @@ function drawFog(now) {
 // ------------------------------------------------------------------ helpers
 const colorOf = (owner) => (owner >= 0 && G.players[owner] ? (G.players[owner].neutral ? NEUTRAL_COLOR : PLAYER_COLORS[G.players[owner].color % PLAYER_COLORS.length].hex) : '#999999');
 const teamColor = (team) => { const p = G.players.find((q) => q.team === team && !q.neutral); return p ? colorOf(G.players.indexOf(p)) : '#ffffff'; };
-const BUFF_GLOW = { service: '#ffb347', mangia: '#7dff8a', lowslow: '#c9c9c9', sugar: '#ff9ad5', feast: '#fff0a8', stun: '#d98a1c', fry: '#ff9a3c', chill: '#9fe3ff', brace: '#d0d8e0', lastcall: '#ff5a4d', storm: '#f4f8fa', bark: '#b07a4a', energy: '#ffd27a' };
+const BUFF_GLOW = { service: '#ffb347', mangia: '#7dff8a', lowslow: '#c9c9c9', sugar: '#ff9ad5', feast: '#fff0a8', stun: '#d98a1c', fry: '#ff9a3c', chill: '#9fe3ff', brace: '#d0d8e0', lastcall: '#ff5a4d', storm: '#f4f8fa', bark: '#b07a4a', energy: '#ffd27a', b_pepper: '#ff4a2a', b_sugar: '#ff7ae0' };
+const BUFF_CAMP_COL = { pepper: '#ff5a3a', sugar: '#ff8ad8' };
 
 /** A flag on a pole, planted at (x,y) (its foot). `wave` animates the cloth. */
 function drawFlag(x, y, s, color, wave, k = 1) {
@@ -332,10 +333,11 @@ export function render(now) {
     }
     for (const k of ctf.camps) {
       if (k.x < x0 - 4 || k.x > x1 + 4 || k.y < y0 - 4 || k.y > y1 + 4 || !G.fogExp[(k.y | 0) * G.w + (k.x | 0)]) continue;
-      const boss = k.type === 'critic';
-      ctx.beginPath(); ctx.arc(ox + k.x * s, oy + k.y * s, (boss ? 3.2 : 2.4) * s, 0, Math.PI * 2);
+      const boss = k.type === 'critic', bc = BUFF_CAMP_COL[k.type];
+      ctx.beginPath(); ctx.arc(ox + k.x * s, oy + k.y * s, (boss ? 3.2 : bc ? 2.9 : 2.4) * s, 0, Math.PI * 2);
       ctx.fillStyle = k.alive ? (boss ? 'rgba(120,40,30,0.16)' : 'rgba(60,40,30,0.12)') : 'rgba(255,255,255,0.08)'; ctx.fill();
-      ctx.setLineDash([s * 0.18, s * 0.22]); ctx.lineWidth = Math.max(1, s / 26); ctx.strokeStyle = k.alive ? (boss ? 'rgba(255,120,90,0.7)' : 'rgba(255,240,200,0.5)') : 'rgba(255,255,255,0.3)'; ctx.stroke(); ctx.setLineDash([]);
+      if (bc && k.alive) { ctx.fillStyle = bc; ctx.globalAlpha = 0.12 + 0.05 * Math.sin(now / 400); ctx.fill(); ctx.globalAlpha = 1; }   // a buff camp glows
+      ctx.setLineDash([s * 0.18, s * 0.22]); ctx.lineWidth = Math.max(1, s / (bc ? 16 : 26)); ctx.strokeStyle = k.alive ? (boss ? 'rgba(255,120,90,0.7)' : bc || 'rgba(255,240,200,0.5)') : 'rgba(255,255,255,0.3)'; ctx.stroke(); ctx.setLineDash([]);
     }
     for (const f of ctf.flags) {                               // the stand
       ctx.beginPath(); ctx.ellipse(ox + f.hx * s, oy + f.hy * s, s * 0.7, s * 0.4, 0, 0, Math.PI * 2); ctx.fillStyle = '#d8c8a8'; ctx.fill(); ctx.lineWidth = Math.max(1, s / 20); ctx.strokeStyle = teamColor(f.team); ctx.stroke();
@@ -355,6 +357,13 @@ export function render(now) {
   for (const id of sel) {
     const e = G.ents.get(id);
     if (!e) continue;
+    if (tac && e.kind === K_BLDG && e.owner === G.me && e.trally) {        // turn-based: the side its recruits walk out
+      const rx = ox + (e.trally[0] + 0.5) * s, ry = oy + (e.trally[1] + 0.5) * s;
+      ctx.setLineDash([s * 0.12, s * 0.1]); ctx.lineWidth = Math.max(1.5, s / 22); ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.beginPath(); ctx.moveTo(ox + e.x * s, oy + e.y * s); ctx.lineTo(rx, ry); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#3a2a20'; ctx.fillRect(rx - s * 0.03, ry - s * 0.42, s * 0.05, s * 0.42);
+      ctx.fillStyle = colorOf(e.owner); ctx.beginPath(); ctx.moveTo(rx + s * 0.02, ry - s * 0.42); ctx.lineTo(rx + s * 0.3, ry - s * 0.33); ctx.lineTo(rx + s * 0.02, ry - s * 0.22); ctx.fill();
+    }
     if (e.kind === K_BLDG && e.owner === G.me && e.rally) {
       const rx = ox + (e.rally[0] / G.Q) * s, ry = oy + (e.rally[1] / G.Q) * s;
       ctx.setLineDash([s * 0.2, s * 0.15]); ctx.lineWidth = Math.max(1.5, s / 20); ctx.strokeStyle = 'rgba(255,255,255,0.75)';
@@ -441,7 +450,7 @@ export function render(now) {
       if (e.kind === K_UNIT) {
         const sx = ox + e.rx * s, sy = oy + (e.ry + foot) * s;
         const hero = e.type.startsWith('hero_');
-        const spent = tac && e.owner === G.tb.cur && (flagsOf(e) & F_DONE) && !G.over;        // has finished for this turn: drawn faded
+        const spent = tac && playing(e.owner) && (flagsOf(e) & F_DONE) && !G.over;        // has finished for this turn: drawn faded
         if (sel.has(e.id)) ring(sx, sy, e.r * s * 1.25, e.r * s * 0.75, selColor(e), lw);
         else if (e.id === G.hover) { ctx.globalAlpha = 0.55; ring(sx, sy, e.r * s * 1.25, e.r * s * 0.75, '#ffffff', lw * 0.7); ctx.globalAlpha = 1; }
         if (e.bm) {
@@ -583,7 +592,8 @@ export function render(now) {
     for (const k of ctf.camps) {                               // who lives where, and when they are back
       if (k.x < x0 - 3 || k.x > x1 + 3 || k.y < y0 - 3 || k.y > y1 + 3 || !G.fogExp[(k.y | 0) * G.w + (k.x | 0)] || s < 20) continue;
       const def = CTF.camps[k.type], fs = Math.max(10 * dpr, s * 0.26);
-      const text = k.alive ? `${def.name}${k.level ? ' · Lv ' + (k.level + 1) : ''}` : `${def.name} · back in ${Math.max(0, Math.ceil((k.nextAt - G.tick) / G.tickRate))}s`;
+      const name = def.buff ? `${def.name} (${def.buffName})` : def.name;
+      const text = k.alive ? `${name}${k.level ? ' · Lv ' + (k.level + 1) : ''}` : `${name} · back in ${Math.max(0, Math.ceil((k.nextAt - G.tick) / G.tickRate))}s`;
       ctx.globalAlpha = k.alive ? 0.85 : 0.55; label(text, ox + k.x * s, oy + (k.y - (k.type === 'critic' ? 3.1 : 2.3)) * s, fs, k.alive ? '#fff8ea' : '#d8c8a8'); ctx.globalAlpha = 1;
     }
   }
@@ -708,15 +718,19 @@ function drawMinimap(now, x0, y0, x1, y1) {
     mmCtx.fillRect(e.rx * k - big / 2, e.ry * k - big / 2, big, big);
   }
   if (G.ctf) {
-    for (const c of G.ctf.camps) { mmCtx.fillStyle = c.alive ? '#f0b41c' : '#6b5a40'; mmCtx.fillRect(c.x * k - k, c.y * k - k, k * 2, k * 2); }
+    for (const c of G.ctf.camps) { const bc = BUFF_CAMP_COL[c.type], r = bc ? 1.5 : 1; mmCtx.fillStyle = c.alive ? bc || '#f0b41c' : '#6b5a40'; mmCtx.fillRect(c.x * k - k * r, c.y * k - k * r, k * 2 * r, k * 2 * r); }
   }
   if (!(G.opts.fog === 'off' || isSpectator()) && fogCv) { mmCtx.imageSmoothingEnabled = true; mmCtx.drawImage(fogCv, 0, 0, S, S); }
   if (G.ctf) {
-    for (const f of G.ctf.flags) {                             // flags show through the fog: everyone knows where they are
-      const col = teamColor(f.team), px = f.x * k, py = f.y * k, r = Math.max(3.5, k * 1.6);
+    for (const f of G.ctf.flags) {                             // flags on their stands show through the fog; a carried one only where it was last seen
+      let fx = f.x, fy = f.y, faded = false;
+      if (f.state === 1) { const u = G.ents.get(f.carrier); if (u && canSee(u)) { fx = f.x = u.rx; fy = f.y = u.ry; } else faded = true; }
+      mmCtx.globalAlpha = faded ? 0.5 : 1;
+      const col = teamColor(f.team), px = fx * k, py = fy * k, r = Math.max(3.5, k * 1.6);
       mmCtx.fillStyle = '#1b1411'; mmCtx.beginPath(); mmCtx.moveTo(px, py - r * 1.6); mmCtx.lineTo(px + r * 1.4, py - r * 0.8); mmCtx.lineTo(px, py); mmCtx.closePath(); mmCtx.fill();
       mmCtx.fillStyle = col; mmCtx.beginPath(); mmCtx.moveTo(px, py - r * 1.45); mmCtx.lineTo(px + r * 1.05, py - r * 0.8); mmCtx.lineTo(px, py - r * 0.15); mmCtx.closePath(); mmCtx.fill();
       mmCtx.strokeStyle = f.state === 1 ? '#ffffff' : '#1b1411'; mmCtx.lineWidth = Math.max(1, S / 160); mmCtx.beginPath(); mmCtx.moveTo(px, py); mmCtx.lineTo(px, py - r * 1.7); mmCtx.stroke();
+      mmCtx.globalAlpha = 1;
     }
   }
   for (let i = G.pings.length - 1; i >= 0; i--) {

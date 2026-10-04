@@ -6,7 +6,7 @@
 import {
   TICK_RATE, DT, RES, TILE, TREE_WOOD, NODES, BUILDINGS, TECHS, COMMANDERS, BUFFS,
   AURA_RADIUS, ZARA_TIP, HERO_RESPAWN, START_RES, MAP_SIZES, mapSizeFor,
-  GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, FORMATIONS, ULT_AGE, CTF,
+  GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, FORMATIONS, ULT_AGE, CTF, MARKET, marketQuote,
   computeStats, techCost, techTime, trainList,
 } from './data.js';
 import { Pathfinder } from './pathfinding.js';
@@ -66,6 +66,8 @@ export class Game {
     this.touched = [];
     this._near = [];
     this.over = null;
+    this.market = { food: 1, wood: 1, spice: 1, salt: 1 };     // price factors at the Farmers Market, shared by everyone
+    this._mkSig = '';
 
     for (const n of map.nodes) this.addNode(n.type, n.tx, n.ty);
     this.players = opts.players.map((p, idx) => this.makePlayer(p, idx));
@@ -213,8 +215,32 @@ export class Game {
     this.cleanup();
     if (tick % 20 === 0) this.checkVictory();
     if (tick % this.tl.every === 0) this.sample();
+    if (tick % (10 * TICK_RATE) === 0) this.driftMarket(MARKET.driftRt);
     for (const P of this.players) if (P.ai && P.alive && !this.over) P.ai.update();
   }
+
+  // ==========================================================================
+  //  The Farmers Market
+  // ==========================================================================
+  hasMarket(P) { for (const b of this.bldgs) if (!b.dead && b.done && b.owner === P.idx && b.type === 'market') return true; return false; }
+  /** Hand over `lots` x 100 of one ingredient for another. Returns how much came back. */
+  trade(P, give, get, lots) {
+    if (typeof give !== 'string' || typeof get !== 'string' || give === get || !RES.includes(give) || !RES.includes(get)) return 0;
+    if (!this.hasMarket(P)) { this.events.push(['note', P.idx, 'market']); return 0; }
+    const n = Math.max(1, Math.min(10, lots | 0)), m = this.market;
+    let done = 0, got = 0;
+    for (; done < n; done++) {
+      if (P.res[give] < MARKET.lot) { if (!done) this.events.push(['note', P.idx, 'res']); break; }
+      const q = marketQuote(m, give, get);
+      P.res[give] -= MARKET.lot; P.res[get] += q; got += q;
+      m[give] = Math.max(MARKET.min, m[give] * (1 - MARKET.step));       // more of it about: cheaper
+      m[get] = Math.min(MARKET.max, m[get] * (1 + MARKET.step));         // snapped up: dearer
+    }
+    if (done) this.events.push(['trade', P.idx, give, get, done * MARKET.lot, got]);
+    return got;
+  }
+  driftMarket(k) { for (const r of RES) this.market[r] += (1 - this.market[r]) * k; }
+  marketRec() { return RES.map((r) => Math.round(this.market[r] * 1000)); }
 
   rebuildHash() {
     const t = this.touched;
@@ -1145,6 +1171,8 @@ export class Game {
   kitOf(P) { const C = COMMANDERS[P.commander]; return { ability: C.ability, ultimate: C.ultimate }; }
   cdMul() { return 1; }
   ultCdMul() { return 1; }
+  /** Seconds of cooldown for an ability (ult = it is the ultimate). */
+  cdOf(A, ult) { return A.cd * (ult ? this.ultCdMul() : this.cdMul()); }
   ultLocked(P) { return P.age < ULT_AGE; }
   ultLevel(P) { return P.age - ULT_AGE; }
   heroRespawnTicks(P) { return HERO_RESPAWN[P.age] * TICK_RATE; }
@@ -1230,7 +1258,7 @@ export class Game {
         P.lunchUntil = this.tick + A.dur * TICK_RATE;
         break;
     }
-    P.abilityReady = this.tick + Math.round(A.cd * this.cdMul() * TICK_RATE);
+    P.abilityReady = this.tick + Math.round(this.cdOf(A, false) * TICK_RATE);
     this.updateBuffs(false);
     this.events.push(['ability', P.idx, A.key, Math.round(fxX * POS_Q), Math.round(fxY * POS_Q)]);
     return true;
@@ -1312,7 +1340,7 @@ export class Game {
       }
       default: return false;
     }
-    P.ultReady = this.tick + Math.round(U.cd * this.ultCdMul() * TICK_RATE);
+    P.ultReady = this.tick + Math.round(this.cdOf(U, true) * TICK_RATE);
     this.updateBuffs(false);
     this.events.push(['ult', P.idx, U.key, Math.round(fxX * POS_Q), Math.round(fxY * POS_Q)]);
     return true;
@@ -1709,6 +1737,7 @@ export class Game {
 
       case 'ab': this.useAbility(P); break;
       case 'ul': this.useUltimate(P); break;
+      case 'mkt': this.trade(P, c.give, c.get, c.n); break;
       case 'rg': this.eliminate(P); this.checkVictory(); break;
     }
   }
@@ -1804,6 +1833,8 @@ export class Game {
       if (s !== P._sig) { P._sig = s; p.push(rec); }
     }
     if (p.length) out.p = p;
+    const mk = this.marketRec(), mks = mk.join();
+    if (mks !== this._mkSig) { this._mkSig = mks; out.mk = mk; }
     if (this.events.length) { out.ev = this.events; this.events = []; }
     return out;
   }
@@ -1818,7 +1849,7 @@ export class Game {
     }
     for (const b of this.bldgs) if (!b.dead) e.push(this.bldgRec(b));
     for (const n of this.nodes) if (!n.dead) e.push(this.nodeRec(n));
-    return { t: 's', k: this.tick, full: 1, e, p: this.players.map((P) => this.playerRec(P)) };
+    return { t: 's', k: this.tick, full: 1, e, p: this.players.map((P) => this.playerRec(P)), mk: this.marketRec() };
   }
 
   /** Static match description sent once when the match starts (or on reconnect). */

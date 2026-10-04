@@ -2,18 +2,19 @@
 //  CHEFDOMS — bots for Capture the Flag. Each bot steers one hero through the
 //  same orders a player has: farm camps for Tips, shop at the kitchen, run for
 //  a flag when the coast is clear, chase whoever has ours, and fight when the
-//  odds are good. Bots see the whole map.
+//  odds are good. Bots only know about enemy heroes their team can see; a flag
+//  carrier out of sight is tracked by the same minimap reveals players get.
 // ============================================================================
 import { TICK_RATE, COMMANDERS, CTF, ctfItemCost, ctfKit } from './data.js';
 import { ITEM_KEYS } from './ctf.js';
 
 const LEVELS = {
-  easy:    { think: 16, retreat: 0.22, run: 0.25, brave: 0.8, ability: 0.5, shopEvery: 2, danger: 1.5 },
-  normal:  { think: 10, retreat: 0.3, run: 0.5, brave: 1.0, ability: 0.85, shopEvery: 1, danger: 2.2 },
-  hard:    { think: 7, retreat: 0.33, run: 0.7, brave: 1.1, ability: 1, shopEvery: 1, danger: 2.8 },
-  extreme: { think: 5, retreat: 0.35, run: 0.85, brave: 1.2, ability: 1, shopEvery: 1, danger: 3.2, gatherBonus: 1.25 },
+  easy:    { think: 16, retreat: 0.22, run: 0.25, brave: 0.8, ability: 0.5, shopEvery: 2, danger: 1.5, react: 40 },
+  normal:  { think: 10, retreat: 0.3, run: 0.5, brave: 1.0, ability: 0.85, shopEvery: 1, danger: 2.2, react: 24 },
+  hard:    { think: 7, retreat: 0.33, run: 0.7, brave: 1.1, ability: 1, shopEvery: 1, danger: 2.8, react: 14 },
+  extreme: { think: 5, retreat: 0.35, run: 0.85, brave: 1.2, ability: 1, shopEvery: 1, danger: 3.2, gatherBonus: 1.25, react: 8 },
 };
-const DANGER = { dishpit: 1, cooks: 2.2, sauce: 3, riders: 3, brutes: 5, critic: 8 };
+const DANGER = { dishpit: 1, cooks: 2.2, sauce: 3, riders: 3, brutes: 5, pepper: 6, sugar: 6, critic: 8 };
 // what each hero likes to buy first
 const WANTS = {
   hero_dolly: ['stew', 'whites', 'skillet', 'herbs', 'espresso', 'clogs'],
@@ -31,7 +32,7 @@ export class CtfBot {
     this.level = LEVELS[level] ? level : 'normal';
     this.L = LEVELS[this.level];
     player.gatherBonus = this.L.gatherBonus || 1;
-    this.nextAt = 0; this.job = null; this.jobUntil = 0; this.lastOrder = '';
+    this.nextAt = 0; this.job = null; this.jobUntil = 0; this.lastOrder = ''; this.spotted = null;
     this.rng = (() => { let a = (player.idx * 7919 + 13) >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
   }
 
@@ -82,11 +83,16 @@ export class CtfBot {
       if (!h || h === hero) continue;
       const d = Math.hypot(h.x - hero.x, h.y - hero.y);
       if (Q.team === P.team) { c.allies.push([d, h]); continue; }
+      if (!g.seenBy(P.team, h)) continue;                                                        // out of sight, out of mind
       const fb = g.baseOf.get(Q.team);
       c.foes.push([d, h, Q, Math.hypot(h.x - fb.x, h.y - fb.y) <= CTF.fountain.radius + 1]);     // [distance, hero, player, safe at its own kitchen]
     }
     c.foes.sort((a, b) => a[0] - b[0]); c.allies.sort((a, b) => a[0] - b[0]);
-    if (c.myFlag && c.myFlag.state === 1) c.carrier = g.ents.get(c.myFlag.carrier) || null;
+    if (c.myFlag && c.myFlag.state === 1) {
+      const u = g.ents.get(c.myFlag.carrier) || null;
+      if (u && !u.dead && g.seenBy(P.team, u)) c.carrier = u;
+      else if (c.myFlag.lastSeen && g.tick - c.myFlag.lastSeen.tick < (CTF.reveal + 3) * TICK_RATE) c.lastSeen = c.myFlag.lastSeen;   // where it was taken, or the last minimap reveal
+    }
     c.hpFrac = hero.hp / hero.S.hp;
     c.atHome = Math.hypot(hero.x - c.base.x, hero.y - c.base.y) <= CTF.fountain.radius;
     return c;
@@ -113,11 +119,20 @@ export class CtfBot {
       if (near.length) { this.attack(hero, near[0][1]); return; }
       if (c.hpFrac < 0.9) { if (hero.order) this.order({ c: 'st', ids: [hero.id] }); return; }
     }
-    // 3. someone has our flag: run them down
+    // 3. someone has our flag: run them down once we have seen them (it takes a moment to react)...
     if (c.carrier && !c.carrier.dead) {
+      if (!this.spotted || this.spotted.id !== c.carrier.id) this.spotted = { id: c.carrier.id, tick: g.tick };
       const d = Math.hypot(c.carrier.x - hero.x, c.carrier.y - hero.y);
       const others = c.allies.filter((a) => Math.hypot(a[1].x - c.carrier.x, a[1].y - c.carrier.y) < d - 3).length;
-      if (d < 30 || others === 0) { this.attack(hero, c.carrier); return; }
+      if (g.tick - this.spotted.tick >= L.react && (d < 30 || others === 0)) { this.attack(hero, c.carrier); return; }
+    } else {
+      this.spotted = null;
+      // ...out of sight: whoever of us is closest goes to look where it was last seen; the others carry on
+      if (c.lastSeen) {
+        const ls = c.lastSeen, d = Math.hypot(ls.x - hero.x, ls.y - hero.y);
+        const closer = c.allies.some((a) => Math.hypot(a[1].x - ls.x, a[1].y - ls.y) < d);
+        if (!closer && d < 45 && d > 2) { this.moveTo(hero, ls.x, ls.y, 'hunt' + ls.tick); return; }
+      }
     }
     // 3b. an intruder near our flag stand while we are close and healthy: see them off
     if (c.myFlag && c.myFlag.state === 0 && c.hpFrac > 0.5) {
@@ -173,8 +188,8 @@ export class CtfBot {
       const danger = DANGER[k.type] || 2;
       if (danger > allowed) continue;
       const d = Math.hypot(k.x - hero.x, k.y - hero.y);
-      // the critic is worth a trip; other camps near enemy kitchens are not
-      let s = d - danger * 2.5;
+      // the critic and the buff camps are worth a trip; other camps near enemy kitchens are not
+      let s = d - danger * 2.5 - (CTF.camps[k.type].buff ? 12 : 0);
       for (const b of g.baseOf.values()) if (b.team !== P.team && Math.hypot(k.x - b.x, k.y - b.y) < 12) s += 20;
       if (s < bs) { bs = s; camp = k; }
     }

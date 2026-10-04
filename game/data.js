@@ -7,7 +7,7 @@
 //  (Restart the server afterwards; everyone must reload the page.)
 // ============================================================================
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 export const TICK_RATE = 20;            // simulation ticks per second
 export const DT = 1 / TICK_RATE;
 export const MAX_PLAYERS = 10;
@@ -50,6 +50,7 @@ export const OPTIONS = {
   fog:      { label: 'Fog of war', def: 'on', choices: { on: 'On', explored: 'Map revealed', off: 'Off' } },
   victory:  { label: 'Victory', def: 'hq', choices: { hq: 'Destroy the Kitchen HQ', conquest: 'Conquest (every station)' } },
   turnTime: { label: 'Turn timer (turn-based)', def: '0', choices: { '0': 'No limit', '60': '1 minute', '90': '90 seconds', '120': '2 minutes', '180': '3 minutes' } },
+  turnOrder: { label: 'Turn order (turn-based)', def: 'player', choices: { player: 'One kitchen at a time', team: 'Team-mates play at the same time' } },
   turnLimit: { label: 'Round limit (turn-based)', def: '0', choices: { '0': 'Play to the end', '30': '30 rounds, best score wins', '50': '50 rounds, best score wins', '80': '80 rounds, best score wins' } },
   ctfCaps:  { label: 'Captures to win (CTF)', def: '3', choices: { '3': 'First to 3 captures', '5': 'First to 5 captures', '7': 'First to 7 captures' } },
   ctfTime:  { label: 'Time limit (CTF)', def: '15', choices: { '10': '10 minutes', '15': '15 minutes', '20': '20 minutes' } },
@@ -300,6 +301,10 @@ export const BUILDINGS = {
     name: 'Catering Workshop', desc: 'Builds siege: Meatball Catapults and Battering Baguettes.',
     size: 3, hp: 1100, cost: { wood: 180, spice: 60 }, time: 34, age: 3, trains: ['catapult', 'ram'],
   }),
+  market: B({
+    name: 'Farmers Market', desc: 'Trade ingredients for each other. Prices move: whatever everyone sells gets cheaper, whatever everyone buys gets dearer, and they drift back over time.',
+    size: 3, hp: 1200, cost: { wood: 175 }, time: 35, age: 2, sight: 4, tags: ['bldg', 'market'],
+  }),
   tower: B({
     name: 'Pepper Mill Tower', desc: 'Defensive tower. Grinds peppercorns at anything hostile in range.',
     size: 2, hp: 850, armor: 3, parmor: 9, cost: { wood: 50, salt: 110 }, time: 32, age: 2,
@@ -307,7 +312,7 @@ export const BUILDINGS = {
   }),
   restaurant: B({
     name: 'Signature Restaurant', desc: 'Your flagship and your strongest defence: hurls three plates per volley at anything hostile. Trains your commander\'s unique unit.',
-    size: 4, hp: 2800, armor: 4, parmor: 10, cost: { wood: 250, salt: 350 }, time: 60, age: 3,
+    size: 4, hp: 2800, armor: 4, parmor: 10, cost: { wood: 250, salt: 500 }, time: 60, age: 3,
     atk: 11, range: 8, reload: 1.6, proj: 'plate', shots: 3, sight: 10, trains: ['unique'], techs: ['elite', 'cheftable'], tags: ['bldg', 'def'],
   }),
 };
@@ -426,6 +431,8 @@ export const BUFFS = {
   a_ingrid: { bit: 2097152, speedMul: 0.9, hostile: true },
   a_rafa:   { bit: 4194304, atkMul: 1.12 },
   energy:   { bit: 8388608, regenFrac: 0.35 / 4 },                  // an Energy Bar: 35% over 4 seconds
+  b_pepper: { bit: 16777216, atkMul: 1.2, reloadMul: 0.9 },         // Ghost Pepper (the top buff camp)
+  b_sugar:  { bit: 33554432, speedMul: 1.15, regenFrac: 0.01 },     // Sugar High (the bottom buff camp)
 };
 export const ULT_AGE = 3;                 // ultimates unlock in the Bistro Age
 export const AURA_RADIUS = 6.5;
@@ -535,8 +542,8 @@ export const COMMANDERS = {
     aura: { key: 'a_odile', name: 'Sweet Tooth', desc: 'Units near Odile move 12% faster.', tb: 'Units within 2 tiles of Odile at the start of your turn get +1 movement.' },
     ability: { key: 'sugar', name: 'Sugar Rush', cd: 90, dur: 15, radius: 0,
       desc: 'Everyone gets dessert first. ALL your units move 40% faster and Prep Cooks gather 40% faster for 15s.',
-      tb: 'ALL your units that have not moved yet get +2 movement this turn, and your stations pay 40% more at the start of your next turn.' },
-    ultimate: { key: 'glass', name: 'Sugar Glass', cd: 170, dur: 6, radius: 8,
+      tb: 'ALL your units that have not moved yet get +2 movement this turn, and your stations pay 20% more at the start of your next turn.' },
+    ultimate: { key: 'glass', name: 'Sugar Glass', cd: 170, ctfCd: 130, dur: 6, radius: 8,
       desc: 'A wave of molten caramel. Every enemy unit within 8 tiles is stuck fast for 6s (commanders for 3s): it cannot move or attack.',
       tb: 'Every enemy unit within 3 tiles of Odile is stuck in caramel and misses its next turn (commanders can still move, but not attack).' },
     quotes: ['Precision, darling. This is not a stew.', 'Butter is not an ingredient. It is a philosophy.', 'Let them eat cake. Quickly.'],
@@ -604,9 +611,9 @@ export const COMMANDERS = {
     bonuses: ['Ranged', 'Slows everything she touches', 'Freezes crowds'],
     mods: [],
     aura: { key: 'a_ingrid', name: 'Cold Front', desc: 'Enemies near Ingrid move 10% slower.' },
-    ability: { key: 'chill', name: 'Brain Freeze', cd: 55, dur: 5, radius: 6,
+    ability: { key: 'chill', name: 'Brain Freeze', cd: 55, ctfCd: 32, dur: 5, radius: 6,
       desc: 'Every enemy within 6 tiles of Ingrid moves 50% slower and attacks 40% slower for 5s.', tb: '' },
-    ultimate: { key: 'freeze', name: 'Deep Freeze', cd: 160, dur: 3, radius: 7,
+    ultimate: { key: 'freeze', name: 'Deep Freeze', cd: 160, ctfCd: 125, dur: 3, radius: 7,
       desc: 'Every enemy within 7 tiles of Ingrid is frozen solid for 3s (heroes 2s) and chilled for 6s after that.', tb: '' },
     quotes: ['Chill.', 'Service is at minus eighteen.', 'You will wait your turn, and you will like it.'],
   },
@@ -621,7 +628,7 @@ export const COMMANDERS = {
     aura: { key: 'a_rafa', name: "Sharpshooter's Eye", desc: 'Friendly heroes near Rafa deal 12% more damage.' },
     ability: { key: 'snipe', name: 'Hot Shot', cd: 45, radius: 12, dmg: 70, dmgPerAge: 20,
       desc: 'A single scalding ladle at the most wounded enemy hero within 12 tiles (the nearest enemy if none): heavy damage that ignores armour.', tb: '' },
-    ultimate: { key: 'flood', name: 'Sauce Flood', cd: 150, dur: 3, radius: 13, dmg: 110, dmgPerAge: 30, width: 2.2,
+    ultimate: { key: 'flood', name: 'Sauce Flood', cd: 150, ctfCd: 110, dur: 3, radius: 13, dmg: 110, dmgPerAge: 30, width: 2.2,
       desc: 'A tidal wave of sauce 13 tiles long towards the nearest enemy: everything in its path takes heavy damage and is chilled for 3s.', tb: '' },
     quotes: ['One ladle is enough.', 'Breathe out. Pour.', 'I never spill.'],
   },
@@ -718,7 +725,13 @@ export const TB = {
   abilityRange: 3,
   cutsRange: 2,
   hqIncome: { food: 25, wood: 25, spice: 15, salt: 0 },
-  income: { veg: 20, wood: 20, spice: 20, salt: 10, fish: 20, garden: 8 },   // per station per turn
+  income: { veg: 20, wood: 25, spice: 20, salt: 10, fish: 20, garden: 8 },   // per station per turn
+  incomeMul: 1.25,         // everything above, times this
+  sugarMul: 1.2,           // Odile's Sugar Rush: stations pay this much more the next turn
+  rangedMul: 1.5,          // ranged units (not siege) hit this much harder than the raw numbers say...
+  rangedHp: 1.4,           // ...and are this much tougher, so they survive a single swing
+  heroHp: { hank: 0.84 },  // per-commander HP adjustment for the grid (Hank: 525 HP in the Diner Age)
+  counters: 1,             // a unit hits back at most this often per enemy turn
   popShare: 0.2,           // the lobby's staff limit is scaled down to suit a grid (100 -> 20)
   healAction: 30,          // HP a Barista restores per action
   repairShare: 0.07,       // share of a station's HP a Prep Cook repairs per action
@@ -729,9 +742,38 @@ export const TB = {
     house: 'Raises your staff limit.',
     hq: 'Heart of your operation: pays a basic income every turn, trains Prep Cooks, advances the age, and throws plates at the nearest intruder at the start of each of your turns.',
     restaurant: 'Your flagship and your strongest defence: three plates at the start of each of your turns, each at a different target. Trains your commander\'s unique unit.',
-    tower: 'Shoots the nearest enemy unit in range at the start of each of your turns.',
+    tower: 'Shoots the nearest enemy in range (units first, then stations) at the start of each of your turns.',
+    market: 'Trade ingredients for each other during your turn. Prices move as everyone trades and drift back every round.',
   },
 };
+/** Turn-based adjustments to a freshly computed stats object (server and browser use the same). */
+export function tbAdjust(stats, cmdKey) {
+  for (const k in stats.units) {
+    const u = stats.units[k];
+    if (u.tags.includes('ranged') && !u.tags.includes('siege') && !u.tags.includes('hero')) u.hp = Math.round(u.hp * TB.rangedHp);
+  }
+  const C = COMMANDERS[cmdKey], mul = TB.heroHp[cmdKey];
+  if (C && mul && stats.units[C.hero]) stats.units[C.hero].hp = Math.round(stats.units[C.hero].hp * mul);
+  return stats;
+}
+
+// ----------------------------------------------------------------------------
+//  THE MARKET: trade 100 of one ingredient for another. Prices are shared by
+//  everyone in the match: selling makes a thing cheaper, buying makes it dearer,
+//  and they drift back towards normal.
+// ----------------------------------------------------------------------------
+export const MARKET = {
+  lot: 100,                                          // ingredients handed over per trade
+  base: { food: 100, wood: 100, spice: 160, salt: 160 },
+  fee: 0.15,                                         // the market keeps a cut
+  step: 0.05,                                        // each trade moves both prices this much
+  min: 0.4, max: 2.5,                                // price factors stay within these
+  driftRt: 0.05,                                     // real time: share of the way back to normal every 10 seconds
+  driftTb: 0.12,                                     // turn-based: ... every round
+};
+/** What `lot` of `give` buys of `get` at the given price factors. */
+export const marketQuote = (factors, give, get, lot = MARKET.lot) =>
+  Math.floor((lot * MARKET.base[give] * factors[give]) / (MARKET.base[get] * factors[get]) * (1 - MARKET.fee));
 /** Movement, reach and sight of a unit on the grid, from its real-time stats. */
 export function tbUnit(S) {
   return {
@@ -840,7 +882,13 @@ export const CTF = {
     riders:  { name: 'Delivery Pirates', units: ['scooter', 'scooter'], bounty: 30, respawn: 70, r: 0.38, ang: 0.55 },
     brutes:  { name: 'Smokehouse Bouncers', units: ['brute', 'pinroller'], bounty: 45, respawn: 85, r: 0.3, ang: 0.95 },
     critic:  { name: 'The Head Critic', units: ['truck'], boss: true, hpMul: 3, atkMul: 1.4, bounty: 160, respawn: 150, r: 0, ang: 0 },
+    // buff camps: one at the top of the map and one at the bottom; whoever lands the last hit wears the buff
+    pepper:  { name: 'The Pepper Patch', units: ['brute'], hpMul: 3.2, atkMul: 1.3, bounty: 70, respawn: 120, lane: 'top',
+      buff: 'b_pepper', buffName: 'Ghost Pepper', buffDur: 90, buffDesc: '+20% damage and 10% faster attacks for 90s (lost if you fall)' },
+    sugar:   { name: 'The Sugar Shack', units: ['pinroller'], hpMul: 3.2, atkMul: 1.3, bounty: 70, respawn: 120, lane: 'bottom',
+      buff: 'b_sugar', buffName: 'Sugar High', buffDesc: '15% faster and 1% health back every second for 90s (lost if you fall)', buffDur: 90 },
   },
+  reveal: 10,              // a flag carrier shows up on everyone's minimap every this many seconds
 };
 /** The ability / ultimate a commander uses in Capture the Flag (a few swap for ones that make sense without a kitchen). */
 export const ctfKit = (C) => ({ ability: C.ctfAbility || C.ability, ultimate: C.ctfUltimate || C.ultimate });

@@ -38,10 +38,17 @@ export function generateCtfMap(teams, seed) {
   // camps: a wedge of them in front of every base, and the boss in the middle
   const wedge = (Math.PI * 2) / teams.length, few = teams.length >= 6;
   const camps = [];
+  // the two buff camps go in first: in the gaps between bases, on opposite sides (with two teams: top and bottom)
+  const gaps = [0, Math.floor(teams.length / 2)];
+  for (const [k, type] of [[gaps[0], 'pepper'], [gaps[1], 'sugar']]) {
+    const a = a0 + ((2 * k + 1) * Math.PI) / teams.length, d = (teams.length === 2 ? 0.78 : 0.62) * R;
+    const x = Math.max(4, Math.min(w - 5, Math.round(c + Math.cos(a) * d))), y = Math.max(4, Math.min(h - 5, Math.round(c + Math.sin(a) * d)));
+    camps.push({ x, y, type, side: 0 });
+  }
   for (const b of bases) {
     for (const type in CTF.camps) {
       const def = CTF.camps[type];
-      if (def.boss) continue;
+      if (def.boss || def.buff) continue;
       const sides = def.ang === 0 ? [0] : few && type !== 'dishpit' && type !== 'riders' ? [1] : [1, -1];
       if (few && type === 'sauce') continue;
       for (const s of sides) {
@@ -57,7 +64,7 @@ export function generateCtfMap(teams, seed) {
   // clearings that must stay open
   const openAt = (x, y) => {
     for (const b of bases) if (Math.hypot(x - b.x, y - b.y) < 8) return true;
-    for (const k of camps) if (Math.hypot(x - k.x - 0.5, y - k.y - 0.5) < (k.type === 'critic' ? 6 : 3.6)) return true;
+    for (const k of camps) if (Math.hypot(x - k.x - 0.5, y - k.y - 0.5) < (k.type === 'critic' ? 6 : CTF.camps[k.type].buff ? 4.6 : 3.6)) return true;
     return false;
   };
   const blob = (cx, cy, count, type) => {
@@ -70,7 +77,7 @@ export function generateCtfMap(teams, seed) {
       tiles[ny * w + nx] = type; placed.push([nx, ny]);
     }
   };
-  for (let i = 0, n = Math.round(N / 45); i < n; i++) blob((rng() * w) | 0, (rng() * h) | 0, 8 + ((rng() * 22) | 0), TILE.TREE);
+  for (let i = 0, n = Math.round(N / 140); i < n; i++) blob((rng() * w) | 0, (rng() * h) | 0, 6 + ((rng() * 12) | 0), TILE.TREE);   // a few copses, not a forest
   for (let i = 0, n = Math.round(N / 900); i < n; i++) blob((rng() * w) | 0, (rng() * h) | 0, 6 + ((rng() * 10) | 0), TILE.WATER);
   // everything must be reachable from everything: carve straight paths to the middle where it is not
   const walk = (i) => tiles[i] !== TILE.WATER && tiles[i] !== TILE.TREE;
@@ -175,6 +182,7 @@ export class CtfGame extends Game {
   kitOf(P) { return ctfKit(COMMANDERS[P.commander]); }
   cdMul() { return CTF.abilityCdMul; }
   ultCdMul() { return CTF.ultCdMul; }
+  cdOf(A, ult) { return A.ctfCd || A.cd * (ult ? CTF.ultCdMul : CTF.abilityCdMul); }      // the slows keep longer cooldowns of their own
   ultLocked() { return this.tick < this.ultUnlock; }
   ultLevel() { return Math.floor(this.tick / (6 * 60 * TICK_RATE)); }      // ultimates grow a step every six minutes
   heroRespawnTicks() { return Math.round(Math.min(CTF.respawn.max, CTF.respawn.base + CTF.respawn.perMin * this.tick / (60 * TICK_RATE)) * TICK_RATE); }
@@ -262,6 +270,18 @@ export class CtfGame extends Game {
   }
 
   atBase(P, u) { const b = this.baseOf.get(P.team); return Math.hypot(u.x - b.x, u.y - b.y) <= CTF.shopRadius; }
+  /** Can anyone on `team` see unit u right now (its heroes' sight, or its kitchen's)? The bots play by this too. */
+  seenBy(team, u) {
+    if (this.opts.fog === 'off') return true;
+    const b = this.baseOf.get(team);
+    if (b && Math.hypot(u.x - b.x, u.y - b.y) <= 10) return true;
+    for (const P of this.players) {
+      if (P.team !== team || P.neutral) continue;
+      const h = this.heroOf(P);
+      if (h && Math.hypot(u.x - h.x, u.y - h.y) <= (h.S.sight || 7.5) + 0.5) return true;
+    }
+    return false;
+  }
 
   // ==========================================================================
   //  Flags
@@ -270,9 +290,9 @@ export class CtfGame extends Game {
   carrying(u) { return this.flags.find((f) => f.state === FLAG_CARRIED && f.carrier === u.id) || null; }
   flagEvent(kind, f, pi) { this.events.push(['flag', kind, f.team, pi, Math.round(f.x * POS_Q), Math.round(f.y * POS_Q)]); }
 
-  returnFlag(f, pi) { f.state = FLAG_HOME; f.carrier = 0; f.x = f.hx; f.y = f.hy; f.dropAt = 0; this.flagEvent('return', f, pi); }
+  returnFlag(f, pi) { f.state = FLAG_HOME; f.carrier = 0; f.x = f.hx; f.y = f.hy; f.dropAt = 0; f.revealAt = 0; this.flagEvent('return', f, pi); }
   dropFlag(f, x, y) {
-    f.state = FLAG_DROPPED; f.carrier = 0; f.x = x; f.y = y; f.dropAt = this.tick;
+    f.state = FLAG_DROPPED; f.carrier = 0; f.x = x; f.y = y; f.dropAt = this.tick; f.revealAt = 0;
     this.flagEvent('drop', f, -1);
   }
 
@@ -285,6 +305,10 @@ export class CtfGame extends Game {
         if (!u || u.dead || !P) { this.dropFlag(f, f.x, f.y); continue; }
         f.x = u.x; f.y = u.y;
         (u.buffs || (u.buffs = {})).flagged = tick + 8;
+        if (tick >= f.revealAt) {                                   // every few seconds the carrier shows up on everyone's minimap
+          f.revealAt = tick + CTF.reveal * TICK_RATE; f.lastSeen = { x: u.x, y: u.y, tick };
+          this.events.push(['reveal', f.team, Math.round(u.x * POS_Q), Math.round(u.y * POS_Q), P.idx]);
+        }
         // home with it, while our own flag is on its stand
         const own = this.flagOf(P.team);
         if (own && own.state === FLAG_HOME && Math.hypot(u.x - own.hx, u.y - own.hy) <= CTF.flag.capture) this.capture(f, P);
@@ -299,7 +323,10 @@ export class CtfGame extends Game {
         if (this.carrying(h)) continue;                       // one flag at a time
         if (d < best) { best = d; taker = [P, h]; }
       }
-      if (taker) { f.state = FLAG_CARRIED; f.carrier = taker[1].id; f.x = taker[1].x; f.y = taker[1].y; this.flagEvent('take', f, taker[0].idx); }
+      if (taker) {
+        f.state = FLAG_CARRIED; f.carrier = taker[1].id; f.x = taker[1].x; f.y = taker[1].y; this.flagEvent('take', f, taker[0].idx);
+        f.revealAt = tick + CTF.reveal * TICK_RATE; f.lastSeen = { x: f.x, y: f.y, tick };          // everyone hears where it was taken
+      }
     }
   }
 
@@ -309,7 +336,7 @@ export class CtfGame extends Game {
     this.earn(P, 50);
     f.x = f.hx; f.y = f.hy;
     this.flagEvent('cap', f, P.idx);
-    f.state = FLAG_HOME; f.carrier = 0;
+    f.state = FLAG_HOME; f.carrier = 0; f.revealAt = 0;
     this.checkVictory();
   }
 
@@ -325,7 +352,11 @@ export class CtfGame extends Game {
       if (e.camp) {
         e.camp.units.delete(e.id);
         e.camp.alive = e.camp.units.size;
-        if (!e.camp.alive) { e.camp.nextAt = this.tick + e.camp.def.respawn * TICK_RATE; this.events.push(['camp', e.camp.i, 'down']); }
+        if (!e.camp.alive) {
+          e.camp.nextAt = this.tick + e.camp.def.respawn * TICK_RATE; this.events.push(['camp', e.camp.i, 'down']);
+          const def = e.camp.def, kh = K && !K.neutral ? this.heroOf(K) : null;
+          if (def.buff && kh) { this.addBuff(kh, def.buff, def.buffDur); this.events.push(['buffcamp', K.idx, e.camp.type]); }   // the last hit takes the buff
+        }
         if (K && !K.neutral) { this.earn(K, Math.round(e.bounty * (K.gatherBonus || 1))); K.minions++; this.events.push(['bounty', K.idx, e.bounty, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]); }
       } else if (e.isHero && !P.neutral) {
         P.deaths++;

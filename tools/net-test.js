@@ -43,6 +43,7 @@ function client(name, token) {
       if (m.p) for (const p of m.p) c.players[p[0]] = p;
       if (m.tb) c.tb = m.tb;
       if (m.ctf) c.ctf = m.ctf;
+      if (m.mk) c.mk = m.mk;
       if (m.flags) c.flags = m.flags;
       if (m.camps) c.camps = m.camps;
       if (m.ev) for (const e of m.ev) c.events.push(e);
@@ -94,6 +95,10 @@ try {
   ok(a.start && a.start.you === 0 && b.start && b.start.you === 1, 'match starts, each client knows its player');
   ok(a.start.players.length === 3 && a.start.players[0].commander === 'nonna' && a.start.w === 96, 'start info has players and map');
   ok(a.ents.size > 50, 'full snapshot delivers the world', `${a.ents.size} entities`);
+  ok(Array.isArray(a.mk) && a.mk.length === 4 && a.mk.every((v) => v === 1000), 'the full snapshot carries the market prices', JSON.stringify(a.mk));
+  a.send({ t: 'c', c: 'mkt', give: 'food', get: 'wood', n: 1 });
+  await until(() => a.events.some((e) => e[0] === 'note' && e[1] === 0 && e[2] === 'market'));
+  ok(a.events.some((e) => e[0] === 'note' && e[2] === 'market'), 'trading without a Farmers Market is refused with a note');
 
   const s0 = a.snaps, t0 = Date.now(), b0 = a.bytes;
   await sleep(2000);

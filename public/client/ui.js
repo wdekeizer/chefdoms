@@ -9,7 +9,7 @@ import {
   BOT_LEVELS, BOT_NOTES, MAX_PLAYERS, MAP_SIZES, mapSizeFor, NODES, trainList, techCost, techTime, computeStats,
   STANCES, FORMATIONS, GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, VERSION,
   ULT_AGE, TB, tbUnit, tbBldg, tbTurns, tbCooldown, tbDamage,
-  HERO_KEYS, CTF, NEUTRAL_COLOR, ctfKit, ctfHeroStats, ctfItemCost,
+  HERO_KEYS, CTF, NEUTRAL_COLOR, ctfKit, ctfHeroStats, ctfItemCost, MARKET, marketQuote,
 } from '/game/data.js';
 import * as TAC from './tactics.js';
 import { ACTIONS, keyOf, keyLabel, labelOf, setKey, resetKeys, setWasd, isWasd, canBind, onKeysChanged } from './keys.js';
@@ -55,7 +55,7 @@ const isCtf = () => (G.phase === 'game' ? !!G.ctf : !!(G.lobby && G.lobby.opts.m
 const kitOf = (C) => (isCtf() ? ctfKit(C) : { ability: C.ability, ultimate: C.ultimate });
 const turnsText = (n) => n + (n === 1 ? ' turn' : ' turns');
 const abilText = (A) => (isTurn() && A.tb ? A.tb : A.desc);
-const cdText = (A, ult) => (isTurn() ? `every ${turnsText(tbCooldown(A.cd))}` : isCtf() ? `every ${Math.round(A.cd * (ult ? CTF.ultCdMul : CTF.abilityCdMul))}s` : `every ${A.cd}s`);
+const cdText = (A, ult) => (isTurn() ? `every ${turnsText(tbCooldown(A.cd))}` : isCtf() ? `every ${Math.round(A.ctfCd || A.cd * (ult ? CTF.ultCdMul : CTF.abilityCdMul))}s` : `every ${A.cd}s`);
 const fmtClock = (sec) => Math.floor(sec / 60) + ':' + String(Math.floor(sec % 60)).padStart(2, '0');
 const PLAIN = { tags: [], armor: 0, parmor: 0 };
 /** Turn-based stat lines: what a unit or station can do on the grid. */
@@ -85,7 +85,7 @@ const amHost = () => G.lobby && G.lobby.host === G.cid;
 const MODES = [
   ['rt', ['building', 'hq'], 'Real-time', 'The classic: build a kitchen, raise a brigade, raze the enemy HQ.'],
   ['turn', ['ui', 'endturn'], 'Turn-based', 'The same game on a grid, one kitchen at a time. Every unit moves once.'],
-  ['ctf', ['ui', 'flag'], 'Capture the Flag', 'One hero each. Farm minions, buy items, steal the flag. About 15 minutes.'],
+  ['ctf', ['ui', 'flag'], 'Capture the Flag', 'One hero each. Farm minions, buy items, steal the flag.'],
 ];
 const mySlot = () => (G.lobby ? G.lobby.slots.findIndex((s) => s && s.cid === G.cid) : -1);
 
@@ -241,7 +241,7 @@ function openCommanderPicker(slot, edit) {
 // ============================================================================
 //  IN-GAME HUD
 // ============================================================================
-const BUILD_ORDER = ['house', 'pantry', 'garden', 'grill', 'sauce', 'garage', 'lab', 'workshop', 'tower', 'restaurant', 'hq'];
+const BUILD_ORDER = ['house', 'pantry', 'garden', 'grill', 'sauce', 'garage', 'lab', 'workshop', 'tower', 'restaurant', 'hq', 'market'];
 let card = new Array(15).fill(null), cardSig = '', selSig = '', hoverCard = -1;
 let cardBtns = [], resEls = {}, lastSlow = 0, menuOpen = false;
 const gridLabel = (i) => labelOf('card' + i);
@@ -581,7 +581,8 @@ function refreshSelection(force) {
   const sel = selected();
   const panel = $('selpanel');
   const sig = sel.length === 0 ? 'none' + G.me + (G.ctf && G.me >= 0 ? ':' + G.ps[G.me].heroId + ':' + Math.ceil((G.ps[G.me].heroRespawn - G.tick) / G.tickRate) : '')
-    : sel.length === 1 ? [sel[0].id, sel[0].hp, sel[0].prog, sel[0].qpct, (sel[0].q || []).join(), sel[0].amount, sel[0].carry, sel[0].sn, sel[0].inside, sel[0].owner >= 0 ? G.ps[sel[0].owner].sig : '', sel[0].left, sel[0].qleft, G.tb ? G.tb.cur : ''].join('|')
+    : sel.length === 1 ? [sel[0].id, sel[0].hp, sel[0].prog, sel[0].qpct, (sel[0].q || []).join(), sel[0].amount, sel[0].carry, sel[0].sn, sel[0].inside, sel[0].owner >= 0 ? G.ps[sel[0].owner].sig : '', sel[0].left, sel[0].qleft, G.tb ? G.tb.cur + ':' + G.tb.ended : '', sel[0].trally,
+      sel[0].type === 'market' && G.me >= 0 ? G.marketAt + ':' + RES.map((r) => Math.floor(G.ps[G.me].res[r] / MARKET.lot)).join() : ''].join('|')
       : sel.map((e) => e.id + ':' + Math.ceil(e.hp / 5)).join(',');
   if (sig === selSig && !force) return;
   selSig = sig;
@@ -626,7 +627,8 @@ function refreshSelection(force) {
         h('div', { class: 'sel-info' }, h('div', { class: 'sel-name' }, S.name || e.type, h('span', { class: 'sel-role' }, def.name + (camp.level ? ' · level ' + (camp.level + 1) : ''))),
           h('div', { class: 'sel-hp' }, bar(e.hp / mh), h('span', null, `${Math.max(0, e.hp)} / ${mh}`)),
           h('div', { class: 'tt-stats' }, `Attack ${Math.round(S.atk * (1 + CTF.minion.atk * camp.level) * (def.atkMul || 1) * 10) / 10} · Armour ${S.armor}/${S.parmor} · Bounty ${bounty} Tips`),
-          h('div', { class: 'sel-desc' }, def.boss ? 'The toughest customer on the map. Bring friends, or a full bag of items.' : 'Wild minions mind their own business until you hit one; then the whole camp comes for you. They heal between fights and come back a while after they are cleared.'))));
+          def.buff && h('div', { class: 'sel-turn' }, `Last hit wins the ${def.buffName}: ${def.buffDesc}.`),
+          h('div', { class: 'sel-desc' }, def.boss ? 'The toughest customer on the map. Bring friends, or a full bag of items.' : def.buff ? 'A buff camp: one tough guardian. It comes back two minutes after it falls.' : 'Wild minions mind their own business until you hit one; then the whole camp comes for you. They heal between fights and come back a while after they are cleared.'))));
       return;
     }
     const head = h('div', { class: 'sel-name' }, S.name || e.type, h('span', { class: 'sel-role' }, e.kind === K_UNIT ? S.role : mine ? '' : G.players[e.owner].name),
@@ -664,6 +666,7 @@ function refreshSelection(force) {
             h('img', { src: itemIcon(code, col), draggable: 'false', alt: '' }))));
       } else info.append(h('div', { class: 'sel-desc' }, TB.desc[e.type] || S.desc || ''));
       if (e.pays) info.append(h('div', { class: 'sel-desc' }, h('b', null, `Pays ${RES_INFO[RES[e.pays - 1]].name} `), 'at the start of each of its owner\'s turns.'));
+      if (mine && BUILDINGS[e.type].trains.length) info.append(h('div', { class: 'muted' }, e.trally ? 'Recruits walk out on the flagged side. Right-click another tile to change it (the station itself: anywhere).' : 'Right-click a tile to choose which side its recruits walk out.'));
     } else {
       if (mine && e.q && e.q.length) {
         const q = h('div', { class: 'queue' });
@@ -677,6 +680,7 @@ function refreshSelection(force) {
       }
       if (e.inside > 0) info.append(h('div', { class: 'sel-desc' }, h('b', null, `Sheltering ${e.inside} Prep Cook${e.inside === 1 ? '' : 's'}`), mine ? ' — press All clear to send them back to work' : ''));
     }
+    if (mine && e.type === 'market' && e.prog >= 100) info.append(marketGrid(!G.tb || TAC.myTurn()));
     panel.replaceChildren(h('div', { class: 'sel-one' }, h('img', { class: 'sel-ico', src: iconURL(e.kind === K_UNIT ? 'unit' : 'building', e.type, 160, col), draggable: 'false', alt: '' }), info));
     return;
   }
@@ -690,6 +694,25 @@ function refreshSelection(force) {
       h('img', { src: iconURL(e.kind === K_UNIT ? 'unit' : 'building', e.type, 96, col), draggable: 'false', alt: '' }), bar(e.hp / maxHp(e), 'mini')));
   }
   panel.replaceChildren(h('div', { class: 'sel-many' }, h('div', { class: 'sel-count' }, sel.length + ' selected' + (sel.length > 40 ? ' (showing 40)' : '')), grid));
+}
+
+/** The trading table at a Farmers Market: rows = what you hand over (100 of it), columns = what you get back. */
+function marketGrid(enabled) {
+  const me = G.ps[G.me], f = G.market || { food: 1, wood: 1, spice: 1, salt: 1 };
+  const trade = (give, get, n) => { cmd({ c: 'mkt', give, get, n }); sfx('click'); };
+  const head = h('div', { class: 'mk-row mk-head' }, h('span', { class: 'mk-lbl muted' }, `Give ${MARKET.lot} ↓   get →`),
+    ...RES.map((r) => h('span', { class: 'mk-cell head', title: RES_INFO[r].name }, img('res', r, 'mk-i', null, 48))));
+  const rows = RES.map((give) => h('div', { class: 'mk-row' },
+    h('span', { class: 'mk-lbl' }, img('res', give, 'mk-i', null, 48), RES_INFO[give].name),
+    ...RES.map((get) => {
+      if (give === get) return h('span', { class: 'mk-cell none' }, '·');
+      const q = marketQuote(f, give, get), poor = me.res[give] < MARKET.lot;
+      return h('button', { class: 'mk-cell', disabled: !enabled || poor,
+        title: !enabled ? 'Wait for your turn' : poor ? `You need ${MARKET.lot} ${RES_INFO[give].name}` : `${MARKET.lot} ${RES_INFO[give].name} → ${q} ${RES_INFO[get].name} (Shift-click: five times)`,
+        onmousedown: (ev) => { if (ev.button === 0 && enabled && !poor) trade(give, get, ev.shiftKey ? 5 : 1); ev.preventDefault(); } }, '+' + q);
+    })));
+  return h('div', { class: 'market' }, head, ...rows,
+    h('div', { class: 'muted' }, 'Prices are shared by everyone: what is sold gets cheaper, what is bought gets dearer, and they drift back. The market keeps a cut.'));
 }
 
 // ------------------------------------------------- quick bar (above the minimap)
@@ -786,7 +809,7 @@ function refreshTop() {
 let plSig = '';
 function refreshPlayers() {
   const list = realPlayers();
-  const sig = list.map(([p, i]) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '') + (G.ctf ? G.ps[i].caps + ':' + G.ps[i].heroKills + ':' + G.ps[i].deaths + (G.ps[i].heroId ? '' : 'x') : '')).join('|') + (G.tb ? G.tb.cur : '');
+  const sig = list.map(([p, i]) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '') + (G.ctf ? G.ps[i].caps + ':' + G.ps[i].heroKills + ':' + G.ps[i].deaths + (G.ps[i].heroId ? '' : 'x') : '')).join('|') + (G.tb ? G.tb.cur + ':' + G.tb.team + ':' + G.tb.ended : '');
   if (sig === plSig) return;
   plSig = sig;
   const teams = new Set(list.map(([p]) => p.team)).size;
@@ -799,7 +822,7 @@ function refreshPlayers() {
       h('span', { class: 'pl-age', title: 'captures · hero kills / deaths' }, `${G.ps[i].caps}⚑ ${G.ps[i].heroKills || 0}/${G.ps[i].deaths}`))));
     return;
   }
-  $('players').replaceChildren(...list.map(([p, i]) => h('div', { class: 'pl' + (G.ps[i].alive ? '' : ' out') + (i === G.me ? ' me' : '') + (G.tb && G.tb.cur === i && !G.over ? ' turn' : '') },
+  $('players').replaceChildren(...list.map(([p, i]) => h('div', { class: 'pl' + (G.ps[i].alive ? '' : ' out') + (i === G.me ? ' me' : '') + (G.tb && TAC.playing(i) && !TAC.ended(i) && !G.over ? ' turn' : '') },
     h('span', { class: 'dot', style: `background:${colorHex(p.color)}` }),
     h('span', { class: 'pl-name' }, p.name),
     teams < list.length && h('span', { class: 'pl-team' }, 'T' + p.team),
@@ -811,10 +834,10 @@ let turnSig = '';
 function refreshTurn() {
   const box = $('turnbar');
   if (!G.tb) { if (turnSig !== 'off') { turnSig = 'off'; box.classList.add('hidden'); box.replaceChildren(); } return; }
-  const tb = G.tb, P = G.players[tb.cur], my = TAC.myTurn();
+  const tb = G.tb, P = G.players[tb.cur], my = TAC.myTurn(), team = tb.team >= 0;
   const left = tb.deadline && !G.over ? Math.max(0, Math.ceil((tb.deadline - G.tick) / (G.tickRate * (Number(G.opts.speed) || 1)))) : -1;
   const n = my ? TAC.readyUnits().length : 0;
-  const sig = [tb.n, tb.cur, left, n, G.over ? 1 : 0, my, G.paused].join('|');
+  const sig = [tb.n, tb.cur, tb.team, tb.ended, left, n, G.over ? 1 : 0, my, G.paused].join('|');
   if (sig === turnSig) return;
   if (my && left === 10 && !turnSig.startsWith('off')) { note('10 seconds left in your turn', 'warn'); sfx('turn_other'); }
   turnSig = sig;
@@ -822,7 +845,9 @@ function refreshTurn() {
   box.replaceChildren(...[
     h('span', { class: 'tb-round' }, 'Round ' + tb.n + (tb.limit ? ' of ' + tb.limit : '')),
     h('span', { class: 'dot', style: `background:${colorHex(P.color)}` }),
-    h('span', { class: 'tb-who' }, G.over ? 'Match over' : my ? 'Your turn' : tb.cur === G.me ? 'Your turn' : `${P.name}${P.bot ? ' (bot)' : ''} is playing…`),
+    h('span', { class: 'tb-who' }, G.over ? 'Match over' : team
+      ? (my ? "Your team's turn" : TAC.playing(G.me) ? 'Waiting for your team-mates…' : `${realPlayers().filter(([q]) => q.team === tb.team).map(([q]) => q.name).join(' & ')} ${realPlayers().filter(([q]) => q.team === tb.team).length > 1 ? 'are' : 'is'} playing…`)
+      : my ? 'Your turn' : tb.cur === G.me ? 'Your turn' : `${P.name}${P.bot ? ' (bot)' : ''} is playing…`),
     left >= 0 && h('span', { class: 'tb-time' + (left <= 10 ? ' low' : '') }, fmtTime(left)),
     my && h('span', { class: 'tb-left' }, n ? `${n} unit${n === 1 ? '' : 's'} can still act` : 'everyone has acted'),
     my && h('button', { class: 'btn small primary', title: 'Hand over to the next kitchen', onmousedown: (ev) => { if (ev.button === 0 && TAC.endTurn()) sfx('endturn'); ev.preventDefault(); } }, `End turn (${labelOf('endTurn')})`)].filter(Boolean));

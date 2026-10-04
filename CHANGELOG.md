@@ -3,6 +3,40 @@
 Everyone in a match needs the same version: after the host updates, friends run `git pull` in their copy
 (the lobby chat warns when a copy and the server differ).
 
+## v1.2.0
+
+**The Farmers Market** (real-time and turn-based)
+- A new station (Diner Age, 175 Firewood) for trading ingredients: select it and a trading table shows what 100 of
+  each ingredient buys of every other. Click to trade, Shift-click for five lots. Prices are shared by everyone,
+  move with every trade and drift back over time (every round in turn-based); the market keeps a cut. Bots use it.
+
+**Real-time**
+- The Signature Restaurant costs 500 Salt (was 350).
+
+**Turn-based**
+- New lobby option, **Turn order**: team-mates can play their turn at the same time. Each presses End turn and the
+  next team goes when all of them have; the turn bar shows who you are waiting for. Bots play it too.
+- Choose where recruits walk out: select a station and right-click a tile (a flag marks the side).
+- A unit hits back only once per enemy turn, so ganging up pays (the forecast knows).
+- Ranged units are 40% tougher and hit 50% harder on the grid.
+- Every station pays 25% more; Timber Stands pay a little more and there are more of them (three by every base).
+- Odile's Sugar Rush makes stations pay 20% more the next turn (was 40%).
+- Big Hank has 525 HP in the Diner Age (420 in the Food Cart Age) instead of 625.
+- Towers, Kitchen HQs and Signature Restaurants also shoot enemy stations in range (units first).
+
+**Capture the Flag**
+- Buff camps at the top and bottom of the map: the last hit on the guardian earns Ghost Pepper (+20% damage, faster
+  attacks) or Sugar High (faster, regenerating) for 90 seconds, until you fall.
+- Far fewer trees: a few copses and ponds on open ground.
+- The slows have longer cooldowns: Brain Freeze 32s, Deep Freeze 125s, Sugar Glass 130s, Sauce Flood 110s.
+- Bots play by the fog of war. A flag carrier shows on everyone's minimap every 10 seconds; between those reveals bots
+  (and players) only see a carrier their team can see, and bots take a moment to react.
+- The lobby card no longer promises a match length.
+
+**Music**
+- Every piece now runs well over two minutes before it repeats (the battle pieces and Harvest Dance got new sections
+  instead of playing twice), and the harp and lute parts each have their own rhythms instead of the same even pulse.
+
 ## v1.1.0
 
 **Capture the Flag** (lobby → Game mode → Capture the Flag (heroes))

@@ -5,7 +5,7 @@
 //  people watching can follow. It sees the whole map (no fog of war).
 // ============================================================================
 import { K_UNIT, K_BLDG, K_NODE } from './sim.js';
-import { TILE, RES, NODES, BUILDINGS, TECHS, COMMANDERS, ULT_AGE, TB, tbReach, tbPath, tbDist, tbDamage, techCost } from './data.js';
+import { TILE, RES, NODES, BUILDINGS, TECHS, COMMANDERS, ULT_AGE, TB, MARKET, tbReach, tbPath, tbDist, tbDamage, techCost } from './data.js';
 
 const LEVELS = {
   easy:    { cooks: 2, wave: [0, 3, 4, 6, 8],  grow: 0, techs: 0, ability: false, towers: 0, sharp: false, pace: 9 },
@@ -28,11 +28,11 @@ export class TacticsBot {
     this.wave = null; this.target = null; this.strength = 0; this.claimed = new Map();
   }
 
-  /** Called every tick while it is this bot's turn. */
+  /** Called every tick while it is this bot's turn (or its team's). */
   update() {
     const g = this.g, P = this.P;
-    if (g.turn.cur !== P.idx || g.busy() || g.queue.length || g.tick < this.nextAt) return;
-    const key = g.turn.n + ':' + g.turn.cur;
+    if (!g.isTurnOf(P.idx) || g.busy() || g.queue.length || g.tick < this.nextAt) return;
+    const key = g.turn.n + ':' + g.turnSeq;
     if (key !== this.turnKey) { this.turnKey = key; this.skip.clear(); this.claimed = new Map(); this.managed = false; this.nextAt = g.tick + 6; return; }
     this.nextAt = g.tick + this.L.pace;
     try { if (!this.act()) g.command(P.idx, { c: 'et' }); } catch (e) { console.error('[tactics bot ' + P.name + ']', e); g.command(P.idx, { c: 'et' }); }
@@ -123,6 +123,22 @@ export class TacticsBot {
   }
 
   // ------------------------------------------------- stations: train, research
+  /** At the Farmers Market: swap a pile we are sitting on for what we are short of. */
+  market() {
+    const g = this.g, P = this.P, c = this.c, res = P.res;
+    if (!(c.B.market || []).some((b) => b.done)) return;
+    const need = this.reserve || {};
+    let get = null, worst = 0;
+    for (const r of RES) {
+      const want = Math.max(need[r] || 0, r === 'salt' && P.age < 2 ? 0 : 100);
+      if (want - res[r] > worst) { worst = want - res[r]; get = r; }
+    }
+    if (!get) return;
+    let give = null, most = 350;
+    for (const r of RES) if (r !== get && res[r] - (need[r] || 0) > most) { most = res[r] - (need[r] || 0); give = r; }
+    if (give) g.command(P.idx, { c: 'mkt', give, get, n: Math.min(3, Math.floor((most - 200) / MARKET.lot)) || 1 });
+  }
+
   manage() {
     const g = this.g, P = this.P, L = this.L, c = this.c, pi = P.idx, a = P.age;
     this.reserve = null;
@@ -175,6 +191,7 @@ export class TacticsBot {
         if (best) { g.command(pi, { c: 'tr', bid: b.id, u: best }); have[best] = (have[best] || 0) + 1; }
       }
     }
+    this.market();
   }
 
   composition() {
@@ -289,7 +306,7 @@ export class TacticsBot {
     const P = this.P, L = this.L, c = this.c, a = P.age, want = [], zara = P.commander === 'zara';
     const need = (t, n = 1) => { if (c.n(t) < n && P.stats.bldgs[t].age <= a) want.push(t); };
     need('grill');
-    if (a >= 2) { need(zara ? 'garage' : 'sauce'); need('lab'); need(zara ? 'sauce' : 'garage'); if (L.towers) need('tower', L.towers * (a - 1)); }
+    if (a >= 2) { need(zara ? 'garage' : 'sauce'); need('lab'); need(zara ? 'sauce' : 'garage'); if (L.towers) need('tower', L.towers * (a - 1)); if (L.techs) need('market'); }
     if (a >= 3) { need('workshop'); need('restaurant'); if (L.sharp) need('grill', 2); }
     return want;
   }

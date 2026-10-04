@@ -124,8 +124,14 @@ A friend's copy uses its own `public/music` and `public/sfx` folders, so each pl
 | **Produce** | Pick it from Veggie Patches, fish it from the Fishing Spots on a pond's shore, then build Garden Plots (endless, one Prep Cook each). Pays for most units. |
 | **Firewood** | Chop trees. Pays for stations. |
 | **Spice** | Dig Spice Mounds. Pays for the good stuff: advanced units, upgrades, new ages. |
-| **Salt** | Chip Salt Rocks (every base starts with two deposits, and the map holds plenty more). Pays for towers, your Signature Restaurant and extra Kitchen HQs. |
+| **Salt** | Chip Salt Rocks (every base starts with two deposits, and the map holds plenty more). Pays for towers, your Signature Restaurant (500) and extra Kitchen HQs. |
 | **Staff** | Your population. Build Break Rooms to raise the limit. |
+
+**The Farmers Market** (Diner Age, 175 Firewood) trades ingredients for each other. Select it and its trading table
+appears top left: each row is what you hand over (100 of it), each column what you get back. Click a cell to trade
+once, Shift-click for five. Spice and Salt are worth more than Produce and Firewood. Prices are shared by everyone in
+the match: whatever gets sold becomes cheaper, whatever gets bought dearer, and they drift back to normal over time.
+The market keeps a cut, so trading back and forth loses.
 
 Prep Cooks carry what they gather to the nearest Kitchen HQ or Pantry, so build Pantries next to distant resources.
 Right-click a Kitchen HQ or Pantry with cooks selected (or press Deliver on their command card) and they bank what they
@@ -234,21 +240,28 @@ games: the same commanders, units, stations, upgrades and ages, on a small grid,
   Forest costs double (triple for vehicles and siege), but a unit standing among trees takes a quarter less damage.
   You can walk through your own units, never through enemies, stations or water.
 - **Fighting.** Point at a red-marked enemy and the forecast shows the damage you will do and what comes back; click
-  to attack. The defender hits back at 60% strength if it survives and can reach you, so Sauciers (range 2) strike
-  infantry for free. Wounded units hit less hard. A Meatball Catapult (range 2-3) cannot move and fire in the same turn.
+  to attack. The defender hits back at 60% strength if it survives and can reach you, but **only once per enemy turn**:
+  gang up on a unit and only the first attacker takes a counterattack. Sauciers (range 2) strike infantry for free, and
+  ranged units are tougher and hit harder here than the real-time numbers suggest. Wounded units hit less hard.
+  A Meatball Catapult (range 2-3) cannot move and fire in the same turn.
 - **Ingredients.** Prep Cooks do not gather. Build a **Pantry on top of a resource** (Veggie Patch, Timber Stand,
   Spice Mound, Salt Rock or Fishing Spot: right-click it with a Prep Cook) and it pays that ingredient at the start of
   each of your turns. The Kitchen HQ pays a basic income and Garden Plots a little Produce. Gathering upgrades and
   commander bonuses raise what stations pay. What your next turn brings is shown in green next to each ingredient.
+  Every base has three Timber Stands nearby and more lie between the bases. A **Farmers Market** trades ingredients
+  during your turn (prices drift back every round).
 - **Stations** take one tile and one job at a time. A unit takes a turn to train and walks out at the start of your
-  next turn; upgrades and ages take one to three turns. A Prep Cook can lend a hand on a building site (right-click)
-  to finish it a turn sooner, or repair a damaged station.
+  next turn; upgrades and ages take one to three turns. Select a station and right-click a tile to choose the side
+  its recruits walk out (a little flag marks it; right-click the station itself to clear it). A Prep Cook can lend a
+  hand on a building site (right-click) to finish it a turn sooner, or repair a damaged station.
 - **Defences** (Kitchen HQ, Pepper Mill Tower, Signature Restaurant) do not hit back when struck. Instead they volley
-  at the nearest enemies in range at the start of their owner's turn.
+  at the nearest enemies in range at the start of their owner's turn: units first, and enemy stations too.
 - **Commanders.** Auras reach 2 tiles and abilities 3. Cooldowns count your turns (ability every 3 to 4, ultimate
-  every 6 to 7), and a fallen commander returns after a few turns.
-- **Lobby options.** A turn timer (1 to 3 minutes; when it runs out your turn ends) and a round limit (after 30, 50 or
-  80 rounds the best score wins). The staff limit is a fifth of the real-time one (100 becomes 20). Maps are
+  every 6 to 7), and a fallen commander returns after a few turns. Odile's Sugar Rush makes your stations pay 20% more
+  the next turn; Big Hank is a little lighter on the grid (525 HP in the Diner Age).
+- **Lobby options.** A turn timer (1 to 3 minutes; when it runs out your turn ends), a round limit (after 30, 50 or
+  80 rounds the best score wins), and the **turn order**: one kitchen at a time, or team-mates playing at the same
+  time (each presses End turn; the next team goes when all of them have, and the turn bar says who you are waiting for). The staff limit is a fifth of the real-time one (100 becomes 20). Maps are
   26, 34, 42 or 50 tiles across.
 - **Mouse.** Left-click selects, moves to a blue tile, or attacks a red enemy. Right-click moves and attacks too, and
   is how a Barista tops up a friend and how a Prep Cook repairs, helps build, or puts a Pantry on a resource.
@@ -261,9 +274,11 @@ about 15 minutes.
 
 - **The arena.** Teams start in kitchens spread round a ring (72 tiles across for two teams, bigger with more).
   Your team's flag stands in front of your kitchen; the kitchen itself cannot be destroyed, heals heroes quickly
-  around it, and is where you shop. Wild minion camps sit between the kitchens, with **The Head Critic** in the middle.
+  around it, and is where you shop. Wild minion camps sit between the kitchens, with **The Head Critic** in the middle,
+  and a few copses and ponds to duck behind (it is mostly open ground).
 - **Scoring.** Walk over an enemy flag to pick it up, carry it to your own flag stand to score (your own flag has to be
-  home, so defending counts). The carrier is slower and marked for everyone. If the carrier falls the flag drops where
+  home, so defending counts). The carrier is slower, and every 10 seconds shows up on everyone's minimap (otherwise
+  you only see a carrier your team can see, and so do the bots). If the carrier falls the flag drops where
   they stood: a team-mate of its owner touches it to send it home, an enemy picks it straight up, and after 25 seconds
   it goes home by itself. First to 3, 5 or 7 captures wins (lobby option); when the clock (10, 15 or 20 minutes)
   runs out the most captures wins, a level score goes to **sudden death** (next capture wins), and after five more
@@ -278,8 +293,13 @@ about 15 minutes.
   run far enough. Camps come back a while after they are cleared and grow tougher (and richer) every two and a half
   minutes: Dish Pit Crew, Rogue Line Cooks, The Sauce Gang, Delivery Pirates, Smokehouse Bouncers, and the Critic,
   a boss worth 160 Tips who needs a team or a full bag of items.
+- **Buff camps.** One at the top of the map and one at the bottom (with more teams: in two gaps between the bases),
+  each a single tough guardian that comes back two minutes after it falls. Whoever lands the last hit wears its buff
+  for 90 seconds, until they fall: **The Pepper Patch** gives Ghost Pepper (+20% damage, 10% faster attacks),
+  **The Sugar Shack** gives Sugar High (15% faster, 1% health back every second). Worth splitting up for.
 - **Heroes.** All ten commanders fight here with their abilities on a short cooldown (about 15 to 20 seconds) and their
-  ultimates (unlocked at 3:00, about 75 to 80 seconds). Heroes hit 50% harder than in the classic game, and a fallen
+  ultimates (unlocked at 3:00, about 75 to 80 seconds). The slows and freezes keep longer ones: Brain Freeze 32s,
+  Deep Freeze 125s, Sugar Glass 130s, Sauce Flood 110s. Heroes hit 50% harder than in the classic game, and a fallen
   hero returns at the kitchen after 6 seconds early on, growing to 22 late in the match. Hank's and Zara's kits are
   swapped for ones that work without stations (Thick Bark and Rush Hour), and four heroes are only playable here:
 
@@ -294,16 +314,19 @@ about 15 minutes.
   The score bar under the top bar shows the captures, the target and the clock; the player list shows captures and
   hero kills / deaths for everyone; a dropped flag shows how long until it goes home. The end-of-match table counts
   captures, hero kills, deaths, minions, Tips earned and items.
-- **Bots** play it at all four levels: they farm camps that suit their strength, shop, run flags one at a time per team,
-  chase carriers, defend, and retreat to eat an Energy Bar when hurt.
+- **Bots** play it at all four levels: they farm camps that suit their strength (buff camps included), shop, run flags
+  one at a time per team, defend, and retreat to eat an Energy Bar when hurt. They play by the fog of war: an enemy they
+  cannot see does not exist for them, and a flag carrier out of sight is only tracked through the minimap reveals
+  (the nearest bot goes to look; it takes them a moment to react when the carrier comes into view).
 
 ## Sound and music
 
 Everything you hear is generated in the browser: the effects are synthesised, and the soundtrack is a set of
 original pieces (`public/client/tracks.js`) played by a small software synth in the style of a late-90s
 General MIDI module: lute, harp, recorder, strings, choir pads, timpani. There are twelve pieces, about
-26 minutes in all: a lobby theme, five calm tunes and three ambient ones that rotate while you build, and three
-battle pieces that take turns while you are fighting. Volumes and a "Next track" button are under Menu (in a match)
+33 minutes in all, each well over two minutes before it repeats: a lobby theme, five calm tunes and three ambient
+ones that rotate while you build, and three battle pieces that take turns while you are fighting. The harp and lute
+accompaniments each have their own rhythm (dotted, rolled, strummed, galloping, jigs...) rather than one shared pulse. Volumes and a "Next track" button are under Menu (in a match)
 or "Sound & music" (in the lobby).
 
 Every kind of unit has its own voice: Prep Cooks, infantry, ranged units, vehicles, siege, Baristas and your commander

@@ -191,6 +191,7 @@ const NOTES = {
   tips: 'Not enough Tips',
   maxed: 'That item is fully upgraded',
   full: 'Still chewing the last Energy Bar',
+  market: 'You need a Farmers Market to trade',
   ulttarget: 'No enemy within reach for that',
   // turn-based
   pantry: 'A Pantry is built ON a resource: a Veggie Patch, Timber Stand, Spice Mound, Salt Rock or Fishing Spot',
@@ -298,13 +299,13 @@ G.hooks.event = (ev) => {
       break;
     }
     case 'income': if (mine) lastIncome = ev; break;
-    case 'turn': {
+    case 'turn': {                       // ['turn', round, player, team (-1 = one kitchen at a time)]
       if (!G.tb) break;
-      G.tb.n = ev[1]; G.tb.cur = ev[2]; G.tbDirty = true;
+      G.tb.n = ev[1]; G.tb.cur = ev[2]; G.tb.team = ev[3] ?? -1; G.tb.ended = 0; G.tbDirty = true;
       if (G.mode && G.mode.type === 'tplace') G.mode = null;
-      if (ev[2] === G.me) {
+      if (TAC.myTurn()) {
         const got = lastIncome ? RES.map((r, i) => (lastIncome[2 + i] ? `+${lastIncome[2 + i]} ${RES_INFO[r].name}` : '')).filter(Boolean).join(', ') : '';
-        UI.note(`Your turn · round ${ev[1]}` + (got ? ' · ' + got : ''), 'good');
+        UI.note((G.tb.team >= 0 ? `Your team's turn` : 'Your turn') + ` · round ${ev[1]}` + (got ? ' · ' + got : ''), 'good');
         sfx('turn');
       } else sfx('turn_other');
       lastIncome = null;
@@ -370,6 +371,26 @@ G.hooks.event = (ev) => {
       break;
     }
     case 'camp': break;                  // the renderer shows camps coming and going
+    case 'trade':                        // ['trade', player, give, get, given, got]
+      if (mine) { UI.note(`Traded ${ev[4]} ${RES_INFO[ev[2]].name} for ${ev[5]} ${RES_INFO[ev[3]].name}`, 'good'); sfx('buy'); }
+      UI.refreshAll(true);
+      break;
+    case 'reveal': {                     // ['reveal', flagTeam, qx, qy, carrier]: a flag carrier shows on everyone's minimap
+      const f = G.ctf && G.ctf.flags.find((q) => q.team === ev[1]);
+      if (!f) break;
+      const x = ev[2] / Q, y = ev[3] / Q;
+      f.x = x; f.y = y;
+      G.pings.push({ x, y, t0: now, color: R.teamColor(ev[1]) });
+      if (ev[1] === myTeam()) { G.lastAlert = { x, y }; sfx('ping', 0.5); }
+      break;
+    }
+    case 'buffcamp': {                   // ['buffcamp', player, campType]
+      const def = CTF.camps[ev[2]], who = G.players[ev[1]];
+      if (!def || !who) break;
+      if (mine) { UI.note(`You have the ${def.buffName}: ${def.buffDesc}`, 'good'); sfx('buy'); }
+      else UI.note(`${who.name} took the ${def.buffName}`, isAlly(ev[1]) ? 'good' : 'warn');
+      break;
+    }
     case 'minions':                      // ['minions', level]
       if (G.me >= 0) { UI.note(`The wild minions grow tougher (level ${ev[1] + 1}): bigger bounties too`, 'warn'); sfx('level'); }
       break;
