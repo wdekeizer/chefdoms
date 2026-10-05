@@ -3,6 +3,49 @@
 Everyone in a match needs the same version: after the host updates, friends run `git pull` in their copy
 (the lobby chat warns when a copy and the server differ).
 
+## v1.6.0
+
+**Fixes**
+- **Back to the lobby.** A host who reloaded the page mid-match got the host role back without anyone else being told, so a
+  friend's "Return everyone to the lobby" silently did nothing. The host now keeps the role through a reload and everyone
+  is told who the host is. Other players can **vote** to go back (Menu → Vote to return to the lobby; when every player
+  still connected agrees, everyone returns), a refused request says why instead of doing nothing, an open menu updates
+  itself when the host changes or the match ends, and the menu no longer needs two presses after a lobby return.
+- The Zoom percentage in the menu no longer spills out of its box: Effects, Music and Zoom now line up, all with a
+  percentage, and the zoom slider has 100% in the middle (from a quarter to four times as far per notch).
+- Salt Gates now swing open for their own side like Swing Gates do.
+
+**Real-time**
+- **Bar your gates**: the `K` key bars (or opens) every gate you own, or just the selected ones; a gate's card has the same
+  button. A barred gate stops everyone, your own side included, and shows a beam and a padlock.
+- **Take shelter**: soldiers can go inside a Kitchen HQ (30 places, shared with cooks), Pepper Mill Tower (5, no vehicles
+  or siege) or Signature Restaurant (15) to heal. Right-click the station (a doorway cursor), press Take shelter on the
+  army's card, or press `J`. Every 2 soldiers inside add a shot to its volley. **Let everyone out** on the station's card.
+- **Standing orders** on every station that trains soldiers: **New recruits:** Aggressive / Hold the Line / Stand Down
+  (the stance its units start with) and **Keep recruits inside** (new units wait inside, safe and healing, up to 10,
+  until you press Let everyone out).
+- **Send ingredients** to team-mates: the Send button on the top bar, a click on a team-mate in the players list, or the
+  menu. 100, 500 or all of any ingredient, instantly and free.
+- **Live score** for every player in the players list (a star for the leader), with the server's best score below.
+- **Pepper Slinger** (Sauce Station, Diner Age, 30 Produce + 35 Firewood): a cheap ranged skirmisher that does more than
+  double damage to Sauciers and every other ranged unit and shrugs off thrown things, but loses to infantry and Scooters.
+  The bots train them too, more of them when you field a lot of ranged units.
+- **Meatball Catapults** shoot from 13 tiles (were 8; minimum 3), further than any tower or Signature Restaurant even fully
+  upgraded (Extra-Firm Meatballs adds 1, enough to outrange Ryo's too). They see 10 tiles. Turn-based: range 5.
+- **Battering Baguettes** hit harder: 6 attack (was 4) and swing every 2.2s (was 2.5), about 70% more damage to stations.
+- Two new bot levels: **Very easy** (a small kitchen, hardly ever attacks, gathers 20% slower) and **Very hard** (between
+  Hard and Extreme, gathers 10% faster). In all three game modes.
+
+**Capture the Flag**
+- Fights end about a third sooner: heroes hit harder (×1.85 instead of ×1.5) and have 20% less health.
+- Items are about 40% stronger for the same price (Skillet +7/+15/+27, Whites +3/+7/+12, Stew +170/+400/+700, Clogs
+  +0.45/+0.9, Espresso ×0.86/×0.74/×0.6, Herbs +4/+10/+18).
+- Tips come in much faster: 3 a second (was 1), 200 to start (was 120), minion bounties 30% higher, 130 for a hero (was
+  90), 120 for a capture (was 50). Every hero's purse is their own; the Tips counter says so.
+- The buff camps' buffs are stronger (Ghost Pepper +25% damage and 15% faster attacks, Sugar High 20% faster and 1.5%
+  health a second), last their full 90 seconds **even if you fall**, and are hard to miss: a wide glowing ring and a chili
+  or a sweet over the hero, a countdown chip by your hero buttons, and who holds each buff in the score bar.
+
 ## v1.5.0
 
 **Real-time**

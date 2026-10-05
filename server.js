@@ -114,6 +114,7 @@ const lobby = {
   slots: new Array(MAX_PLAYERS).fill(null),
   opts: Object.fromEntries(Object.entries(OPTIONS).map(([k, o]) => [k, o.def])),
   hostId: 0,
+  hostToken: '',            // the browser that is "the host": a page reload (or a dropped link) gets it back
 };
 let match = null;       // { g, timer, paused, speed, tokens[], over, emptySince, takeover: Map }
 const urls = { local: `http://localhost:${PORT}`, lan: [], public: null };
@@ -288,7 +289,7 @@ function startMatch() {
   match = {
     g, timer: null, paused: false, over: false, speed: Number(lobby.opts.speed) || 1,
     tokens: seats.map((s) => (s.kind === 'human' ? s.token : null)),
-    takeover: new Map(), emptySince: 0, started: Date.now(),
+    takeover: new Map(), emptySince: 0, started: Date.now(), votes: new Set(),
   };
   for (const s of lobby.slots) if (s && s.kind === 'human') s.ready = false;
   if (WARP > 0 && mode === 'rt') { for (let i = 0; i < WARP * TICK_RATE && !g.over; i++) g.step(); g.delta(); }
@@ -302,7 +303,8 @@ function startMatch() {
 
 function sendStart(c) {
   const g = match.g;
-  send(c, { t: 'start', you: c.player, tick: g.tick, paused: match.paused, host: lobby.hostId, cid: c.id, ...g.startInfo() });
+  const best = hallOfFame.find((e) => (e.mode || 'rt') === (g.mode || 'rt'));       // the score to beat, shown under the players list
+  send(c, { t: 'start', you: c.player, tick: g.tick, paused: match.paused, host: lobby.hostId, cid: c.id, best: best ? { name: best.name, score: best.score } : null, ...g.startInfo() });
   send(c, g.full());
   if (match.over && match.overMsg) send(c, match.overMsg);
   c.synced = true;
@@ -415,9 +417,21 @@ function matchAction(c, m) {
       match.paused = !match.paused;
       for (const x of joined()) send(x, { t: 'paused', v: match.paused, by: c.name });
       break;
-    case 'end':                       // back to the lobby: host any time, anyone once the match is decided
-      if (isHost || match.over) endMatch(isHost ? 'host returned to lobby' : 'returned to lobby');
+    case 'end': {                     // back to the lobby: host any time, anyone once the match is decided
+      if (isHost || match.over) { endMatch(isHost ? 'host returned to lobby' : 'returned to lobby'); break; }
+      // mid-match, everyone else votes: once every player still connected agrees, the match ends for all
+      // (and if no human kitchen is left standing, there's nothing to wait for)
+      const players = joined().filter((x) => x.player >= 0);
+      const humansAlive = players.some((x) => match.g.players[x.player].alive);
+      if (c.player < 0 && humansAlive) { notice('Only the host or the players can send everyone back to the lobby.', c); break; }
+      if (!humansAlive) { endMatch('no human kitchens left'); break; }
+      match.votes.add(c.token);
+      const yes = players.filter((x) => match.votes.has(x.token)).length;
+      if (yes >= players.length) { endMatch('everyone voted to return to the lobby'); break; }
+      notice(`${c.name} wants to go back to the lobby (${yes}/${players.length} agree). Menu → "Vote to return to the lobby" to agree; the host can end it any time.`);
+      for (const x of joined()) send(x, { t: 'votes', n: yes, of: players.length, mine: match.votes.has(x.token) });
       break;
+    }
   }
 }
 
@@ -431,7 +445,7 @@ function join(c, m) {
   }
   c.joined = true;
   const cur = clients.get(lobby.hostId);
-  if (!cur || !cur.joined || (c.local && !cur.local)) lobby.hostId = c.id;
+  if (c.token === lobby.hostToken || !cur || !cur.joined || (c.local && !cur.local)) { lobby.hostId = c.id; lobby.hostToken = c.token; }
   send(c, { t: 'welcome', id: c.id, token: c.token, name: c.name, version: VERSION });
   log(`${c.name} joined (${c.local ? 'this PC' : c.conn.remoteAddress})`);
 
@@ -444,6 +458,7 @@ function join(c, m) {
       notice(`${c.name} is back.`);
     } else notice(`${c.name} is watching.`);
     sendStart(c);
+    for (const x of joined()) if (x !== c) send(x, { t: 'host', host: lobby.hostId });   // the host may have changed hands
     return;
   }
   // returning to a seat they already held (page refresh)?

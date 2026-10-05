@@ -66,7 +66,7 @@ export function clampCamera() {
 }
 
 let zoomSens = 1;                     // Controls menu: how far one wheel notch (or key press) zooms
-export function setZoomSens(v) { zoomSens = Math.max(0.2, Math.min(3, Number(v) || 1)); }
+export function setZoomSens(v) { zoomSens = Math.max(0.25, Math.min(4, Number(v) || 1)); }
 const ZOOM_STEP = 1.2;                // one notch at 100% sensitivity (the old fixed zoom steps)
 export function zoomBy(dir, sx, sy, notches = 1) {
   const lo = ZOOMS[0], hi = ZOOMS[ZOOMS.length - 1], cur = G.cam.scale;
@@ -253,6 +253,59 @@ function wallMask(tx, ty, owner) {
   return (at(tx, ty - 1) ? 1 : 0) | (at(tx + 1, ty) ? 2 : 0) | (at(tx, ty + 1) ? 4 : 0) | (at(tx - 1, ty) ? 8 : 0);
 }
 /** A finished gate swings open while one of its own side's units (that we can see) is at the door. */
+/** A hero wearing a buff-camp buff: a wide pulsing ring on the ground and sparks rising around it (drawn under the hero). */
+function campAura(e, sx, sy, s, t) {
+  const kinds = [];
+  if (e.bm & BUFFS.b_pepper.bit) kinds.push(['#ff4a2a', '#ffb347']);
+  if (e.bm & BUFFS.b_sugar.bit) kinds.push(['#ff6fd8', '#fff0fb']);
+  kinds.forEach(([c1, c2], n) => {
+    const R = s * (0.95 + n * 0.22), pulse = 0.5 + 0.5 * Math.sin(t * 5 + e.id + n);
+    ctx.lineWidth = Math.max(2.5, s / 7); ctx.strokeStyle = c1; ctx.globalAlpha = 0.6 + 0.35 * pulse;
+    ctx.beginPath(); ctx.ellipse(sx, sy, R, R * 0.45, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 0.16 + 0.1 * pulse; ctx.fillStyle = c1; ctx.fill();
+    for (let i = 0; i < 6; i++) {                                // sparks drifting up
+      const ph = (t * 0.9 + i / 6 + n * 0.5) % 1, a = (i / 6) * Math.PI * 2 + e.id;
+      ctx.globalAlpha = (1 - ph) * 0.9; ctx.fillStyle = i % 2 ? c2 : c1;
+      ctx.beginPath(); ctx.arc(sx + Math.cos(a) * R * 0.8, sy + Math.sin(a) * R * 0.36 - ph * s * 1.4, Math.max(1.5, s * 0.055), 0, Math.PI * 2); ctx.fill();
+    }
+  });
+  ctx.globalAlpha = 1;
+}
+/** Over the head of a buffed hero: a chili (Ghost Pepper) and/or a sweet (Sugar High). */
+function campBadge(e, sx, sy, s, t) {
+  const list = [];
+  if (e.bm & BUFFS.b_pepper.bit) list.push('pepper');
+  if (e.bm & BUFFS.b_sugar.bit) list.push('sugar');
+  const k = Math.max(8, s * 0.32), bob = Math.sin(t * 4 + e.id) * s * 0.05, y = sy - s * 2.05 + bob;
+  list.forEach((kind, i) => {
+    const x = sx + (i - (list.length - 1) / 2) * k * 2.5;
+    ctx.lineWidth = Math.max(1.5, s / 20); ctx.strokeStyle = kind === 'pepper' ? '#ff5a3a' : '#ff8ad8';
+    ctx.fillStyle = kind === 'pepper' ? 'rgba(120,28,16,0.92)' : 'rgba(110,30,90,0.92)'; ctx.beginPath(); ctx.arc(x, y, k * 1.15, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.lineWidth = Math.max(1, s / 26); ctx.strokeStyle = 'rgba(20,12,10,0.95)';
+    if (kind === 'pepper') {
+      ctx.beginPath(); ctx.moveTo(x - k * 0.55, y - k * 0.35); ctx.quadraticCurveTo(x + k * 0.6, y - k * 0.5, x + k * 0.35, y + k * 0.7);
+      ctx.quadraticCurveTo(x - k * 0.1, y + k * 0.1, x - k * 0.55, y - k * 0.35); ctx.fillStyle = '#e8352a'; ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - k * 0.55, y - k * 0.35); ctx.lineTo(x - k * 0.75, y - k * 0.7); ctx.strokeStyle = '#4fb34a'; ctx.lineWidth = Math.max(1.5, s / 14); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#ff7ae0';
+      for (const m of [-1, 1]) { ctx.beginPath(); ctx.moveTo(x + m * k * 0.45, y); ctx.lineTo(x + m * k * 0.95, y - k * 0.38); ctx.lineTo(x + m * k * 0.95, y + k * 0.38); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+      ctx.beginPath(); ctx.arc(x, y, k * 0.5, 0, Math.PI * 2); ctx.fillStyle = '#ff9ad5'; ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, k * 0.25, 0, Math.PI * 1.4); ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, s / 22); ctx.stroke();
+    }
+  });
+}
+/** A barred gate: a heavy beam across it and a padlock. */
+function drawBar(cx, cy, s) {
+  const k = s * 0.5, lwB = Math.max(1, s / 22);
+  ctx.fillStyle = '#5a3b24'; ctx.strokeStyle = 'rgba(20,12,10,0.95)'; ctx.lineWidth = lwB;
+  ctx.beginPath(); ctx.rect(cx - k * 0.95, cy - k * 0.12, k * 1.9, k * 0.26); ctx.fill(); ctx.stroke();
+  const py = cy - k * 0.05, bw = k * 0.5, bh = k * 0.42;
+  ctx.beginPath(); ctx.arc(cx, py - bh * 0.15, bw * 0.34, Math.PI, 0); ctx.lineWidth = Math.max(1.5, s / 12); ctx.strokeStyle = 'rgba(20,12,10,0.95)'; ctx.stroke();
+  ctx.lineWidth = Math.max(1, s / 22); ctx.strokeStyle = '#c9d2d8'; ctx.stroke();
+  ctx.fillStyle = '#e0b440'; ctx.strokeStyle = 'rgba(20,12,10,0.95)'; ctx.lineWidth = lwB;
+  ctx.beginPath(); ctx.roundRect(cx - bw / 2, py - bh * 0.15, bw, bh, bw * 0.18); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#3a2a1f'; ctx.beginPath(); ctx.arc(cx, py + bh * 0.25, bw * 0.1, 0, Math.PI * 2); ctx.fill();
+}
 function gateOpen(e) {
   if (e.prog < 100) return false;
   const team = teamOf(e.owner);
@@ -488,10 +541,12 @@ export function render(now) {
           let col = null;
           for (const k in BUFF_GLOW) if (e.bm & BUFFS[k].bit) col = BUFF_GLOW[k];
           if (col) { ctx.globalAlpha = 0.35 + 0.2 * Math.sin(t * 8 + e.id); ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(sx, sy, e.r * s * 1.1, e.r * s * 0.65, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; }
+          if (e.bm & (BUFFS.b_pepper.bit | BUFFS.b_sugar.bit)) campAura(e, sx, sy, s, t);
         }
         if (spent) ctx.globalAlpha = 0.5;
         SPR.drawUnit(ctx, e.type, colorOf(e.owner), sx, sy, s, { face: e.face, anim: e.bm & 2048 ? 'idle' : ANIMS[e.st] || 'idle', t: e.bm & 2048 ? 0 : t + e.id * 0.37, carry: e.carry ? RES[e.carry - 1] : null });
         ctx.globalAlpha = 1;
+        if (e.bm & (BUFFS.b_pepper.bit | BUFFS.b_sugar.bit)) campBadge(e, sx, sy, s, t);
         if (e.bm & 2048) {                             // stuck in caramel: an amber shell
           ctx.globalAlpha = 0.45; ctx.fillStyle = '#e8a23a'; ctx.beginPath(); ctx.ellipse(sx, sy - s * 0.42, e.r * s * 1.25, s * 0.62, 0, 0, Math.PI * 2); ctx.fill();
           ctx.globalAlpha = 0.9; ctx.strokeStyle = '#fff3c4'; ctx.lineWidth = Math.max(1, s / 30); ctx.beginPath(); ctx.ellipse(sx, sy - s * 0.42, e.r * s * 1.25, s * 0.62, 0, 3.6, 4.9); ctx.stroke(); ctx.globalAlpha = 1;
@@ -525,7 +580,9 @@ export function render(now) {
       } else if (e.kind === K_BLDG) {
         const vis = isAlly(e.owner) || e.vis;
         const mh = maxHp(e);
-        drawStation(e.type, e.owner, e.tx, e.ty, s, { progress: (vis ? e.prog : e.gprog) / 100, t: t + e.id, hpFrac: vis && e.prog >= 100 ? e.hp / mh : 1, ghost: false, open: e.type === 'gate' && vis && gateOpen(e) });
+        const isGate = BUILDINGS[e.type] && BUILDINGS[e.type].gate;
+        drawStation(e.type, e.owner, e.tx, e.ty, s, { progress: (vis ? e.prog : e.gprog) / 100, t: t + e.id, hpFrac: vis && e.prog >= 100 ? e.hp / mh : 1, ghost: false, open: isGate && !e.locked && vis && gateOpen(e) });
+        if (isGate && e.locked && vis && e.prog >= 100) drawBar(ox + e.x * s, oy + e.y * s, s);
         if (G.ps[e.owner].lockUntil > (tac ? 0 : G.tick) && vis) {                         // Lockdown: steel shutters
           ctx.globalAlpha = 0.28 + 0.08 * Math.sin(t * 4); ctx.fillStyle = '#9fc4e8'; ctx.fillRect(ox + e.tx * s, oy + (e.ty - 0.2) * s, e.size * s, (e.size + 0.2) * s);
           ctx.globalAlpha = 0.9; ctx.strokeStyle = '#dff0ff'; ctx.lineWidth = lw * 0.6; ctx.strokeRect(ox + e.tx * s + 1, oy + (e.ty - 0.2) * s, e.size * s - 2, (e.size + 0.2) * s - 1); ctx.globalAlpha = 1;
@@ -593,8 +650,9 @@ export function render(now) {
     ctx.fillText(String(levels[i + 2]), x, y + r * 0.06);
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-  for (const e of badges) {                                    // "12 inside" on a sheltering Kitchen HQ
-    const fs = Math.max(11 * dpr, s * 0.36), text = '\u{1F514} ' + e.inside;
+  for (const e of badges) {                                    // "12 inside" on a sheltering Kitchen HQ (bell = Prep Cooks, swords = soldiers)
+    const cooks = e.inside - (e.mil || 0), fs = Math.max(11 * dpr, s * 0.36);
+    const text = [cooks > 0 ? '\u{1F514} ' + cooks : '', e.mil > 0 ? '\u2694 ' + e.mil : ''].filter(Boolean).join('  ');
     ctx.font = `800 ${Math.round(fs)}px "Trebuchet MS", "Segoe UI", sans-serif`;
     const tw = ctx.measureText(text).width + fs, bx = ox + e.x * s - tw / 2, by = oy + (e.ty - 1.25) * s;
     ctx.fillStyle = 'rgba(27,20,17,0.88)'; ctx.strokeStyle = '#f0b41c'; ctx.lineWidth = Math.max(1, dpr * 1.5);

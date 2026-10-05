@@ -412,6 +412,14 @@ const TOOLS = {
     for (const a of [-0.22, 0.22, 0]) { c.save(); c.rotate(a); pen(c, '#d9d2c3', LW * 1.6, [-0.04, 0, 0.42, 0]); box(c, 0.14, -0.035, 0.07, 0.07, 0.015, MEAT);
       box(c, 0.23, -0.035, 0.06, 0.07, 0.02, a ? '#6dbb4a' : '#f2c230'); box(c, 0.31, -0.032, 0.065, 0.064, 0.015, MEAT); c.restore(); }
   },
+  slingshot(c, fx) {                                   // a forked stick, a band, and a peppercorn ready to fly
+    limb(c, -0.04, 0, 0.14, 0, 0.04, WOOD_D);
+    pen(c, OUTLINE, LW * 3.2, [0.12, 0, 0.27, -0.1]); pen(c, WOOD, LW * 1.8, [0.12, 0, 0.27, -0.1]);
+    pen(c, OUTLINE, LW * 3.2, [0.12, 0, 0.27, 0.1]); pen(c, WOOD, LW * 1.8, [0.12, 0, 0.27, 0.1]);
+    const pull = fx ? 0 : -0.08;
+    pen(c, '#c0473a', LW * 1.1, [0.27, -0.1, 0.12 + pull, 0, 0.27, 0.1]);
+    ell(c, 0.12 + pull, 0, 0.035, 0.035, '#3a3232');
+  },
   hatchet(c) { limb(c, -0.04, 0, 0.24, 0, 0.036, WOOD_D); poly(c, [0.15, -0.02, 0.27, -0.03, 0.29, 0.12, 0.2, 0.085, 0.15, 0.03], STEEL); },
   mallet(c) { limb(c, -0.04, 0, 0.24, 0, 0.036, WOOD_D); box(c, 0.17, -0.09, 0.12, 0.18, 0.025, WOOD_L); },
   scoop(c, fx) { limb(c, -0.04, 0, 0.26, 0, 0.034, STEEL); ell(c, 0.32, 0, 0.085, 0.085, STEEL); ell(c, 0.32, 0, 0.06, 0.06, '#9fd4ee', 0, LW * 0.7); if (fx) for (let i = 0; i < fx; i++) dot(c, 0.44 + i * 0.05, -0.02 * i, 0.03 - i * 0.004, PASTEL[i % 4]); },
@@ -428,6 +436,7 @@ const SPEC = dict({
   line:       { skin: 1, hair: 'blk', hat: 'toque', hatH: 0.22, tool: 'pan' },
   butcher:    { skin: 0, hair: 'aub', hat: 'bandana', tool: 'cleaver', w: 1.24, apron: 'stripe', beard: 'stache' },
   saucier:    { skin: 2, hair: 'blk', hat: 'toque', hatH: 0.14, tool: 'ladle', toolK: 1.3, bottle: 1, w: 0.95 },
+  slinger:    { skin: 3, hair: 'brn', hat: 'bandana', tool: 'slingshot', toolK: 1.3, style: 'aim', rest: [-0.2, -0.3], jacket: '#7a8a4a', apron: 'half', w: 0.9 },
   barista:    { skin: 1, hair: 'red', hat: 'visor', tool: 'cup', toolK: 1.35, jacket: '#8a6248', style: 'aim', rest: [-0.2, -PI / 2], bun: 1 },
   flambadier: { skin: 0, hair: 'blk', hat: 'beanie', goggles: 1, tool: 'torch', jacket: '#565b68', style: 'aim', rest: [-0.2, -0.3] },
   pinroller:  { skin: 1, hair: 'brn', hat: 'pot', tool: 'pin', w: 1.32, shield: 1, toolK: 1.1 },
@@ -1933,12 +1942,26 @@ const UI_ART = dict({
   follow(c, col) { box(c, -0.42, -0.22, 0.84, 0.52, 0.08, '#3a2c28'); box(c, -0.34, -0.14, 0.68, 0.36, 0.05, '#9fd4ee', LW * 0.8); ell(c, 0, 0.04, 0.12, 0.12, col || '#e2403a'); poly(c, [-0.12, -0.46, 0.12, -0.46, 0.06, -0.22, -0.06, -0.22], '#3a2c28'); },
   flag(c, col) { limb(c, -0.3, 0.5, -0.3, -0.5, 0.06, WOOD_D); poly(c, [-0.27, -0.5, 0.46, -0.3, -0.27, -0.08], col || '#e2403a'); dot(c, -0.3, -0.52, 0.05, GOLD); },
   lock(c) { c.beginPath(); c.arc(0, -0.08, 0.2, PI, 0); pen(c, OUTLINE, 0.17); pen(c, STEEL, 0.09); box(c, -0.3, -0.08, 0.6, 0.46, 0.07, '#8fa0ad'); ell(c, 0, 0.1, 0.06, 0.06, '#3a2c28'); pen(c, '#3a2c28', 0.05, [0, 0.12, 0, 0.26]); },
+  unlock(c) { c.beginPath(); c.arc(0.2, -0.2, 0.2, PI, 0.15); pen(c, OUTLINE, 0.17); pen(c, STEEL, 0.09); box(c, -0.3, -0.08, 0.6, 0.46, 0.07, '#d9b44a'); ell(c, 0, 0.1, 0.06, 0.06, '#3a2c28'); pen(c, '#3a2c28', 0.05, [0, 0.12, 0, 0.26]); },
+  garrison(c) { scaled(c, 0.12, 0, 0.85, () => hut(c)); arrowR(c, -0.5, 0.18, -0.02, '#57d657'); },
+  release(c) { scaled(c, -0.14, 0, 0.85, () => hut(c)); arrowR(c, -0.06, 0.18, 0.48, '#57d657'); },
+  keep(c) { hut(c); c.save(); c.translate(0.24, 0.2); c.scale(0.5, 0.5); c.beginPath(); c.arc(0, -0.08, 0.2, PI, 0); pen(c, OUTLINE, 0.17); pen(c, STEEL, 0.09); box(c, -0.3, -0.08, 0.6, 0.46, 0.07, '#8fa0ad'); c.restore(); },
+  tribute(c) { sack(c, -0.18, 0.18, 1.5, '#e9d9b4'); arrowR(c, 0.02, -0.28, 0.5, '#f0b41c'); },
   f_free(c, col) { formDots(c, col, [[-0.3, -0.22], [0.06, -0.34], [0.34, -0.08], [-0.1, 0.02], [-0.36, 0.26], [0.2, 0.3], [0.0, 0.4]]); },
   f_line(c, col) { formDots(c, col, [[-0.4, -0.14], [-0.2, -0.14], [0, -0.14], [0.2, -0.14], [0.4, -0.14], [-0.3, 0.16], [-0.1, 0.16], [0.1, 0.16], [0.3, 0.16]], true); },
   f_box(c, col) { const p = []; for (const y of [-0.26, 0, 0.26]) for (const x of [-0.26, 0, 0.26]) p.push([x, y]); formDots(c, col, p, true); },
   f_wedge(c, col) { formDots(c, col, [[0, -0.36], [-0.17, -0.16], [0.17, -0.16], [-0.34, 0.04], [0.34, 0.04], [-0.5, 0.24], [0.5, 0.24]], true); },
   f_spread(c, col) { formDots(c, col, [[-0.4, -0.36], [0, -0.36], [0.4, -0.36], [-0.4, 0.02], [0, 0.02], [0.4, 0.02], [-0.4, 0.4], [0, 0.4], [0.4, 0.4]], false, 0.06); },
 });
+function hut(c) {                                      // a little station: walls, red roof, open door
+  poly(c, [-0.34, 0.44, -0.34, -0.04, 0, -0.36, 0.34, -0.04, 0.34, 0.44], '#cf9f58');
+  poly(c, [-0.46, 0.0, 0, -0.5, 0.46, 0.0, 0.36, 0.06, 0, -0.34, -0.36, 0.06], '#c8452e');
+  box(c, -0.11, 0.1, 0.22, 0.34, 0.03, '#3a2a1f');
+}
+function arrowR(c, x0, y, x1, col) {                  // a fat arrow pointing right, from x0 to x1
+  const hw = 0.09, hh = 0.17, tip = Math.min(0.2, (x1 - x0) * 0.45);
+  poly(c, [x0, y - hw, x1 - tip, y - hw, x1 - tip, y - hh, x1, y, x1 - tip, y + hh, x1 - tip, y + hw, x0, y + hw], col);
+}
 function bellShape(c, col) {
   box(c, -0.05, -0.5, 0.1, 0.1, 0.03, dk(col, 0.3));
   c.beginPath(); c.moveTo(-0.38, 0.24); c.bezierCurveTo(-0.2, 0.08, -0.3, -0.42, 0, -0.42); c.bezierCurveTo(0.3, -0.42, 0.2, 0.08, 0.38, 0.24); c.closePath(); ink(c, col);

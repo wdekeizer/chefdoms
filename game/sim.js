@@ -6,7 +6,7 @@
 import {
   TICK_RATE, DT, RES, TILE, TREE_WOOD, NODES, BUILDINGS, TECHS, COMMANDERS, BUFFS,
   AURA_RADIUS, ZARA_TIP, HERO_RESPAWN, START_RES, MAP_SIZES, mapSizeFor,
-  GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, FORMATIONS, ULT_AGE, CTF, MARKET, marketQuote,
+  FORMATIONS, ULT_AGE, CTF, MARKET, marketQuote, INSIDE_HEAL, garrisonShots, canGarrison,
   computeStats, techCost, techTime, trainList, wallLine,
 } from './data.js';
 import { Pathfinder, gateKey } from './pathfinding.js';
@@ -133,6 +133,7 @@ export class Game {
       x: tx + S.size / 2, y: ty + S.size / 2, S,
       hp: done ? S.hp : 1, prog: done ? 1 : 0, done: false,
       q: [], rally: null, cd: 0, tgt: 0, builders: 0, worker: 0, paid: null, inside: 0,
+      insideMil: 0, stance: 0, keep: false, locked: false,       // soldiers inside; what new recruits are told; gates: barred
       lastHit: -9999, dead: false, _sig: '',
     };
     for (let y = ty; y < ty + S.size; y++) for (let x = tx; x < tx + S.size; x++) {
@@ -149,7 +150,7 @@ export class Game {
   completeBuilding(b) {
     b.done = true; b.prog = 1;
     if (b.hp > b.S.hp) b.hp = b.S.hp;
-    if (b.S.gate) { const k = gateKey(this.players[b.owner].team); if (k > 0) this.block[b.ty * this.w + b.tx] = k; }   // the swing doors open for our side
+    if (b.S.gate) { const k = gateKey(this.players[b.owner].team); if (k > 0) this.block[b.ty * this.w + b.tx] = b.locked ? 1 : k; }   // the swing doors open for our side (unless barred)
     if (this.tick > 0 && !b.S.wall) this.players[b.owner].score.built++;
     this.refreshBuildings(this.players[b.owner]);
     this.events.push(['built', b.owner, b.id]);
@@ -380,7 +381,11 @@ export class Game {
   updateUnit(u) {
     const S = u.S, tick = this.tick;
     if (u.cd > 0) u.cd--;
-    if (u.inside) { u.st = ST.INSIDE; u.tgt = 0; return; }
+    if (u.inside) {                                 // safe inside a station: patched up a little every tick
+      u.st = ST.INSIDE; u.tgt = 0;
+      if (u.hp < S.hp) u.hp = Math.min(S.hp, u.hp + (INSIDE_HEAL.flat + S.hp * INSIDE_HEAL.frac) * DT);
+      return;
+    }
     if (u.expire && tick >= u.expire) { this.killEntity(u, -1); return; }        // a hired rider heads home
     { const i = (u.y | 0) * this.w + (u.x | 0); if (this.block[i] && !this.open(u, i)) this.unstick(u); }
     if (u.stunned) { u.st = ST.IDLE; u.tgt = 0; return; }                         // stuck in caramel
@@ -495,6 +500,21 @@ export class Game {
         } else if (!this.approach(u, o, rectGoal(b), speed)) u.st = ST.IDLE;
         break;
       }
+      case 'garrison': {                          // a soldier heads into an HQ, tower or Signature Restaurant to heal (and shoot from it)
+        let b = this.ents.get(o.id);
+        if (!b || b.dead || !b.done || b.owner !== u.owner || !canGarrison(u.S, b.S)) {
+          b = this.garrisonFor(u, null, 12);
+          if (!b) { this.nextOrder(u); break; }
+          o.id = b.id; o.pathed = false; o.fails = 0;
+        }
+        u.tgt = 0;
+        if (rectDist(u.x, u.y, b) <= REACH) {
+          if (b.inside < b.S.garrison) { u.queue.length = 0; this.beginOrder(u, null); this.enter(u, b); break; }
+          const alt = this.garrisonFor(u, b, 12);
+          if (alt) { o.id = alt.id; o.pathed = false; o.fails = 0; } else this.nextOrder(u);   // full house: wait by the door
+        } else if (!this.approach(u, o, rectGoal(b), speed)) this.nextOrder(u);
+        break;
+      }
       default: this.nextOrder(u);
     }
     if (u.breach) {                                 // walked into an enemy wall on the way: knock it down, then carry on
@@ -539,7 +559,7 @@ export class Game {
   shelterFor(u, needRoom) {
     let best = null, bs = Infinity;
     for (const b of this.bldgs) {
-      if (b.dead || !b.done || b.owner !== u.owner || !b.S.garrison) continue;
+      if (b.dead || !b.done || b.owner !== u.owner || !b.S.garrison || !b.S.dropoff) continue;     // (Prep Cooks only shelter in a Kitchen HQ)
       const full = b.inside >= b.S.garrison;
       if (full && needRoom) continue;
       const score = rectDist(u.x, u.y, b) + (full ? 1000 : 0);
@@ -557,9 +577,40 @@ export class Game {
     this.beginOrder(u, { t: 'shelter', id: b.id });
     return true;
   }
+  /** Nearest own station with room that will take this soldier in (not `except`), within maxD tiles. */
+  garrisonFor(u, except, maxD = 40) {
+    let best = null, bs = maxD;
+    for (const b of this.bldgs) {
+      if (b === except || b.dead || !b.done || b.owner !== u.owner || b.inside >= b.S.garrison || !canGarrison(u.S, b.S)) continue;
+      const d = rectDist(u.x, u.y, b);
+      if (d < bs) { bs = d; best = b; }
+    }
+    return best;
+  }
+  /** Let everyone out of a station (Prep Cooks stay put while the bell is ringing); they head for its rally point. */
+  release(b) {
+    const P = this.players[b.owner], r = b.rally;
+    let n = 0;
+    for (const u of this.units) {
+      if (u.dead || u.inside !== b.id || (u.isCook && P.bell)) continue;
+      u.saved = null;
+      this.eject(u, r ? r.x : undefined, r ? r.y : undefined);
+      if (r) this.beginOrder(u, { t: 'move', x: r.x + (Math.random() - 0.5) * 1.5, y: r.y + (Math.random() - 0.5) * 1.5 });
+      n++;
+    }
+    return n;
+  }
+  /** Bar a gate (nobody gets through, your own side included) or open it again. */
+  lockGate(b, lock) {
+    b.locked = !!lock;
+    if (!b.done) return;
+    const k = gateKey(this.players[b.owner].team);
+    this.block[b.ty * this.w + b.tx] = lock || k <= 0 ? 1 : k;
+  }
   enter(u, b) {
     this.deposit(u);
     u.inside = b.id; b.inside++;
+    if (!u.isCook) b.insideMil++;
     u.st = ST.INSIDE; u.tgt = 0; u.path = null; u.wantPath = false;
     u.x = b.x; u.y = b.y;
   }
@@ -569,6 +620,7 @@ export class Game {
     u.inside = 0; u.st = ST.IDLE;
     if (!b) return;
     b.inside = Math.max(0, b.inside - 1);
+    if (!u.isCook) b.insideMil = Math.max(0, b.insideMil - 1);
     const pt = this.spawnPoint(b, tx ?? b.x, ty ?? b.y + b.size);
     u.x = pt[0] + (Math.random() - 0.5) * 0.5; u.y = pt[1] + (Math.random() - 0.5) * 0.5;
     { const i = (u.y | 0) * this.w + (u.x | 0); if (this.block[i] && !this.open(u, i)) { u.x = pt[0]; u.y = pt[1]; } }
@@ -1019,7 +1071,7 @@ export class Game {
       b.tgt = tg ? tg.id : 0;
       if (tg && b.cd <= 0) {
         // a volley: several plates, spread over whoever is in range (sheltered Prep Cooks lend a Kitchen HQ extra hands)
-        const shots = S.shots + (S.garrison ? Math.min(GARRISON_MAX_SHOTS, Math.floor(b.inside / GARRISON_PER_SHOT)) : 0);
+        const shots = S.shots + (S.garrison ? garrisonShots(b.inside, b.insideMil) : 0);
         if (shots <= 1) this.launch(b, S, tg, S.atk);
         else {
           const list = this.volleyTargets(b, S, tg, shots);
@@ -1080,6 +1132,10 @@ export class Game {
     const r = b.rally;
     const pt = this.spawnPoint(b, r ? r.x : b.x, r ? r.y : b.y + b.size);
     const u = this.spawnUnit(b.owner, key, pt[0], pt[1]);
+    if (!u.isCook) {
+      if (b.stance) u.stance = b.stance;                                       // the station's standing orders for new recruits
+      if (b.keep && b.S.garrison && b.inside < b.S.garrison) { this.enter(u, b); return u; }   // wait inside until released
+    }
     const bell = u.isCook && this.players[b.owner].bell;
     if (!r) { if (bell) this.shelter(u); return u; }
     let order = null;
@@ -1393,7 +1449,7 @@ export class Game {
         du = true;
         this.leaveOrder(e);
         if (!e.noPop) P.pop -= e.S.pop;
-        if (e.inside) { const hb = this.ents.get(e.inside); if (hb) hb.inside = Math.max(0, hb.inside - 1); e.inside = 0; }
+        if (e.inside) { const hb = this.ents.get(e.inside); if (hb) { hb.inside = Math.max(0, hb.inside - 1); if (!e.isCook) hb.insideMil = Math.max(0, hb.insideMil - 1); } e.inside = 0; }
         if (K && K !== P) {
           K.score.kills++; P.score.lost++;
           if (e.isHero) { K.score.heroKills++; P.score.heroDeaths++; }
@@ -1421,9 +1477,9 @@ export class Game {
             u.inside = 0; u.st = ST.IDLE; u.order = null;
             u.x = e.x + (Math.random() - 0.5) * (e.size - 1); u.y = e.y + (Math.random() - 0.5) * (e.size - 1);
             const next = P.alive && P.bell ? this.shelterFor(u) : null;
-            if (next && next !== e) this.beginOrder(u, { t: 'shelter', id: next.id }); else this.restore(u);
+            if (next && next !== e && u.isCook) this.beginOrder(u, { t: 'shelter', id: next.id }); else this.restore(u);
           }
-          e.inside = 0;
+          e.inside = 0; e.insideMil = 0;
         }
       } else {
         dn = true;
@@ -1632,6 +1688,57 @@ export class Game {
           }
         }
         this.events.push(['bell', pi, on ? 1 : 0]);
+        break;
+      }
+
+      case 'gr': {                                  // garrison: soldiers go inside a station (the one named, or the nearest with room)
+        const named = c.tid !== undefined ? this.ownBldg(pi, c.tid) : null;
+        if (c.tid !== undefined && (!named || !named.done)) return;
+        let sent = 0;
+        for (const u of this.ownUnits(pi, c.ids)) {
+          if (u.isCook) continue;
+          const b = named ? (canGarrison(u.S, named.S) ? named : null) : this.garrisonFor(u, null, 40);
+          if (b) { this.setOrder(u, { t: 'garrison', id: b.id }, q); sent++; }
+        }
+        if (!sent) this.events.push(['note', pi, 'nogarrison']);
+        break;
+      }
+
+      case 'ej': {                                  // let everyone out
+        if (!Array.isArray(c.bids)) return;
+        for (let i = 0; i < c.bids.length && i < 60; i++) { const b = this.ownBldg(pi, c.bids[i]); if (b) this.release(b); }
+        break;
+      }
+
+      case 'bs': case 'bk': {                       // a station's standing orders: the stance new recruits get, or keep them inside
+        if (!Array.isArray(c.bids)) return;
+        const v = c.v | 0;
+        if (c.c === 'bs' && (v < 0 || v > 2)) return;
+        for (let i = 0; i < c.bids.length && i < 60; i++) {
+          const b = this.ownBldg(pi, c.bids[i]);
+          if (!b || !b.S.trains.length) continue;
+          if (c.c === 'bs') b.stance = v; else b.keep = !!v && b.S.garrison > 0;
+        }
+        break;
+      }
+
+      case 'gl': {                                  // bar or open gates: the ones named, or every gate you own
+        const list = Array.isArray(c.ids) ? c.ids.slice(0, 400).map((id) => this.ownBldg(pi, id)) : this.bldgs.filter((b) => b.owner === pi && !b.dead);
+        const gates = list.filter((b) => b && b.S.gate);
+        if (!gates.length) { this.events.push(['note', pi, 'nogate']); return; }
+        const lock = c.v === undefined ? gates.some((b) => !b.locked) : !!c.v;
+        for (const b of gates) this.lockGate(b, lock);
+        this.events.push(['gates', pi, lock ? 1 : 0, gates.length]);
+        break;
+      }
+
+      case 'tb': {                                  // send ingredients to a team-mate
+        const T = this.players[c.to | 0];
+        if (!T || T === P || T.neutral || !T.alive || T.team !== P.team || !RES.includes(c.res)) return;
+        const n = Math.min(Math.floor(P.res[c.res]), Math.max(0, Math.floor(Number(c.n) || 0)), 100000);
+        if (n <= 0) return;
+        P.res[c.res] -= n; T.res[c.res] += n;
+        this.events.push(['tribute', pi, T.idx, c.res, n]);
         break;
       }
 
@@ -1853,15 +1960,18 @@ export class Game {
       q.map((it) => it.k + it.key),
       b.rally ? [Math.round(b.rally.x * POS_Q), Math.round(b.rally.y * POS_Q)] : 0,
       b.inside,
+      (b.stance | 0) | (b.keep ? 4 : 0) | (b.locked ? 8 : 0) | ((b.insideMil | 0) << 4),   // standing orders, barred gate, soldiers inside
     ];
   }
   nodeRec(n) { return [n.id, 2, n.type, -1, n.tx, n.ty, n.amount]; }
   playerRec(P) {
-    return [
+    const r = [
       P.idx, Math.floor(P.res.food), Math.floor(P.res.wood), Math.floor(P.res.spice), Math.floor(P.res.salt),
       P.pop, P.popCap, P.age, P.techs, P.alive ? 1 : 0, P.heroId, P.heroRespawn, P.abilityReady, P.lunchUntil,
       [...P.pending], P.score.kills, P.score.lost, P.score.razed, P.bell ? 1 : 0, P.ultReady, P.lockUntil,
     ];
+    r[29] = this.scoreOf(P).total;                    // the live score (slots 21-28 belong to the game modes)
+    return r;
   }
 
   /** Everything that changed since the previous call. Call once per broadcast. */

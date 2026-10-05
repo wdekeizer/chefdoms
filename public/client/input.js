@@ -11,7 +11,7 @@ import { actionOf, keyOf, labelOf } from './keys.js';
 import * as TAC from './tactics.js';
 
 const keys = {};
-let hooks = { selection() {}, cardKey() { return false; }, cardBack() { return false; }, openChat() {}, toggleMenu() {}, note() {}, unitSound() {} };
+let hooks = { selection() {}, cardKey() { return false; }, cardBack() { return false; }, openChat() {}, toggleMenu() {}, note() {}, unitSound() {}, openTribute() {} };
 let canvas = null;
 let pan = null;                 // middle-mouse camera drag
 let lastClick = { id: 0, t: 0 };
@@ -94,6 +94,10 @@ export function hoverIntent(wx, wy) {
   const own = G.me >= 0 ? selected().filter((x) => x.owner === G.me && x.kind === K_UNIT) : [];
   if (!own.length) return e ? 'point' : '';
   if (e && e.kind !== K_NODE && !isAlly(e.owner)) return 'attack';
+  if (e && e.kind === K_BLDG && e.owner === G.me && e.prog >= 100 && own.some((x) => x.type !== 'cook')) {
+    const S = statsOf(e);
+    if (S && S.garrison && (S.tags || []).includes('def')) return 'enter';       // soldiers would go inside
+  }
   if (!own.some((x) => x.type === 'cook')) return e ? 'point' : '';
   const w = pickWork(wx, wy);
   if (!w) return e ? 'point' : '';
@@ -159,6 +163,19 @@ export function contextCommand(wx, wy, shift) {
       return;
     }
     if (target.kind === K_BLDG) {
+      // soldiers right-clicked onto your own HQ, tower or Signature Restaurant go inside to heal (and shoot from it)
+      const S = statsOf(target);
+      if (others.length && target.owner === G.me && target.prog >= 100 && S && S.garrison && (S.tags || []).includes('def')) {
+        if (cooks.length) {
+          const full = target.hp >= maxHp(target);
+          if (!full) cmd({ c: 'ba', ids: idsOf(cooks), tid: target.id, q });
+          else if (S.dropoff) cmd({ c: 'dr', ids: idsOf(cooks), tid: target.id, q });
+          else moveTo(cooks);
+        }
+        cmd({ c: 'gr', ids: idsOf(others), tid: target.id, q });
+        mark(target.x, target.y, '#7dff8a'); sfx('garrison');
+        return;
+      }
       if (cooks.length) {
         const full = target.hp >= maxHp(target), mine = target.owner === G.me, done = target.prog >= 100;
         if (target.type === 'garden' && done && full && mine) cmd({ c: 'ga', ids: idsOf(cooks), tid: target.id, q });
@@ -215,6 +232,24 @@ export function toggleBell() {
   const me = G.ps[G.me];
   if (!me || !me.alive || G.tb) return;
   cmd({ c: 'bell', on: me.bell ? 0 : 1 });
+}
+/** Bar or open gates: the selected ones if any are selected, otherwise every gate you own. */
+export function toggleGates() {
+  const me = G.ps[G.me];
+  if (!me || !me.alive || G.tb || G.ctf) return;
+  const sel = selected().filter((e) => e.owner === G.me && e.kind === K_BLDG && (BUILDINGS[e.type] || {}).gate);
+  const pool = sel.length ? sel : G.bldgs.filter((e) => e.owner === G.me && (BUILDINGS[e.type] || {}).gate);
+  if (!pool.length) { hooks.note('You have no gates to bar'); return; }
+  cmd(sel.length ? { c: 'gl', ids: sel.map((e) => e.id), v: sel.some((e) => !e.locked) ? 1 : 0 } : { c: 'gl', v: pool.some((e) => !e.locked) ? 1 : 0 });
+}
+/** Selected soldiers head inside: into `target` if given, else the nearest HQ, tower or Signature Restaurant with room. */
+export function garrisonSelected(target) {
+  if (G.tb || G.ctf) return false;
+  const ids = selected().filter((e) => e.owner === G.me && e.kind === K_UNIT && e.type !== 'cook').map((e) => e.id);
+  if (!ids.length) return false;
+  cmd(target ? { c: 'gr', ids, tid: target.id } : { c: 'gr', ids });
+  sfx('garrison');
+  return true;
 }
 
 // ------------------------------------------------------------------ selection
@@ -368,6 +403,9 @@ function onKeyDown(ev) {
     case 'follow': if (G.ctf && G.me >= 0) toggleFollow(); break;
     case 'ping': if (G.me >= 0) G.mode = { type: 'ping' }; break;
     case 'bell': toggleBell(); break;
+    case 'gatelock': toggleGates(); break;
+    case 'garrison': garrisonSelected(null); break;
+    case 'tribute': hooks.openTribute(); break;
     case 'formation': if (G.tb) break; setFormation((G.formation + 1) % FORMATIONS.length); hooks.note('Formation: ' + FORMATIONS[G.formation].name); hooks.selection(); break;
     case 'pause': if (G.cid === G.hostId) send({ t: 'pause' }); break;
     case 'zoomIn': case 'zoomIn2': zoomBy(1, window.innerWidth / 2, window.innerHeight / 2); break;

@@ -113,8 +113,14 @@ A friend's copy uses its own `public/music` and `public/sfx` folders, so each pl
   (destroy every enemy Kitchen HQ, or Conquest: destroy every station). Map size "Auto" picks Small (96×96 tiles) for 2,
   Medium (128) for 3-4, Large (160) for 5-6 and Huge (200) for 7-10 kitchens; a size too small for the head count is bumped up.
 - **Hall of Fame** shows the best scores by human players on this server (kept in `highscores.json` next to `server.js`).
-- Bots come in Easy, Normal, Hard and Extreme. Easy to Hard play by the same rules as you. Extreme plays the
-  Hard script flat out and also gathers 25% faster. No bot is limited by fog of war.
+- Bots come in Very easy, Easy, Normal, Hard, Very hard and Extreme. Easy to Hard play by the same rules as you.
+  Very easy runs a small kitchen, hardly ever attacks and gathers 20% slower: a gentle first opponent. Very hard plays
+  quicker than Hard with more of everything and gathers 10% faster; Extreme plays flat out and gathers 25% faster.
+  No bot is limited by fog of war.
+- **Back to the lobby.** The host can send everyone back at any time (Menu → Return everyone to the lobby). Once a match
+  is decided, anyone's "Back to the lobby" takes everybody. During a match the other players can **vote** (Menu → Vote
+  to return to the lobby): when every player still connected has voted, everyone goes back. The host keeps the host
+  role through a page reload.
 - One seat and no bots = a solo sandbox to learn the ropes.
 
 ## How to play
@@ -144,13 +150,32 @@ every Prep Cook drops their load at the door and shelters inside the nearest Kit
 hurt them. Every 5 cooks inside add one plate to the HQ's volley. "All clear" sends everyone straight back to the job
 they had.
 
+**Taking shelter (garrisons).** Soldiers can go inside a Kitchen HQ (30 places, shared with sheltering cooks), a Pepper
+Mill Tower (5, no vehicles or siege) or your Signature Restaurant (15): right-click the station with them selected (the
+cursor turns into a doorway), press **Take shelter** on the army's card, or press `J` for the nearest one with room.
+Inside they are safe, heal quickly, and every 2 soldiers add a shot to the station's volley. Select the station and press
+**Let everyone out** to send them to its rally point. If the station falls they spill out.
+
+**Standing orders for recruits.** Every station that trains soldiers has two settings on its card: **New recruits:**
+Aggressive / Hold the Line / Stand Down (the stance its units start with; click to cycle), and **Keep recruits inside**:
+new units wait safely inside the station (up to 10, healing) instead of walking out, until you press **Let everyone out**.
+
+**Sending ingredients.** In a team game, press **Send** on the top bar (or click a team-mate in the players list, or
+Menu → Send ingredients to a team-mate): pick who, then send 100, 500 or all of any ingredient. It arrives at once,
+free of charge.
+
+**The live score.** The players list (top right) shows everyone's score as the match goes on (the leader has a star),
+and below it the best score in the server's Hall of Fame for this kind of match.
+
 **Walls and gates** (real-time only). Select Prep Cooks and press **Walls & gates** on their card: a page with the
 **Crate Wall** (from the start), the **Salt Block Wall** (Diner Age onwards, 6 Salt a block, three times as tough), the
 **Swing Gate** and the **Salt Gate**, plus Back (Esc works too). Pick a wall, press where it should start and drag to
 where it ends: a line of blocks (at most 40 per drag) is laid along the way, going round trees and stations, with a
 preview of how many blocks and what they cost. The cooks build it block by block. Dragged over your own crates, a salt
 wall replaces them. A gate goes in a gap, or straight onto one of your own wall blocks (it takes its place): your team
-walks through it, everyone else is stopped. Enemy soldiers go round a wall when there is a sensible
+walks through it, everyone else is stopped. **Bar** a gate (select it and press Bar the gate, or press `K` to bar or
+open every gate you own) and nobody gets through, your own side included; a barred gate shows a beam and a padlock.
+Enemy soldiers go round a wall when there is a sensible
 way round and break through it when there is not (Battering Baguettes and catapults make short work of it; ranged units
 barely scratch it). Workers never break walls. Walls do not count as stations for Conquest or the scores.
 
@@ -163,10 +188,11 @@ and makes your commander stronger.
 |---|---|---|---|
 | Line Cook (frying pan) | Grill Station | Stations, Butchers, general brawling | Sauciers at range, Food Trucks |
 | Butcher (cleaver) | Grill Station | Scooters, Food Trucks | Almost everything else |
-| Saucier (ranged) | Sauce Station | Infantry | Scooters, siege |
+| Saucier (ranged) | Sauce Station | Infantry | Scooters, siege, Pepper Slingers |
+| Pepper Slinger (ranged) | Sauce Station | Sauciers and every other ranged unit (more than double damage, shrugs off thrown things) | Infantry, Scooters |
 | Delivery Scooter (fast) | Delivery Garage | Sauciers, siege, raiding Prep Cooks | Butchers |
 | Food Truck (heavy) | Delivery Garage | Most things | Butchers |
-| Meatball Catapult | Catering Workshop | Stations, clumps of units | Anything that reaches it |
+| Meatball Catapult | Catering Workshop | Stations (shoots from 13 tiles: further than any tower or Signature Restaurant), clumps of units | Anything that reaches it |
 | Battering Baguette | Catering Workshop | Stations only; ignores ranged fire | Infantry |
 | Barista | Kitchen HQ | Heals your units | Cannot fight |
 
@@ -182,7 +208,7 @@ Ranged units barely scratch stations. Bring Line Cooks, your unique unit, or sie
 | Loose / Service Line / Square / V Wedge / Spread Out | The shape your army takes on every move order. Infantry and vehicles go in front, ranged behind, siege and Baristas at the back, and a formation marches at the pace of its slowest member. |
 
 **Defences.** Pepper Mill Towers, Kitchen HQs and the Signature Restaurant shoot at intruders. A tower reaches 9 tiles,
-further than any ranged unit even fully upgraded (only siege can stand off and shell it); the restaurant reaches 10 and
+further than any ranged unit even fully upgraded (only the Meatball Catapult can stand off and shell it); the restaurant reaches 10 and
 throws three plates per volley, each at a different target. The Twin Grinders upgrade adds a projectile to all of them.
 
 **Upgrades.** Each kind of unit is upgraded where it is trained, one tier per age from the Diner Age (the card shows the
@@ -226,7 +252,7 @@ control-group numbers included; the table shows the defaults)
 | | |
 |---|---|
 | Left-click / drag | Select; double-click (or Ctrl+click) selects all of that type on screen. Double-click can be switched off in the Menu |
-| Right-click | Smart order: move, attack (sword cursor), gather (basket cursor), build/repair (hammer), deliver to a Kitchen HQ or Pantry, or set a station's rally point |
+| Right-click | Smart order: move, attack (sword cursor), gather (basket cursor), build/repair (hammer), deliver to a Kitchen HQ or Pantry, take shelter in your own HQ, tower or restaurant (doorway), or set a station's rally point |
 | Shift + order | Queue it after the current one |
 | Alt + click | Ping the map for your team |
 | Q W E R T / A S D F G / Z X C V B | The command card buttons, laid out like the keyboard |
@@ -235,6 +261,7 @@ control-group numbers included; the table shows the defaults)
 | ` (under Esc) / H | Select commander / Kitchen HQ (press twice to jump there) |
 | . and , | Next idle Prep Cook / whole army |
 | U / M / L | Ring or silence the bell / ping (then click) / next formation |
+| K / J | Bar or open your gates (the selected ones, or all of them) / selected soldiers take shelter |
 | Tab | Jump to the last alert or ping |
 | Y | Lock the camera on your hero, or free it again (Capture the Flag) |
 | Ctrl or Shift + 1…9 | Save a control group; the number recalls it |
@@ -275,7 +302,7 @@ games: the same commanders, units, stations, upgrades and ages, on a small grid,
   to attack. The defender hits back at 60% strength if it survives and can reach you, but **only once per enemy turn**:
   gang up on a unit and only the first attacker takes a counterattack. Sauciers (range 2) strike infantry for free, and
   ranged units are tougher and hit harder here than the real-time numbers suggest. Wounded units hit less hard.
-  A Meatball Catapult (range 2-3) cannot move and fire in the same turn.
+  A Meatball Catapult (range 2-5, further than any tower or Signature Restaurant) cannot move and fire in the same turn.
 - **Ingredients.** Prep Cooks do not gather. Build a **Pantry on top of a resource** (Veggie Patch, Timber Stand,
   Spice Mound, Salt Rock or Fishing Spot: right-click it with a Prep Cook) and it pays that ingredient at the start of
   each of your turns. The Kitchen HQ pays a basic income and Garden Plots a little Produce. Gathering upgrades and
@@ -316,8 +343,9 @@ kitchen to run, one hero each, 5v5, 2v2, a ten-way free-for-all or anything in b
   it goes home by itself. First to 3, 5 or 7 captures wins (lobby option); when the clock (10, 15 or 20 minutes)
   runs out the most captures wins, a level score goes to **sudden death** (next capture wins), and after five more
   minutes hero kills, then fewest deaths, settle it.
-- **Tips** are the only currency. Every second pays one, felling wild minions pays their bounty, taking down an enemy
-  hero pays 90 (more if they are well equipped or a high level), a capture pays 50. Zara's Tip Jar pays Tips.
+- **Tips** are the only currency, and each hero's purse is their own (never shared with the team). Every second pays
+  three, felling wild minions pays their bounty (and a bit more), taking down an enemy hero pays 130 (more if they are
+  well equipped or a high level), a capture pays 120. Zara's Tip Jar pays Tips.
 - **Levels.** Every hero starts at level 1 and levels up as the match goes on, up to 15: XP comes in every second
   (2 a second, so everyone climbs), plus XP for minions (as much as their bounty), takedowns (60, more for a
   high-level victim) and captures (100). Each level gives +6% health and +5% attack, plus 1 armour every 4 levels,
@@ -333,8 +361,10 @@ kitchen to run, one hero each, 5v5, 2v2, a ten-way free-for-all or anything in b
   a boss worth 160 Tips who needs a team or a full bag of items.
 - **Buff camps.** One at the top of the map and one at the bottom (with more teams: in two gaps between the bases),
   each a single tough guardian that comes back two minutes after it falls. Whoever lands the last hit wears its buff
-  for 90 seconds, until they fall: **The Pepper Patch** gives Ghost Pepper (+20% damage, 10% faster attacks),
-  **The Sugar Shack** gives Sugar High (15% faster, 1% health back every second). Worth splitting up for.
+  for 90 seconds, and keeps it even if they fall and respawn: **The Pepper Patch** gives Ghost Pepper (+25% damage,
+  15% faster attacks), **The Sugar Shack** gives Sugar High (20% faster, 1.5% health back every second). A buffed hero
+  glows with a wide red or pink ring and wears a chili or a sweet over its head; the buff and its countdown show by your
+  hero buttons and, for everyone, in the score bar. Worth splitting up for.
 - **Heroes.** All ten commanders fight here with their abilities on a short cooldown (about 15 to 20 seconds) and their
   ultimates (unlocked at 3:00, about 75 to 80 seconds). The slows and freezes keep longer ones: Brain Freeze 32s,
   Deep Freeze 125s, Sugar Glass 130s, Sauce Flood 110s. Heroes hit 50% harder than in the classic game, and on top of

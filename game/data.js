@@ -7,7 +7,7 @@
 //  (Restart the server afterwards; everyone must reload the page.)
 // ============================================================================
 
-export const VERSION = '1.5.0';
+export const VERSION = '1.6.0';
 export const TICK_RATE = 20;            // simulation ticks per second
 export const DT = 1 / TICK_RATE;
 export const MAX_PLAYERS = 10;
@@ -70,8 +70,8 @@ export const START_RES = {
   feast:    { food: 1500, wood: 1500, spice: 1000, salt: 800 },
 };
 
-export const BOT_LEVELS = { easy: 'Easy', normal: 'Normal', hard: 'Hard', extreme: 'Extreme' };
-export const BOT_NOTES = { extreme: 'Extreme bots also gather 25% faster.' };
+export const BOT_LEVELS = { veryeasy: 'Very easy', easy: 'Easy', normal: 'Normal', hard: 'Hard', veryhard: 'Very hard', extreme: 'Extreme' };
+export const BOT_NOTES = { extreme: 'Very easy bots gather 20% slower and barely fight back. Very hard bots gather 10% faster, Extreme bots 25% faster.' };
 
 // Resource nodes that sit on the map (trees are stored in the tile grid) -------
 export const NODES = {
@@ -95,8 +95,19 @@ export const FORMATIONS = [
   { key: 'wedge', name: 'V Wedge', desc: 'An arrowhead with your toughest units at the tip.' },
   { key: 'spread', name: 'Spread Out', desc: 'Wide spacing, so Meatball Catapults and Mortars hit fewer of you.' },
 ];
-export const GARRISON_PER_SHOT = 5;       // every 5 sheltered Prep Cooks add one plate to a Kitchen HQ's volley
+export const GARRISON_PER_SHOT = 5;       // every 5 sheltered Prep Cooks add one plate to a Kitchen HQ's volley...
+export const GARRISON_MIL_PER_SHOT = 2;   // ...and every 2 soldiers inside an HQ, tower or Signature Restaurant add one too
 export const GARRISON_MAX_SHOTS = 4;
+/** Units inside any station heal: a flat amount plus a share of their full HP, per second. */
+export const INSIDE_HEAL = { flat: 2, frac: 0.035 };
+/** Extra plates in a station's volley from whoever is inside it. */
+export const garrisonShots = (inside, mil) => Math.min(GARRISON_MAX_SHOTS, Math.floor((inside - mil) / GARRISON_PER_SHOT + mil / GARRISON_MIL_PER_SHOT));
+/** May this unit take shelter in this station? Towers are too cramped for vehicles and siege. */
+export function canGarrison(S, bS) {
+  if (!bS.garrison || !bS.tags.includes('def') || S.tags.includes('cook')) return false;
+  if (bS.tags.includes('tower') && (S.tags.includes('veh') || S.tags.includes('siege'))) return false;
+  return true;
+}
 
 // ----------------------------------------------------------------------------
 //  UNITS
@@ -139,6 +150,12 @@ export const UNITS = {
     tags: ['ranged', 'mil'], hp: 38, atk: 6, range: 5, reload: 1.7, speed: 2.2, sight: 6.5,
     cost: { wood: 30, spice: 40 }, time: 13, age: 2, proj: 'sauce', bonus: { inf: 1.25 },
   }),
+  slinger: U({
+    name: 'Pepper Slinger', role: 'Anti-ranged skirmisher',
+    desc: 'Cheap slingshot crew that pelts Sauciers and every other ranged unit with peppercorns (more than double damage). Shrugs off thrown things; weak against everything else.',
+    tags: ['ranged', 'mil'], hp: 44, atk: 4, range: 5.5, reload: 1.6, speed: 2.25, armor: 0, parmor: 4, sight: 7,
+    cost: { food: 30, wood: 35 }, time: 12, age: 2, proj: 'pepper', bonus: { ranged: 2.4 },
+  }),
   scooter: U({
     name: 'Delivery Scooter', role: 'Fast vehicle',
     desc: 'Quick raider. Runs down Sauciers and siege; avoid Butchers.',
@@ -153,14 +170,14 @@ export const UNITS = {
   }),
   catapult: U({
     name: 'Meatball Catapult', role: 'Siege artillery',
-    desc: 'Lobs giant meatballs. Splash damage, flattens stations. Helpless up close.',
-    tags: ['siege', 'mil'], hp: 75, atk: 32, range: 8, minRange: 2.5, reload: 5, speed: 1.4, parmor: 6, sight: 8.5, pop: 2,
+    desc: 'Lobs giant meatballs from further away than any tower or Signature Restaurant can shoot back. Splash damage, flattens stations. Helpless up close.',
+    tags: ['siege', 'mil'], hp: 75, atk: 32, range: 13, minRange: 3, reload: 5, speed: 1.4, parmor: 6, sight: 10, pop: 2,
     cost: { wood: 150, spice: 120 }, time: 28, age: 3, proj: 'meatball', splash: 1.3, bonus: { bldg: 3.5 }, radius: 0.5,
   }),
   ram: U({
     name: 'Battering Baguette', role: 'Siege ram',
     desc: 'A very stale, very large baguette. Only attacks stations; ignores ranged fire.',
-    tags: ['siege', 'mil'], hp: 230, atk: 4, reload: 2.5, speed: 1.7, armor: -2, parmor: 30, pop: 2,
+    tags: ['siege', 'mil'], hp: 230, atk: 6, reload: 2.2, speed: 1.7, armor: -2, parmor: 30, pop: 2,
     cost: { wood: 140, spice: 60 }, time: 22, age: 3, bonus: { bldg: 18 }, onlyBldg: true, radius: 0.5,
   }),
   barista: U({
@@ -283,15 +300,15 @@ export const BUILDINGS = {
   }),
   grill: B({
     name: 'Grill Station', desc: 'Trains infantry: Line Cooks and Butchers.',
-    size: 3, hp: 1100, cost: { wood: 125 }, time: 28, age: 1, trains: ['line', 'butcher'], techs: ['pans', 'knives1', 'knives2', 'knives3', 'aprons1', 'aprons2', 'aprons3'],
+    size: 3, hp: 1100, cost: { wood: 125 }, time: 28, age: 1, garrison: 10, trains: ['line', 'butcher'], techs: ['pans', 'knives1', 'knives2', 'knives3', 'aprons1', 'aprons2', 'aprons3'],
   }),
   sauce: B({
-    name: 'Sauce Station', desc: 'Trains Sauciers, your ranged line.',
-    size: 3, hp: 1000, cost: { wood: 140 }, time: 28, age: 2, trains: ['saucier'], techs: ['sauce1', 'sauce2', 'sauce3', 'smock1', 'smock2', 'smock3'],
+    name: 'Sauce Station', desc: 'Trains ranged units: Sauciers, and Pepper Slingers to pick off the other side\'s ranged units.',
+    size: 3, hp: 1000, cost: { wood: 140 }, time: 28, age: 2, garrison: 10, trains: ['saucier', 'slinger'], techs: ['sauce1', 'sauce2', 'sauce3', 'smock1', 'smock2', 'smock3'],
   }),
   garage: B({
     name: 'Delivery Garage', desc: 'Trains vehicles: Delivery Scooters and Food Trucks.',
-    size: 3, hp: 1100, cost: { wood: 150 }, time: 30, age: 2, trains: ['scooter', 'truck'], techs: ['hubcap1', 'hubcap2', 'hubcap3', 'bumper1', 'bumper2', 'bumper3'],
+    size: 3, hp: 1100, cost: { wood: 150 }, time: 30, age: 2, garrison: 10, trains: ['scooter', 'truck'], techs: ['hubcap1', 'hubcap2', 'hubcap3', 'bumper1', 'bumper2', 'bumper3'],
   }),
   lab: B({
     name: 'Test Kitchen', desc: 'Researches upgrades for the whole brigade and for your stations. (Weapons and armour are upgraded where each kind of unit is trained.)',
@@ -300,7 +317,7 @@ export const BUILDINGS = {
   }),
   workshop: B({
     name: 'Catering Workshop', desc: 'Builds siege: Meatball Catapults and Battering Baguettes.',
-    size: 3, hp: 1100, cost: { wood: 180, spice: 60 }, time: 34, age: 3, trains: ['catapult', 'ram'], techs: ['axle1', 'meatballs'],
+    size: 3, hp: 1100, cost: { wood: 180, spice: 60 }, time: 34, age: 3, garrison: 8, trains: ['catapult', 'ram'], techs: ['axle1', 'meatballs'],
   }),
   market: B({
     name: 'Farmers Market', desc: 'Trade ingredients for each other. Prices move: whatever everyone sells gets cheaper, whatever everyone buys gets dearer, and they drift back over time.',
@@ -326,12 +343,12 @@ export const BUILDINGS = {
   tower: B({
     name: 'Pepper Mill Tower', desc: 'Defensive tower. Grinds peppercorns at anything hostile in range.',
     size: 2, hp: 850, armor: 3, parmor: 9, cost: { wood: 50, salt: 110 }, time: 32, age: 2,
-    atk: 8, range: 9, reload: 1.5, proj: 'pepper', sight: 10, tags: ['bldg', 'tower', 'def'],      // (outranges every ranged unit, upgrades and all)
+    atk: 8, range: 9, reload: 1.5, proj: 'pepper', sight: 10, garrison: 5, tags: ['bldg', 'tower', 'def'],      // (outranges every ranged unit, upgrades and all; siege outranges it)
   }),
   restaurant: B({
     name: 'Signature Restaurant', desc: 'Your flagship and your strongest defence: hurls three plates per volley at anything hostile. Trains your commander\'s unique unit.',
     size: 4, hp: 2800, armor: 4, parmor: 10, cost: { wood: 250, salt: 500 }, time: 60, age: 3,
-    atk: 11, range: 10, reload: 1.6, proj: 'plate', shots: 3, sight: 11, trains: ['unique'], techs: ['elite', 'cheftable'], tags: ['bldg', 'def'],
+    atk: 11, range: 10, reload: 1.6, proj: 'plate', shots: 3, sight: 11, garrison: 15, trains: ['unique'], techs: ['elite', 'cheftable'], tags: ['bldg', 'def'],
   }),
 };
 
@@ -473,8 +490,8 @@ export const BUFFS = {
   a_ingrid: { bit: 2097152, speedMul: 0.9, hostile: true },
   a_rafa:   { bit: 4194304, atkMul: 1.12 },
   energy:   { bit: 8388608, regenFrac: 0.35 / 4 },                  // an Energy Bar: 35% over 4 seconds
-  b_pepper: { bit: 16777216, atkMul: 1.2, reloadMul: 0.9 },         // Ghost Pepper (the top buff camp)
-  b_sugar:  { bit: 33554432, speedMul: 1.15, regenFrac: 0.01 },     // Sugar High (the bottom buff camp)
+  b_pepper: { bit: 16777216, atkMul: 1.25, reloadMul: 0.87 },       // Ghost Pepper (the top buff camp)
+  b_sugar:  { bit: 33554432, speedMul: 1.2, regenFrac: 0.015 },     // Sugar High (the bottom buff camp)
 };
 export const ULT_AGE = 3;                 // ultimates unlock in the Bistro Age
 export const AURA_RADIUS = 6.5;
@@ -893,15 +910,19 @@ export const tbDist = (ax, ay, bx, by) => Math.abs(ax - bx) + Math.abs(ay - by);
 export const CTF = {
   mapSize: (teams) => (teams <= 2 ? 72 : Math.min(124, 60 + 8 * teams)),
   heroAge: 2,              // heroes start with the stats they would have in the Diner Age
-  heroAtkMul: 1.5,         // ...and hit harder than in the long game, so duels are decided in seconds, not minutes
+  heroAtkMul: 1.85,        // ...and hit harder than in the long game, so duels are decided in seconds, not minutes
+  heroHpMul: 0.8,          // ...with less health to lose (v1.6.0: fights end about a third sooner)
   // on top of that, every hero but Big Hank (who wins by outlasting) hits harder still in the arena
   heroDps: { flint: 1.35, nonna: 1.1, ryo: 1.1, odile: 2.0, zara: 1.55, dolly: 1.05, kofi: 1.05, ingrid: 2.0, rafa: 1.3 },
   // heroes level up as the match goes on: XP every second, more for minions, takedowns and captures
   level: { max: 15, xpPerSec: 2, base: 90, step: 40, hp: 0.06, atk: 0.05, armorEvery: 4,
     bountyXp: 1, killXp: 60, killXpPerLevel: 10, capXp: 100, bountyPerLevel: 6 },
-  startTips: 120,
-  passiveTips: 1,          // Tips per second for everyone, so nobody is ever stuck
-  heroBounty: 90,          // Tips for felling a hero...
+  // Tips are each hero's own purse (never shared with the team); v1.6.0 pays them out much faster
+  startTips: 200,
+  passiveTips: 3,          // Tips per second for everyone, so nobody is ever stuck
+  bountyMul: 1.3,          // minion bounties pay this much more than the camp lists below
+  capTips: 120,            // for carrying a flag home
+  heroBounty: 130,         // Tips for felling a hero...
   heroBountyPerTier: 12,   // ...plus this for every item tier the victim had bought
   respawn: { base: 6, perMin: 1.1, max: 22 },     // seconds, growing with the match clock
   abilityCdMul: 0.3,       // the real-time cooldowns are made for 40-minute matches; here they are much shorter
@@ -914,12 +935,13 @@ export const CTF = {
   minion: { levelEvery: 150, hp: 0.3, atk: 0.22, bounty: 0.3, leash: 9, regenFrac: 0.05 },
   energy: { cost: 60, cd: 20 },                   // an Energy Bar heals 35% over 4s, usable anywhere
   items: {                 // [bonus, cost] per tier
-    skillet:  { name: 'Cast-Iron Skillet', stat: 'atk', icon: ['tech', 'pans'], desc: 'Hits harder.', tiers: [[5, 140], [11, 320], [19, 600]] },
-    whites:   { name: "Chef's Whites", stat: 'armor', icon: ['tech', 'aprons2'], desc: 'Armour against blows and thrown things alike.', tiers: [[2, 120], [5, 280], [9, 520]] },
-    stew:     { name: 'Hearty Stew', stat: 'hp', icon: ['ability', 'mangia'], desc: 'More health.', tiers: [[130, 130], [300, 300], [520, 560]] },
-    clogs:    { name: 'Running Clogs', stat: 'speed', icon: ['tech', 'clogs'], desc: 'Faster on your feet.', tiers: [[0.35, 160], [0.7, 380]] },
-    espresso: { name: 'Double Espresso', stat: 'reload', icon: ['unit', 'barista'], desc: 'Attacks come quicker.', tiers: [[0.9, 150], [0.8, 340], [0.68, 620]] },
-    herbs:    { name: 'Herb Garden', stat: 'regen', icon: ['building', 'garden'], desc: 'Health comes back on its own.', tiers: [[3, 110], [7, 260], [13, 480]] },
+    // (v1.6.0: every item about 40% stronger for the same price)
+    skillet:  { name: 'Cast-Iron Skillet', stat: 'atk', icon: ['tech', 'pans'], desc: 'Hits harder.', tiers: [[7, 140], [15, 320], [27, 600]] },
+    whites:   { name: "Chef's Whites", stat: 'armor', icon: ['tech', 'aprons2'], desc: 'Armour against blows and thrown things alike.', tiers: [[3, 120], [7, 280], [12, 520]] },
+    stew:     { name: 'Hearty Stew', stat: 'hp', icon: ['ability', 'mangia'], desc: 'More health.', tiers: [[170, 130], [400, 300], [700, 560]] },
+    clogs:    { name: 'Running Clogs', stat: 'speed', icon: ['tech', 'clogs'], desc: 'Faster on your feet.', tiers: [[0.45, 160], [0.9, 380]] },
+    espresso: { name: 'Double Espresso', stat: 'reload', icon: ['unit', 'barista'], desc: 'Attacks come quicker.', tiers: [[0.86, 150], [0.74, 340], [0.6, 620]] },
+    herbs:    { name: 'Herb Garden', stat: 'regen', icon: ['building', 'garden'], desc: 'Health comes back on its own.', tiers: [[4, 110], [10, 260], [18, 480]] },
   },
   camps: {                 // the wild minions, from the kitchen door outwards
     // r = how far out from the centre (1 = at the base), ang = how far round the team's wedge (1 = the edge), mirrored left and right
@@ -931,9 +953,9 @@ export const CTF = {
     critic:  { name: 'The Head Critic', units: ['truck'], boss: true, hpMul: 3, atkMul: 1.4, bounty: 160, respawn: 150, r: 0, ang: 0 },
     // buff camps: one at the top of the map and one at the bottom; whoever lands the last hit wears the buff
     pepper:  { name: 'The Pepper Patch', units: ['brute'], hpMul: 3.2, atkMul: 1.3, bounty: 70, respawn: 120, lane: 'top',
-      buff: 'b_pepper', buffName: 'Ghost Pepper', buffDur: 90, buffDesc: '+20% damage and 10% faster attacks for 90s (lost if you fall)' },
+      buff: 'b_pepper', buffName: 'Ghost Pepper', buffDur: 90, buffDesc: '+25% damage and 15% faster attacks for 90s (kept even if you fall)' },
     sugar:   { name: 'The Sugar Shack', units: ['pinroller'], hpMul: 3.2, atkMul: 1.3, bounty: 70, respawn: 120, lane: 'bottom',
-      buff: 'b_sugar', buffName: 'Sugar High', buffDesc: '15% faster and 1% health back every second for 90s (lost if you fall)', buffDur: 90 },
+      buff: 'b_sugar', buffName: 'Sugar High', buffDesc: '20% faster and 1.5% health back every second for 90s (kept even if you fall)', buffDur: 90 },
   },
   reveal: 10,              // a flag carrier shows up on everyone's minimap every this many seconds
 };
@@ -944,7 +966,7 @@ export const ctfLevelNeed = (lv) => CTF.level.base + CTF.level.step * (lv - 1);
 /** The hero's stats at a level, with items applied (fresh object). `cmd` is the hero's commander key. */
 export function ctfHeroStats(base, items, cmd, level = 1) {
   const L = CTF.level, lv = Math.max(1, Math.min(L.max, level | 0)), up = lv - 1, plate = Math.floor(lv / L.armorEvery);
-  const S = { ...base, bonus: { ...base.bonus }, regen: 0, hp: base.hp * (1 + L.hp * up), atk: base.atk * CTF.heroAtkMul * (CTF.heroDps[cmd] || 1) * (1 + L.atk * up), armor: base.armor + plate, parmor: base.parmor + plate };
+  const S = { ...base, bonus: { ...base.bonus }, regen: 0, hp: base.hp * CTF.heroHpMul * (1 + L.hp * up), atk: base.atk * CTF.heroAtkMul * (CTF.heroDps[cmd] || 1) * (1 + L.atk * up), armor: base.armor + plate, parmor: base.parmor + plate };
   for (const key in CTF.items) {
     const it = CTF.items[key], lv = items[key] | 0;
     if (!lv) continue;

@@ -42,6 +42,11 @@ const DRAW = {
     c.beginPath(); c.moveTo(12, 2); c.lineTo(20, 2); c.lineTo(20, 10); c.lineTo(25, 10); c.lineTo(16, 20); c.lineTo(7, 10); c.lineTo(12, 10); c.closePath(); shape(c, '#57d657');
     c.beginPath(); c.moveTo(5, 21); c.lineTo(27, 21); c.lineTo(24, 30); c.lineTo(8, 30); c.closePath(); shape(c, '#cf9f58');
   }, 16, 20, 'pointer'],
+  enter: [(c) => {                                    // a doorway with a green arrow going in
+    c.beginPath(); c.moveTo(14, 30); c.lineTo(14, 9); c.lineTo(22, 4); c.lineTo(30, 9); c.lineTo(30, 30); c.closePath(); shape(c, '#b98443');
+    c.beginPath(); c.rect(18, 15, 8, 15); shape(c, '#3a2a1f');
+    c.beginPath(); c.moveTo(1, 16); c.lineTo(10, 16); c.lineTo(10, 11); c.lineTo(18, 19); c.lineTo(10, 27); c.lineTo(10, 22); c.lineTo(1, 22); c.closePath(); shape(c, '#57d657');
+  }, 16, 19, 'pointer'],
   ping: [(c) => {
     c.beginPath(); c.arc(16, 16, 12, 0, Math.PI * 2); line(c, '#f0b41c', 3);
     c.beginPath(); c.arc(16, 16, 5, 0, Math.PI * 2); shape(c, '#f0b41c');
@@ -49,7 +54,7 @@ const DRAW = {
   }, 16, 16, 'crosshair'],
 };
 
-/** CSS cursor for: '' (default) | 'point' | 'attack' | 'gather' | 'build' | 'drop' | 'ping' | 'place'. */
+/** CSS cursor for: '' (default) | 'point' | 'attack' | 'gather' | 'build' | 'drop' | 'enter' | 'ping' | 'place'. */
 export function cursorFor(kind) {
   if (!kind) return 'default';
   if (kind === 'point') return 'pointer';

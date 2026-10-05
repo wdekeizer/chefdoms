@@ -2,12 +2,12 @@
 //  All the HTML user interface: lobby, in-game HUD, command card, tooltips,
 //  chat, notifications, menus and the end-of-match screen.
 // ============================================================================
-import { G, K_UNIT, K_BLDG, K_NODE, selected, setSelection, cmd, send, statsOf, maxHp, campOf, myHero } from './state.js';
+import { G, K_UNIT, K_BLDG, K_NODE, selected, setSelection, cmd, send, statsOf, maxHp, campOf, myHero, isAlly } from './state.js';
 import * as SPR from './sprites.js';
 import {
   BUILDINGS, TECHS, COMMANDERS, COMMANDER_KEYS, RES, RES_INFO, AGE_NAMES, AGE_SHORT, OPTIONS, PLAYER_COLORS,
   BOT_LEVELS, BOT_NOTES, MAX_PLAYERS, MAP_SIZES, mapSizeFor, NODES, trainList, techCost, techTime, computeStats,
-  STANCES, FORMATIONS, GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, VERSION,
+  STANCES, FORMATIONS, GARRISON_PER_SHOT, GARRISON_MIL_PER_SHOT, VERSION, garrisonShots, canGarrison,
   ULT_AGE, TB, tbUnit, tbBldg, tbTurns, tbCooldown, tbDamage,
   HERO_KEYS, CTF, NEUTRAL_COLOR, ctfKit, ctfHeroStats, ctfItemCost, ctfLevelNeed, MARKET, marketQuote,
 } from '/game/data.js';
@@ -74,7 +74,7 @@ function tbBldgText(S) {
   return bits.join(' · ');
 }
 
-let hooks = { selectHero() {}, selectIdle() {}, selectArmy() {}, stop() {}, leaveToLobby() {}, setEdgeScroll() {}, setCamSpeed() {}, setDblSelect() {}, setZoomSens() {}, setFormation() {}, toggleBell() {} };
+let hooks = { selectHero() {}, selectIdle() {}, selectArmy() {}, stop() {}, leaveToLobby() {}, setEdgeScroll() {}, setCamSpeed() {}, setDblSelect() {}, setZoomSens() {}, setFormation() {}, toggleBell() {}, toggleGates() {}, garrison() {} };
 export function initUI(hk) { hooks = { ...hooks, ...hk }; buildStatic(); }
 
 // ============================================================================
@@ -253,18 +253,19 @@ const gridLabel = (i) => labelOf('card' + i);
 function buildStatic() {
   // top bar
   const res = RES.map((r) => { const v = h('span', { class: 'res-v' }, '0'), inc = h('span', { class: 'res-inc' }, ''); resEls[r] = v; resEls[r + 'Inc'] = inc; const box = h('div', { class: 'res res-' + r, title: RES_INFO[r].name }, img('res', r, 'res-i', null, 64), v, inc); resEls[r + 'Box'] = box; return box; });
-  resEls.tips = h('div', { class: 'res res-tips hidden', title: 'Tips: fell minions and heroes to earn them, spend them at your kitchen' }, img('res', 'tips', 'res-i', null, 64), h('span', { class: 'res-v' }, '0'), h('span', { class: 'res-inc' }, 'Tips'));
+  resEls.tips = h('div', { class: 'res res-tips hidden', title: `Tips: your own purse, never shared with your team. +${CTF.passiveTips} every second, more for minions, takedowns and captures. Spend them at your kitchen.` }, img('res', 'tips', 'res-i', null, 64), h('span', { class: 'res-v' }, '0'), h('span', { class: 'res-inc' }, 'Tips'));
   resEls.popBox = h('div', { class: 'res', title: 'Staff (population)' }, img('res', 'pop', 'res-i', null, 64), null);
   resEls.pop = h('span', { class: 'res-v' }, '0/0');
   resEls.age = h('span', null, '');
   resEls.clock = h('span', { class: 'clock' }, '0:00');
   resEls.ping = h('span', { class: 'ping' }, '');
   const menuBtn = h('button', { class: 'btn small ghost', onclick: () => toggleMenu() }, `Menu (${labelOf('menu') || '—'})`);
+  resEls.send = h('button', { class: 'btn small ghost hidden', title: 'Send ingredients to a team-mate', onclick: () => showTribute() }, 'Send');
   onKeysChanged(() => { menuBtn.textContent = `Menu (${labelOf('menu') || '—'})`; });
   $('topbar').replaceChildren(
     h('div', { class: 'res-group' }, ...res, resEls.tips, (resEls.popBox.append(resEls.pop), resEls.popBox)),
     h('div', { class: 'age' }, resEls.age),
-    h('div', { class: 'top-right' }, resEls.clock, resEls.ping, menuBtn));
+    h('div', { class: 'top-right' }, resEls.clock, resEls.ping, resEls.send, menuBtn));
 
   // command card
   const cc = $('card');
@@ -439,6 +440,9 @@ function buildCard() {
       });
       card[5] = { icon: ['ui', 'attack'], title: 'Attack-move', desc: 'Then left-click a spot: your units walk there and fight anything hostile on the way.', ok: true, active: G.mode && G.mode.type === 'amove', run: () => { G.mode = { type: 'amove' }; } };
       card[6] = stop;
+      const shelters = G.bldgs.some((b) => b.owner === G.me && b.prog >= 100 && army.some((u) => canGarrison(statsOf(u) || {}, statsOf(b) || {})));
+      card[7] = { icon: ['ui', 'garrison'], title: 'Take shelter', desc: `Go inside the nearest Kitchen HQ (${st.bldgs.hq.garrison} places), Pepper Mill Tower (${st.bldgs.tower.garrison}) or Signature Restaurant (${st.bldgs.restaurant.garrison}) with room. Inside they heal quickly and every ${GARRISON_MIL_PER_SHOT} soldiers add a shot to its volley. Towers take no vehicles or siege.`,
+        ok: shelters, why: 'You need a finished Kitchen HQ, Pepper Mill Tower or Signature Restaurant', hint: `Right-clicking one of those stations does the same · hotkey ${labelOf('garrison')} · select the station and press Let everyone out to send them back`, run: () => hooks.garrison() };
       STANCES.forEach((S, i) => {
         card[10 + i] = { icon: ['ui', 'st_' + S.key], title: 'Stance: ' + S.name, desc: S.desc, ok: true, active: army.every((e) => (e.sn || 0) === i), run: () => { cmd({ c: 'sn', ids, v: i }); for (const e of army) e.sn = i; } };
       });
@@ -448,6 +452,14 @@ function buildCard() {
   if (!bl.length) return;
   const b0 = bl[0];
   const same = bl.filter((e) => e.type === b0.type);
+  if (BUILDINGS[b0.type].gate && b0.prog >= 100) {             // a gate: bar it or open it
+    const gates = bl.filter((e) => BUILDINGS[e.type].gate && e.prog >= 100), barred = gates.every((e) => e.locked);
+    card[0] = barred
+      ? { icon: ['ui', 'unlock'], title: 'Open the gate' + (gates.length > 1 ? 's' : ''), desc: 'Unbar it: your team walks through again; everyone else still has to break it down.', ok: true, active: true, hint: `Hotkey ${labelOf('gatelock')} (with no gate selected it bars or opens every gate you own)`, run: () => cmd({ c: 'gl', ids: gates.map((e) => e.id), v: 0 }) }
+      : { icon: ['ui', 'lock'], title: 'Bar the gate' + (gates.length > 1 ? 's' : ''), desc: 'Drop the bar: nobody gets through, not even your own side, until you open it again. Handy when a raid is coming.', ok: true, hint: `Hotkey ${labelOf('gatelock')} (with no gate selected it bars or opens every gate you own)`, run: () => cmd({ c: 'gl', ids: gates.map((e) => e.id), v: 1 }) };
+    card[14] = { icon: ['ui', 'delete'], title: 'Demolish', desc: 'Knock it down (no refund).', ok: true, run: () => cmd({ c: 'dl', ids: gates.map((e) => e.id) }) };
+    return;
+  }
   if (b0.prog < 100) {
     card[14] = { icon: ['ui', 'delete'], title: 'Cancel construction', desc: 'Tear it down and refund the unbuilt share of the cost.', ok: true, run: () => cmd({ c: 'dl', ids: same.filter((e) => e.prog < 100).map((e) => e.id) }) };
     return;
@@ -464,7 +476,8 @@ function buildCard() {
     };
   }
   let j = i === 0 ? 0 : 5;
-  const last = b0.type === 'hq' ? 14 : 15;
+  const S0 = st.bldgs[b0.type], soldiers = i > 0 && b0.type !== 'hq', holds = S0.garrison > 0;
+  const last = soldiers ? 12 : b0.type === 'hq' ? 13 : holds ? 14 : 15;
   for (const key of BUILDINGS[b0.type].techs) {
     if (j >= last) break;
     const T = TECHS[key];
@@ -479,6 +492,22 @@ function buildCard() {
     };
   }
   if (b0.type === 'hq') card[14] = bellCard(me);
+  const ready = same.filter((e) => e.prog >= 100), ids = ready.map((e) => e.id);
+  if (soldiers) {                                              // standing orders for what this station trains
+    const sn = ready.every((e) => e.bsn === b0.bsn) ? b0.bsn | 0 : 0, nx = (sn + 1) % STANCES.length;
+    card[12] = { icon: ['ui', 'st_' + STANCES[sn].key], title: 'New recruits: ' + STANCES[sn].name, desc: `Units trained here start out on ${STANCES[sn].name}: ${STANCES[sn].desc} Click to switch to ${STANCES[nx].name}.`, ok: true,
+      hint: 'Only changes units trained from now on. Select soldiers to change their own stance.', run: () => { cmd({ c: 'bs', bids: ids, v: nx }); for (const e of ready) e.bsn = nx; } };
+    const keep = ready.length && ready.every((e) => e.keep);
+    card[13] = { icon: ['ui', 'keep'], title: keep ? 'Keep recruits inside: ON' : 'Keep recruits inside: off', active: keep, ok: true,
+      desc: keep ? `New units wait safely inside (up to ${S0.garrison}, healing) until you let them out. Click to send new units out to the rally point again.` : `New units stay inside the station, safe and healing, until you press Let everyone out (up to ${S0.garrison}; any more walk out as usual).`,
+      run: () => { cmd({ c: 'bk', bids: ids, v: keep ? 0 : 1 }); for (const e of ready) e.keep = !keep; } };
+  }
+  if (holds && b0.prog >= 100) {                               // let them out (Prep Cooks sheltering from the bell stay put)
+    const out = ready.reduce((n, e) => n + (e.type === 'hq' ? e.mil || 0 : e.inside || 0), 0);
+    card[b0.type === 'hq' ? 13 : 14] = { icon: ['ui', 'release'], title: 'Let everyone out' + (out ? ` (${out})` : ''), ok: out > 0, why: 'Nobody is inside', badge: out || '',
+      desc: (b0.type === 'hq' ? 'Soldiers sheltering inside come out' : 'Everyone inside comes out') + ' and heads for the rally point (or waits by the door).' + (b0.type === 'hq' ? ' Prep Cooks stay inside until the all-clear.' : ''),
+      run: () => cmd({ c: 'ej', bids: ids }) };
+  }
 }
 
 /** The command card in Capture the Flag: your hero's orders on the top row, the shop below. */
@@ -606,7 +635,7 @@ function refreshSelection(force) {
   const sel = selected();
   const panel = $('selpanel');
   const sig = sel.length === 0 ? 'none' + G.me + (G.ctf && G.me >= 0 ? ':' + G.ps[G.me].heroId + ':' + Math.ceil((G.ps[G.me].heroRespawn - G.tick) / G.tickRate) : '')
-    : sel.length === 1 ? [sel[0].id, sel[0].hp, sel[0].prog, sel[0].qpct, (sel[0].q || []).join(), sel[0].amount, sel[0].carry, sel[0].sn, sel[0].inside, sel[0].owner >= 0 ? G.ps[sel[0].owner].sig : '', sel[0].left, sel[0].qleft, G.tb ? G.tb.cur + ':' + G.tb.ended : '', sel[0].trally,
+    : sel.length === 1 ? [sel[0].id, sel[0].hp, sel[0].prog, sel[0].qpct, (sel[0].q || []).join(), sel[0].amount, sel[0].carry, sel[0].sn, sel[0].inside, sel[0].mil, sel[0].keep, sel[0].bsn, sel[0].locked, sel[0].owner >= 0 ? G.ps[sel[0].owner].sig : '', sel[0].left, sel[0].qleft, G.tb ? G.tb.cur + ':' + G.tb.ended : '', sel[0].trally,
       sel[0].type === 'market' && G.me >= 0 ? G.marketAt + ':' + RES.map((r) => Math.floor(G.ps[G.me].res[r] / MARKET.lot)).join() : ''].join('|')
       : sel.map((e) => e.id + ':' + Math.ceil(e.hp / 5)).join(',');
   if (G.ctf) {                                                   // the arena keeps the screen clear: no info panel at all
@@ -703,11 +732,16 @@ function refreshSelection(force) {
           h('img', { src: itemIcon(code, col), draggable: 'false', alt: '' }), i === 0 && h('div', { class: 'q-prog' }, h('div', { style: `width:${e.qpct}%` })))));
         info.append(h('div', { class: 'sel-desc' }, (e.q[0][0] === 'u' ? 'Training ' : 'Researching ') + itemName(e.q[0]) + ` (${e.qpct}%)`), q);
       } else {
-        if (S.atk) info.append(statLine({ hp: mh, atk: S.atk, shots: S.shots + (S.garrison ? Math.min(GARRISON_MAX_SHOTS, Math.floor((e.inside || 0) / GARRISON_PER_SHOT)) : 0), armor: S.armor, parmor: S.parmor, range: S.range }) || '');
+        if (S.atk) info.append(statLine({ hp: mh, atk: S.atk, shots: S.shots + (S.garrison ? garrisonShots(e.inside || 0, e.mil || 0) : 0), armor: S.armor, parmor: S.parmor, range: S.range }) || '');
         info.append(h('div', { class: 'sel-desc' }, S.desc || ''));
         if (mine && (BUILDINGS[e.type].trains.length)) info.append(h('div', { class: 'muted' }, 'Right-click the map to set where new units gather.'));
       }
-      if (e.inside > 0) info.append(h('div', { class: 'sel-desc' }, h('b', null, `Sheltering ${e.inside} Prep Cook${e.inside === 1 ? '' : 's'}`), mine ? ' — press All clear to send them back to work' : ''));
+      const cooksIn = (e.inside || 0) - (e.mil || 0);
+      if (cooksIn > 0) info.append(h('div', { class: 'sel-desc' }, h('b', null, `Sheltering ${cooksIn} Prep Cook${cooksIn === 1 ? '' : 's'}`), mine ? ' — press All clear to send them back to work' : ''));
+      if (e.mil > 0 && (mine || isAlly(e.owner))) info.append(h('div', { class: 'sel-desc' }, h('b', null, `${e.mil} ${(S.tags || []).includes('def') ? 'soldier' : 'recruit'}${e.mil === 1 ? '' : 's'} inside`), (S.tags || []).includes('def') ? ' (healing, and adding to the volley)' : ' (waiting, and healing)', mine ? ' — Let everyone out sends them on their way' : ''));
+      if (mine && e.keep) info.append(h('div', { class: 'muted' }, 'New recruits wait inside this station.'));
+      if (mine && e.bsn) info.append(h('div', { class: 'muted' }, 'New recruits start on ' + STANCES[e.bsn].name + '.'));
+      if (BUILDINGS[e.type].gate && e.locked) info.append(h('div', { class: 'sel-turn' }, 'Barred: nobody gets through, its own side included.'));
     }
     if (mine && e.type === 'market' && e.prog >= 100) info.append(marketGrid(!G.tb || TAC.myTurn()));
     panel.replaceChildren(h('div', { class: 'sel-one' }, h('img', { class: 'sel-ico', src: iconURL(e.kind === K_UNIT ? 'unit' : 'building', e.type, 160, col), draggable: 'false', alt: '' }), info));
@@ -759,7 +793,8 @@ function refreshHero() {
   const idle = tb ? TAC.readyUnits().length : G.units.reduce((n, e) => n + (e.owner === G.me && e.type === 'cook' && e.st === 0 ? 1 : 0), 0);
   const lunch = !tb && G.tick < me.lunchUntil, locked = ctf ? G.tick < G.ctf.ultUnlock * G.tickRate : me.age < ULT_AGE;
   const need = ctf && me.level < CTF.level.max ? ctfLevelNeed(me.level) : 0, xpFrac = need ? Math.min(1, me.xp / need) : 1;
-  const sig = [hero ? Math.ceil(hero.hp / 4) : 'x', cd, ucd, locked, back, idle, lunch, me.alive, me.bell, G.mode && G.mode.type === 'ping', tb && G.tb.cur, ctf && G.follow, ctf && me.level, ctf && Math.floor(xpFrac * 40)].join('|');
+  const buffs = ctf ? campBuffsOf(me) : [];
+  const sig = [hero ? Math.ceil(hero.hp / 4) : 'x', cd, ucd, locked, back, idle, lunch, me.alive, me.bell, G.mode && G.mode.type === 'ping', tb && G.tb.cur, ctf && G.follow, ctf && me.level, ctf && Math.floor(xpFrac * 40), buffs.map((b) => b.key + b.secs).join()].join('|');
   if (sig === heroSig) return;
   heroSig = sig;
   if (!me.alive) { box.replaceChildren(); return; }
@@ -804,11 +839,23 @@ function refreshHero() {
         : simpleTip(C.name, labelOf('hero'), hero ? 'Click to select your commander; double-click to jump there.' : `Back at the Kitchen HQ ${wait(back)}.`)) },
       img('commander', P.commander, 'q-ico', null, 96), hero ? bar(hero.hp / maxHp(hero), 'mini') : h('span', { class: 'q-cd' }, back || '…'),
       ctf && h('span', { class: 'q-lvl', title: 'Hero level' }, me.level),
-      ctf && h('span', { class: 'q-xp' }, h('i', { style: `width:${Math.round(xpFrac * 100)}%` })))].filter(Boolean));
+      ctf && h('span', { class: 'q-xp' }, h('i', { style: `width:${Math.round(xpFrac * 100)}%` }))),
+    ...buffs.map((b) => h('div', { class: 'qbuff ' + b.key, ...tip(() => simpleTip(b.def.buffName, '', b.def.buffDesc)) }, h('b', null, b.def.buffName), h('span', null, fmtClock(b.secs))))].filter(Boolean));
+}
+/** The buff-camp buffs a player wears right now: [{ key: 'pepper' | 'sugar', def, secs left }]. */
+function campBuffsOf(p) {
+  const out = [];
+  ['pepper', 'sugar'].forEach((key, i) => {
+    const until = (p.campBuffs || [])[i] || 0, secs = Math.ceil((until - G.tick) / G.tickRate);
+    if (secs > 0 && CTF.camps[key]) out.push({ key, def: CTF.camps[key], secs });
+  });
+  return out;
 }
 
 // -------------------------------------------------------------------- top bar
 function refreshTop() {
+  const canSend = matesAlive().length > 0;
+  if (resEls.send.classList.contains('hidden') === canSend) resEls.send.classList.toggle('hidden', !canSend);
   if (G.ctf) {                                                   // capture the flag: Tips, the clock and the score
     const me = G.me >= 0 ? G.ps[G.me] : null, t = me ? String(me.res.food) : '–';
     if (resEls.tips.children[1].textContent !== t) resEls.tips.children[1].textContent = t;
@@ -840,11 +887,49 @@ function refreshTop() {
   if (resEls.ping.textContent !== ping) resEls.ping.textContent = ping;
 }
 
+/** Living team-mates you could send ingredients to (real-time matches only). */
+function matesAlive() {
+  if (G.me < 0 || G.tb || G.ctf || G.over || !G.ps[G.me] || !G.ps[G.me].alive) return [];
+  const team = G.players[G.me].team;
+  return realPlayers().filter(([p, i]) => i !== G.me && p.team === team && G.ps[i] && G.ps[i].alive);
+}
+
+/** The "send ingredients" window: pick a team-mate, then hand over 100, 500 or everything of any ingredient. */
+export function showTribute(pre) {
+  const mates = matesAlive();
+  if (!mates.length) { note(G.tb || G.ctf ? 'Sending ingredients is a real-time feature' : 'You have no team-mates to send ingredients to', 'warn'); return; }
+  const old = $('tribute'); if (old) { old.remove(); return; }
+  let to = mates.some(([, i]) => i === pre) ? pre : mates[0][1], last = '';
+  const body = h('div', { class: 'trib' });
+  const give = (r, n) => { if (n > 0) { cmd({ c: 'tb', to, res: r, n }); sfx('click'); } };
+  const draw = () => {
+    const me = G.ps[G.me], live = matesAlive();
+    if (!live.length || !modal.isConnected) { clearInterval(iv); modal.remove(); return; }
+    if (!live.some(([, i]) => i === to)) to = live[0][1];
+    const sig = to + '|' + RES.map((r) => me.res[r]).join() + '|' + live.map(([, i]) => i).join();
+    if (sig === last) return;
+    last = sig;
+    body.replaceChildren(
+      h('div', { class: 'trib-to' }, h('span', { class: 'muted' }, 'To'), ...live.map(([p, i]) => h('button', { class: 'btn small' + (i === to ? ' primary' : ' ghost'), onclick: () => { to = i; last = ''; draw(); } },
+        h('span', { class: 'dot', style: `background:${colorHex(p.color)}` }), p.name))),
+      h('div', { class: 'trib-rows' }, ...RES.map((r) => h('div', { class: 'trib-row' },
+        img('res', r, 'trib-ico', null, 64), h('span', { class: 'trib-name' }, RES_INFO[r].name), h('b', { class: 'trib-have', title: 'What you have' }, fmtNum(me.res[r])),
+        ...[100, 500].map((n) => h('button', { class: 'btn small', disabled: me.res[r] < n, onclick: () => give(r, n) }, 'Send ' + n)),
+        h('button', { class: 'btn small ghost', disabled: me.res[r] < 1, onclick: () => give(r, Math.floor(me.res[r])) }, 'All')))));
+  };
+  const modal = h('div', { class: 'modal', id: 'tribute', onmousedown: (ev) => { if (ev.target === modal) modal.remove(); } },
+    h('div', { class: 'modal-box tribute' }, h('h2', null, 'Send ingredients'), h('p', { class: 'muted' }, 'Arrives straight away, free of charge. Your team-mate sees who sent it.'), body,
+      h('button', { class: 'btn primary', onclick: () => modal.remove() }, 'Done')));
+  document.body.append(modal);
+  const iv = setInterval(draw, 250);
+  draw();
+}
+
 // --------------------------------------------------------------- player list
 let plSig = '';
 function refreshPlayers() {
   const list = realPlayers();
-  const sig = list.map(([p, i]) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '') + (G.ctf ? G.ps[i].caps + ':' + G.ps[i].heroKills + ':' + G.ps[i].deaths + ':' + G.ps[i].level + (G.ps[i].heroId ? '' : 'x') : '')).join('|') + (G.tb ? G.tb.cur + ':' + G.tb.team + ':' + G.tb.ended : '');
+  const sig = list.map(([p, i]) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '') + (G.ctf ? G.ps[i].caps + ':' + G.ps[i].heroKills + ':' + G.ps[i].deaths + ':' + G.ps[i].level + (G.ps[i].heroId ? '' : 'x') : ':' + (G.ps[i].score || 0))).join('|') + (G.tb ? G.tb.cur + ':' + G.tb.team + ':' + G.tb.ended : '') + (G.best ? G.best.score : '') + ':' + matesAlive().length;
   if (sig === plSig) return;
   plSig = sig;
   const teams = new Set(list.map(([p]) => p.team)).size;
@@ -858,11 +943,16 @@ function refreshPlayers() {
       h('span', { class: 'pl-age', title: 'captures · hero kills / deaths' }, `${G.ps[i].caps}⚑ ${G.ps[i].heroKills || 0}/${G.ps[i].deaths}`))));
     return;
   }
-  $('players').replaceChildren(...list.map(([p, i]) => h('div', { class: 'pl' + (G.ps[i].alive ? '' : ' out') + (i === G.me ? ' me' : '') + (G.tb && TAC.playing(i) && !TAC.ended(i) && !G.over ? ' turn' : '') },
+  // the live score: the leader gets a star; your team-mates can be clicked to send them ingredients
+  const top = Math.max(1, ...list.map(([, i]) => G.ps[i].score || 0)), mates = new Set(matesAlive().map(([, i]) => i));
+  $('players').replaceChildren(...list.map(([p, i]) => h('div', { class: 'pl' + (G.ps[i].alive ? '' : ' out') + (i === G.me ? ' me' : '') + (G.tb && TAC.playing(i) && !TAC.ended(i) && !G.over ? ' turn' : '') + (mates.has(i) ? ' mate' : ''),
+    title: mates.has(i) ? `Click to send ${p.name} ingredients` : null, onclick: mates.has(i) ? () => showTribute(i) : null },
     h('span', { class: 'dot', style: `background:${colorHex(p.color)}` }),
     h('span', { class: 'pl-name' }, p.name),
     teams < list.length && h('span', { class: 'pl-team' }, 'T' + p.team),
-    h('span', { class: 'pl-age', title: COMMANDERS[p.commander].name + ' · ' + AGE_NAMES[G.ps[i].age] }, G.ps[i].alive ? AGE_SHORT[G.ps[i].age] + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '↑' : '') : 'out'))));
+    h('span', { class: 'pl-score' + ((G.ps[i].score || 0) >= top ? ' lead' : ''), title: 'Score (military + economy + technology + society)' }, ((G.ps[i].score || 0) >= top ? '★ ' : '') + fmtNum(G.ps[i].score || 0)),
+    h('span', { class: 'pl-age', title: COMMANDERS[p.commander].name + ' · ' + AGE_NAMES[G.ps[i].age] }, G.ps[i].alive ? AGE_SHORT[G.ps[i].age] + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '↑' : '') : 'out'))),
+    G.best ? h('div', { class: 'pl-best', title: 'The best score in this server\'s Hall of Fame for this kind of match' }, `Server best ${fmtNum(G.best.score)} · ${G.best.name}`) : '');
 }
 
 // ------------------------------------------------- turn bar (turn-based matches)
@@ -900,7 +990,8 @@ function refreshScore() {
   const alive = (t) => list.some(([p, i]) => p.team === t && G.ps[i].alive);
   const left = Math.max(0, G.ctf.timeLimit - G.tick / G.tickRate);
   const me = G.me >= 0 ? G.ps[G.me] : null, back = me && me.alive && !me.heroId ? Math.max(0, Math.ceil((me.heroRespawn - G.tick) / G.tickRate)) : -1;
-  const sig = teams.map((t) => t + ':' + capsOf(t) + (alive(t) ? '' : 'x')).join('|') + '|' + (G.ctf.sudden ? 'S' : Math.ceil(left)) + '|' + G.ctf.lvl + '|' + (G.over ? 1 : 0) + '|' + back;
+  const held = list.flatMap(([p, i]) => campBuffsOf(G.ps[i]).map((b) => ({ ...b, p, i })));
+  const sig = teams.map((t) => t + ':' + capsOf(t) + (alive(t) ? '' : 'x')).join('|') + '|' + (G.ctf.sudden ? 'S' : Math.ceil(left)) + '|' + G.ctf.lvl + '|' + (G.over ? 1 : 0) + '|' + back + '|' + held.map((b) => b.key + b.i + ':' + b.secs).join();
   if (sig === scoreSig) return;
   scoreSig = sig;
   const myT = G.me >= 0 ? G.players[G.me].team : -1;
@@ -919,6 +1010,7 @@ function refreshScore() {
   kids.push(h('span', { class: 'tb-time' + (G.ctf.sudden || left <= 60 ? ' low' : '') }, G.over ? 'Match over' : G.ctf.sudden ? 'SUDDEN DEATH · next capture wins' : fmtClock(left)));
   if (G.ctf.lvl) kids.push(h('span', { class: 'tb-left', title: 'Wild minions grow tougher (and richer) every few minutes' }, 'minions lv ' + (G.ctf.lvl + 1)));
   if (back >= 0 && !G.over) kids.push(h('span', { class: 'tb-time low', title: 'Shop while you wait' }, back ? `You're down · back in ${back}s` : 'Back on your feet…'));
+  for (const b of held) kids.push(h('span', { class: 'sc-buff ' + b.key + (b.p.team === myT ? ' ours' : ''), title: b.def.buffDesc }, h('span', { class: 'dot', style: `background:${colorHex(b.p.color)}` }), `${b.def.buffName} · ${b.i === G.me ? 'you' : b.p.name} · ${fmtClock(b.secs)}`));
   box.classList.remove('hidden');
   box.replaceChildren(...kids);
 }
@@ -991,12 +1083,20 @@ export function toggleMenu(force) {
       h('button', { class: 'btn', onclick: () => { toggleFullscreen(); toggleMenu(false); } }, document.fullscreenElement ? 'Leave full screen' : 'Full screen (best for edge scrolling)'),
       host && !G.over && h('button', { class: 'btn', onclick: () => { send({ t: 'pause' }); toggleMenu(false); } }, G.paused ? 'Resume match' : 'Pause match'),
       G.over && h('button', { class: 'btn', onclick: () => { toggleMenu(false); showOver(G.over); } }, 'Show the scores again'),
+      matesAlive().length > 0 && h('button', { class: 'btn', onclick: () => { toggleMenu(false); showTribute(); } }, 'Send ingredients to a team-mate'),
       playing && h('button', { class: 'btn danger', onclick: () => { if (confirmTwice(modal.querySelector('.danger'), 'Really resign?')) { cmd({ c: 'rg' }); toggleMenu(false); } } }, 'Resign'),
       (host || G.over) && h('button', { class: 'btn danger', id: 'btn-end', onclick: (ev) => { if (G.over || confirmTwice(ev.target, 'End the match for everyone?')) { send({ t: 'end' }); toggleMenu(false); } } }, 'Return everyone to the lobby'),
+      !host && !G.over && G.me >= 0 && h('button', { class: 'btn danger', id: 'btn-end', disabled: G.votes && G.votes.mine,
+        onclick: (ev) => { if (confirmTwice(ev.target, 'Ask everyone to return to the lobby?')) { send({ t: 'end' }); toggleMenu(false); } } },
+        G.votes && G.votes.mine ? `Voted to return (${G.votes.n}/${G.votes.of})` : 'Vote to return to the lobby' + (G.votes && G.votes.n ? ` (${G.votes.n}/${G.votes.of})` : '')),
       h('div', { class: 'muted', style: 'text-align:center' }, 'Chefdoms v' + VERSION)));
   document.body.append(modal);
   return true;
 }
+/** Rebuild the menu if it's open (the host changed, the match ended, a vote came in). */
+export function refreshMenu() { if (menuOpen) { toggleMenu(false); toggleMenu(true); } }
+/** Forget the menu (the screen changed under it). */
+export function resetMenu() { menuOpen = false; const old = $('menu'); if (old) old.remove(); }
 function confirmTwice(btn, text) {
   if (btn.dataset.armed === '1') return true;
   btn.dataset.armed = '1'; btn.textContent = text + ' Click again.';
@@ -1007,19 +1107,24 @@ function confirmTwice(btn, text) {
 /** Zoom sensitivity and double-click selection: in the menu and in Controls (both read and write the same setting). */
 function mouseControls(wide) {
   let dbl = store.get('dblSelect') !== '0';
-  const zsens = Number(store.get('zoomSens')) || 1;
+  // the slider is logarithmic with 100% in the middle: a quarter as far at the left end, four times as far at the right
+  const zsens = Math.max(0.25, Math.min(4, Number(store.get('zoomSens')) || 1));
+  const toPos = (s) => Math.round(50 + 50 * Math.log(s) / Math.log(4)), toSens = (p) => Math.round(Math.pow(4, (p - 50) / 50) * 20) / 20;
   const pct = h('b', { class: 'vol-val' }, Math.round(zsens * 100) + '%');
   return [
-    h('label', { class: 'vol' + (wide ? ' wide' : ''), title: 'How far one notch of the mouse wheel (or a zoom key) zooms' }, h('span', null, wide ? 'Zoom sensitivity' : 'Zoom'),
-      h('input', { type: 'range', min: '20', max: '300', step: '10', value: String(Math.round(zsens * 100)), oninput: (ev) => { store.set('zoomSens', String(ev.target.value / 100)); hooks.setZoomSens(ev.target.value / 100); pct.textContent = ev.target.value + '%'; } }), pct),
+    h('label', { class: 'vol' + (wide ? ' wide' : ''), title: 'How far one notch of the mouse wheel (or a zoom key) zooms. The middle is 100%.' }, h('span', null, wide ? 'Zoom sensitivity' : 'Zoom'),
+      h('input', { type: 'range', class: 'zoom-sens', min: '0', max: '100', step: '1', value: String(toPos(zsens)), oninput: (ev) => { const s = toSens(Number(ev.target.value)); store.set('zoomSens', String(s)); hooks.setZoomSens(s); pct.textContent = Math.round(s * 100) + '%'; } }), pct),
     h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: dbl ? '' : null, onchange: (ev) => { dbl = ev.target.checked; store.set('dblSelect', dbl ? '1' : '0'); hooks.setDblSelect(dbl); } }),
       h('span', null, h('b', null, 'Double-click selects all of a type'), wide ? [h('br'), h('span', { class: 'muted' }, 'Double-clicking a Prep Cook (or any unit or station) picks up every one of them on screen. Ctrl+click still does it when this is off.')] : null)),
   ];
 }
 
 function soundControls() {
-  const slider = (label, get, set, test) => h('label', { class: 'vol' }, h('span', null, label),
-    h('input', { type: 'range', min: '0', max: '100', value: String(Math.round(get() * 100)), oninput: (ev) => { set(ev.target.value / 100); }, onchange: () => { if (test) sfx('built'); } }));
+  const slider = (label, get, set, test) => {
+    const val = h('b', { class: 'vol-val' }, Math.round(get() * 100) + '%');
+    return h('label', { class: 'vol' }, h('span', null, label),
+      h('input', { type: 'range', min: '0', max: '100', value: String(Math.round(get() * 100)), oninput: (ev) => { set(ev.target.value / 100); val.textContent = ev.target.value + '%'; }, onchange: () => { if (test) sfx('built'); } }), val);
+  };
   const nowPlaying = h('div', { class: 'muted nowplaying' }, '');
   const upd = () => { if (!nowPlaying.isConnected) { clearInterval(iv); return; } const n = music.now(); nowPlaying.textContent = isMuted() ? 'Muted' : n ? '♪ ' + n : ''; };
   const iv = setInterval(upd, 500);
@@ -1089,8 +1194,8 @@ export function showControls() {
             h('span', null, h('b', null, 'W A S D moves the camera'), h('br'), h('span', { class: 'muted' }, 'The command card then uses Q E R T Y / F G H J K / Z X C V B.'))),
           h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: edge ? '' : null, onchange: (ev) => { edge = ev.target.checked; store.set('edge', edge ? '1' : '0'); hooks.setEdgeScroll(edge); } }),
             h('span', null, h('b', null, 'Edge scrolling'), h('br'), h('span', { class: 'muted' }, 'Push the pointer against a window edge to scroll. Full screen makes this much nicer.'))),
-          h('label', { class: 'vol wide' }, h('span', null, 'Camera speed'),
-            h('input', { type: 'range', min: '50', max: '220', step: '10', value: String(Math.round(speed * 100)), oninput: (ev) => { store.set('camSpeed', String(ev.target.value / 100)); hooks.setCamSpeed(ev.target.value / 100); } })),
+          (() => { const v = h('b', { class: 'vol-val' }, Math.round(speed * 100) + '%'); return h('label', { class: 'vol wide' }, h('span', null, 'Camera speed'),
+            h('input', { type: 'range', min: '50', max: '220', step: '10', value: String(Math.round(speed * 100)), oninput: (ev) => { store.set('camSpeed', String(ev.target.value / 100)); hooks.setCamSpeed(ev.target.value / 100); v.textContent = ev.target.value + '%'; } }), v); })(),
           ...mouseControls(true),
           rows('Camera'),
           h('h3', null, 'Command card'),

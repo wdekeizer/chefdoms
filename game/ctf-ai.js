@@ -9,9 +9,11 @@ import { TICK_RATE, COMMANDERS, CTF, ctfItemCost, ctfKit } from './data.js';
 import { ITEM_KEYS } from './ctf.js';
 
 const LEVELS = {
+  veryeasy: { think: 24, retreat: 0.18, run: 0.15, brave: 0.65, ability: 0.3, shopEvery: 3, danger: 1.2, react: 60, gatherBonus: 0.8 },
   easy:    { think: 16, retreat: 0.22, run: 0.25, brave: 0.8, ability: 0.5, shopEvery: 2, danger: 1.5, react: 40 },
   normal:  { think: 10, retreat: 0.3, run: 0.5, brave: 1.0, ability: 0.85, shopEvery: 1, danger: 2.2, react: 24 },
   hard:    { think: 7, retreat: 0.33, run: 0.7, brave: 1.1, ability: 1, shopEvery: 1, danger: 2.8, react: 14 },
+  veryhard: { think: 6, retreat: 0.34, run: 0.78, brave: 1.15, ability: 1, shopEvery: 1, danger: 3.0, gatherBonus: 1.1, react: 11 },
   extreme: { think: 5, retreat: 0.35, run: 0.85, brave: 1.2, ability: 1, shopEvery: 1, danger: 3.2, gatherBonus: 1.25, react: 8 },
 };
 const DANGER = { dishpit: 1, cooks: 2.2, sauce: 3, riders: 3, brutes: 5, pepper: 6, sugar: 6, critic: 8 };

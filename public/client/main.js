@@ -27,7 +27,7 @@ function show(phase) {
   $('screen-join').classList.toggle('hidden', phase !== 'join');
   $('screen-lobby').classList.toggle('hidden', phase !== 'lobby');
   $('hud').classList.toggle('hidden', phase !== 'game');
-  if (phase !== 'game') { for (const m of document.querySelectorAll('.modal')) m.remove(); $('tooltip').classList.add('hidden'); }
+  if (phase !== 'game') { UI.resetMenu(); for (const m of document.querySelectorAll('.modal')) m.remove(); $('tooltip').classList.add('hidden'); }
   battleUntil = 0;
   music.setState(phase === 'game' ? 'calm' : 'lobby');
 }
@@ -124,7 +124,7 @@ function onMessage(m) {
       UI.renderLobby();
       break;
     case 'start': {
-      G.hostId = m.host;
+      G.hostId = m.host; G.best = m.best || null;
       m.resync = G.phase === 'game' && seed === m.seed;
       seed = m.seed;
       beginMatch(m);
@@ -150,9 +150,11 @@ function onMessage(m) {
       UI.note(m.v ? `Paused by ${m.by}` : 'Back to work!', 'warn');
       $('banner').textContent = 'Paused by ' + m.by; $('banner').classList.toggle('hidden', !m.v);
       break;
-    case 'host': G.hostId = m.host; break;
+    case 'host': G.hostId = m.host; UI.refreshMenu(); break;
+    case 'votes': G.votes = m; UI.refreshMenu(); break;
     case 'over':
       G.over = m; G.mode = null;
+      UI.refreshMenu();
       UI.showOver(m);
       {
         const won = G.me >= 0 && G.players[G.me].team === m.team;
@@ -181,6 +183,8 @@ function onMessage(m) {
 const SPAWN_SOUND = { cook: 'spawn_cook', hero: 'spawn_hero', siege: 'spawn_siege', veh: 'spawn_veh', ranged: 'spawn_mil', support: 'spawn_support', inf: 'spawn_mil' };
 const NOTES = {
   bell: 'There is no Kitchen HQ to shelter in',
+  nogate: 'You have no gates to bar',
+  nogarrison: 'No Kitchen HQ, tower or Signature Restaurant with room for them (towers take no vehicles or siege)',
   res: 'Not enough ingredients for that',
   place: "Can't build there",
   pop: 'Staff limit reached: build another Break Room',
@@ -237,6 +241,17 @@ G.hooks.event = (ev) => {
       if (mine) { UI.note(ev[2] ? 'The bell rings: Prep Cooks are heading inside!' : 'All clear: back to work!', ev[2] ? 'warn' : 'good'); sfx(ev[2] ? 'bell' : 'allclear'); }
       else if (isAlly(ev[1])) { UI.note(`${P.name} ${ev[2] ? 'rang the bell' : 'gave the all-clear'}`); if (ev[2]) sfx('bell', 0.5); }
       UI.refreshAll(true);
+      break;
+    }
+    case 'gates':                        // ['gates', player, barred?, how many]
+      if (mine) { UI.note(ev[2] ? `Gates barred (${ev[3]}): nobody gets through, your own side included` : `Gates open again (${ev[3]})`, ev[2] ? 'warn' : 'good'); sfx(ev[2] ? 'gate_lock' : 'gate_open'); }
+      UI.refreshAll(true);
+      break;
+    case 'tribute': {                    // ['tribute', from, to, resource, amount]
+      const from = G.players[ev[1]], to = G.players[ev[2]], what = `${ev[4]} ${RES_INFO[ev[3]].name}`;
+      if (ev[2] === G.me) { UI.note(`${from.name} sent you ${what}`, 'good'); sfx('tribute'); }
+      else if (mine) { UI.note(`Sent ${what} to ${to.name}`, 'good'); sfx('tribute'); }
+      else if (isAlly(ev[1])) UI.note(`${from.name} sent ${what} to ${to.name}`);
       break;
     }
     case 'alert':
@@ -495,6 +510,8 @@ function boot() {
     setFormation: (f) => IN.setFormation(f),
     toggleBell: () => IN.toggleBell(),
     toggleFollow: () => IN.toggleFollow(),
+    toggleGates: () => IN.toggleGates(),
+    garrison: () => IN.garrisonSelected(null),
   });
   IN.initInput(canvas, {
     selection: () => UI.refreshAll(true),
@@ -504,6 +521,7 @@ function boot() {
     openChat: (team) => UI.openChat(team),
     toggleMenu: (v) => UI.toggleMenu(v),
     note: (t) => UI.note(t, 'warn'),
+    openTribute: () => UI.showTribute(),
   });
   TAC.initTactics({ note: (t) => { UI.note(t, 'warn'); sfx('error'); }, sound: unitSound, selection: () => UI.refreshAll(true), canAfford: UI.canAfford });
   IN.setEdgeScroll(store.get('edge') !== '0');

@@ -1,6 +1,6 @@
 {
   "name": "chefdoms",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Chefdoms - a cooking-themed multiplayer RTS (real-time or turn-based) you host from your own PC. No dependencies.",
   "type": "module",
   "main": "server.js",

@@ -1125,7 +1125,7 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     const atk0 = h.S.atk, hp0 = h.S.hp;
     ok(Math.abs(atk0 - Math.round(computeStats('kofi', CTF.heroAge, []).units.hero_kofi.atk * CTF.heroAtkMul * (CTF.heroDps.kofi || 1) * 10) / 10) < 0.11, 'ctf: heroes hit harder in the arena', String(atk0));
     g.command(0, { c: 'buy', item: 'herbs' });
-    ok(A.items.herbs === 1 && A.res.food === CTF.startTips - 110 && h.S.regen === 3, 'ctf: buying Herb Garden I at the kitchen takes 110 Tips and adds regen');
+    ok(A.items.herbs === 1 && A.res.food === CTF.startTips - CTF.items.herbs.tiers[0][1] && h.S.regen === CTF.items.herbs.tiers[0][0], 'ctf: buying Herb Garden I at the kitchen takes its price in Tips and adds regen');
     g.command(0, { c: 'buy', item: 'skillet' });
     ok(A.items.skillet === 0 && g.events.some((e) => e[0] === 'note' && e[2] === 'tips'), 'ctf: too poor for a Skillet');
     A.res.food = 5000;
@@ -1135,7 +1135,7 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     for (let i = 0; i < 5; i++) g.command(0, { c: 'buy', item: 'skillet' });
     ok(A.items.skillet === 3 && h.S.atk > atk0 && g.events.some((e) => e[0] === 'note' && e[2] === 'maxed'), 'ctf: three Skillet tiers, then it is maxed', `atk ${atk0} → ${h.S.atk}`);
     h.hp = 100; g.command(0, { c: 'buy', item: 'stew' });
-    ok(h.S.hp === hp0 + 130 && h.hp === 230, 'ctf: a Stew tier raises max health and heals the difference');
+    { const st = CTF.items.stew.tiers[0][0]; ok(h.S.hp === hp0 + st && h.hp === 100 + st, 'ctf: a Stew tier raises max health and heals the difference'); }
     g.command(0, { c: 'buy', item: 'clogs' }); g.command(0, { c: 'buy', item: 'whites' }); g.command(0, { c: 'buy', item: 'espresso' });
     ok(h.S.speed > 3 && h.S.armor > 2 && h.S.reload < 0.75, 'ctf: clogs, whites and espresso change speed, armour and attack rate');
     g.command(0, { c: 'buy', item: '__proto__' }); g.command(0, { c: 'buy', item: 42 }); g.command(0, { c: 'buy' });
@@ -1584,17 +1584,169 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
   ok(new Set(codes).size === codes.length && K.actionOf('Escape') === 'cancel' && K.actionOf('Digit3') === 'grp3' && K.actionOf('ArrowLeft') === 'camLeftMain', 'keys: the defaults never share a key, and Esc / 3 / arrows do what they always did');
 }
 
+// ------------------ v1.6.0: garrisons, standing orders, barred gates, sending ingredients, balance, bots, CTF
+{
+  const D = await import('../game/data.js');
+  const { gateKey: gk } = await import('../game/pathfinding.js');
+  // soldiers go inside a tower, heal, add to its volley, and come out again
+  {
+    const g = mk(['flint', 'nonna'], { seed: 7 });
+    setAge(g, 0, 3);
+    g.step();
+    const [tx, ty] = spot(g, 0, 'tower', 6), tw = g.addBuilding(0, 'tower', tx, ty, true);
+    const u1 = g.spawnUnit(0, 'line', tw.x + 2.5, tw.y + 0.5), u2 = g.spawnUnit(0, 'saucier', tw.x + 2.5, tw.y + 1.2), sc = g.spawnUnit(0, 'scooter', tw.x + 2.8, tw.y - 0.6);
+    u1.hp = 10; u2.hp = 10;
+    g.command(0, { c: 'gr', ids: [u1.id, u2.id, sc.id], tid: tw.id });
+    run(g, 6);
+    ok(u1.inside === tw.id && u2.inside === tw.id && tw.inside === 2 && tw.insideMil === 2 && !sc.inside, 'garrison: soldiers go inside a tower (vehicles don\'t fit)', `inside ${tw.inside}/${tw.insideMil}, scooter ${sc.inside}`);
+    ok(u1.hp > 25 && u2.hp > 20, 'garrison: and heal while they are in', `${u1.hp | 0} / ${u2.hp | 0}`);
+    ok(D.garrisonShots(tw.inside, tw.insideMil) === 1 && D.garrisonShots(5, 5) === 2 && D.garrisonShots(30, 0) === 4, 'garrison: every two soldiers add a shot to the volley (five Prep Cooks still do)');
+    const rec = g.bldgRec(tw);
+    ok((rec[12] >> 4) === 2 && rec[11] === 2, 'garrison: clients are told how many soldiers are inside');
+    g.command(0, { c: 'ej', bids: [tw.id] });
+    ok(!u1.inside && !u2.inside && tw.inside === 0 && tw.insideMil === 0 && u1.st === ST.IDLE, 'garrison: Let everyone out empties it');
+    const hq = hqOf(g, 0), c = g.spawnUnit(0, 'cook', hq.x + 3, hq.y + 3);
+    g.command(0, { c: 'gr', ids: [c.id], tid: tw.id });
+    ok(!c.order || c.order.t !== 'garrison', 'garrison: Prep Cooks are not soldiers (they shelter with the bell)');
+    ok(g.shelterFor(c) === hq, 'garrison: the bell still sends Prep Cooks to a Kitchen HQ, never a tower');
+    g.command(0, { c: 'gr', ids: [u1.id] });
+    run(g, 6);
+    ok(u1.inside, 'garrison: with no station named, the nearest one with room takes them');
+    // a station that falls spills its soldiers out
+    g.killEntity(g.ents.get(u1.inside), -1); g.step();
+    ok(!u1.dead && !u1.inside, 'garrison: if the station falls, they spill out alive');
+  }
+  // standing orders: the stance new recruits get, and keeping them inside until released
+  {
+    const g = mk(['flint', 'nonna'], { seed: 7 });
+    g.step();
+    const P = g.players[0], [tx, ty] = spot(g, 0, 'grill', 6), gr = g.addBuilding(0, 'grill', tx, ty, true);
+    g.command(0, { c: 'bs', bids: [gr.id], v: 1 }); g.command(0, { c: 'bk', bids: [gr.id], v: 1 });
+    ok(gr.stance === 1 && gr.keep, 'standing orders: a Grill Station can be told Hold the Line and keep its recruits in');
+    g.command(0, { c: 'tr', bid: gr.id, u: 'line', n: 2 });
+    run(g, 30);
+    const fresh = mine(g, 0, (u) => u.type === 'line');
+    ok(fresh.length === 2 && fresh.every((u) => u.inside === gr.id && u.stance === 1) && gr.inside === 2, 'standing orders: the new Line Cooks wait inside, on Hold the Line', fresh.map((u) => `${u.inside}:${u.stance}`).join(' '));
+    ok(P.pop >= 2, 'standing orders: units waiting inside still count as staff');
+    g.command(0, { c: 'ry', bids: [gr.id], x: gr.x + 6, y: gr.y });
+    g.command(0, { c: 'ej', bids: [gr.id] });
+    ok(fresh.every((u) => !u.inside && u.order && u.order.t === 'move') && gr.inside === 0, 'standing orders: released, they head for the rally point');
+    g.command(0, { c: 'bk', bids: [hqOf(g, 0).id], v: 1 });
+    ok(hqOf(g, 0).keep && g.ents.get(hqOf(g, 0).id), 'standing orders: harmless on a Kitchen HQ (Prep Cooks always walk out)');
+  }
+  // barred gates
+  {
+    const g = mk(['flint', 'nonna'], { seed: 7 });
+    g.step();
+    const P = g.players[0], [tx, ty] = spot(g, 0, 'gate', 6), gt = g.addBuilding(0, 'gate', tx, ty, true), i = ty * g.w + tx;
+    ok(g.block[i] === gk(P.team), 'gates: open to their own side');
+    g.command(0, { c: 'gl', ids: [gt.id], v: 1 });
+    ok(gt.locked && g.block[i] === 1 && g.events.some((e) => e[0] === 'gates' && e[2] === 1), 'gates: barred, they block everyone, their own side included');
+    ok((g.bldgRec(gt)[12] & 8) === 8, 'gates: clients see the bar');
+    g.command(0, { c: 'gl' });
+    ok(!gt.locked && g.block[i] === gk(P.team), 'gates: the hotkey with nothing selected opens every gate again');
+    g.command(0, { c: 'gl' });
+    ok(gt.locked, 'gates: and bars them all when any is open');
+    const g2 = mk(['flint', 'nonna'], { seed: 7 }); g2.step(); g2.command(0, { c: 'gl' });
+    ok(g2.events.some((e) => e[0] === 'note' && e[2] === 'nogate'), 'gates: no gates, a polite note');
+  }
+  // sending ingredients to a team-mate
+  {
+    const g = mk(['flint', 'nonna', 'hank'], { teams: [1, 1, 2] });
+    g.step();
+    const [A, B, C] = g.players;
+    const a0 = A.res.wood, b0 = B.res.wood, c0 = C.res.wood;
+    g.command(0, { c: 'tb', to: 1, res: 'wood', n: 300 });
+    ok(A.res.wood === a0 - 300 && B.res.wood === b0 + 300 && g.events.some((e) => e[0] === 'tribute' && e[1] === 0 && e[2] === 1 && e[4] === 300), 'tribute: 300 Firewood goes to a team-mate');
+    g.command(0, { c: 'tb', to: 2, res: 'wood', n: 100 });
+    g.command(0, { c: 'tb', to: 0, res: 'wood', n: 100 });
+    g.command(0, { c: 'tb', to: 1, res: 'gold', n: 100 });
+    ok(C.res.wood === c0 && A.res.wood === a0 - 300, 'tribute: never to an enemy, yourself, or in a made-up ingredient');
+    g.command(0, { c: 'tb', to: 1, res: 'salt', n: 1e9 });
+    ok(A.res.salt === 0 && B.res.salt > 0, 'tribute: you can only send what you have');
+  }
+  // balance: catapults outrange castles, rams hit harder, Pepper Slingers counter ranged units
+  {
+    let reach = 0;
+    for (const k of D.COMMANDER_KEYS) { const st = D.computeStats(k, 4, Object.keys(D.TECHS)); reach = Math.max(reach, st.bldgs.restaurant.range, st.bldgs.tower.range); }
+    const plain = D.computeStats('flint', 3, []), maxed = D.computeStats('flint', 4, Object.keys(D.TECHS));
+    const ryoFull = D.computeStats('ryo', 4, Object.keys(D.TECHS));
+    ok(plain.units.catapult.range > D.computeStats('flint', 4, Object.keys(D.TECHS)).bldgs.restaurant.range && maxed.units.catapult.range > reach, 'catapults: outrange every Signature Restaurant and tower (fully upgraded, Ryo\'s too with Extra-Firm Meatballs)', `catapult ${plain.units.catapult.range}/${maxed.units.catapult.range} vs ${reach} (Ryo ${ryoFull.bldgs.restaurant.range})`);
+    ok(D.UNITS.ram.atk * D.UNITS.ram.bonus.bldg / D.UNITS.ram.reload > 4 * 18 / 2.5 * 1.5, 'rams: hit stations at least half again as hard as before');
+    ok(D.BUILDINGS.sauce.trains.includes('slinger') && D.UNITS.slinger.bonus.ranged >= 2 && D.UNITS.slinger.tags.includes('ranged'), 'Pepper Slinger: trained at the Sauce Station, more than double damage to ranged units');
+    const g = mk(['flint', 'nonna']);
+    setAge(g, 0, 3); setAge(g, 1, 3);
+    const h0 = g.players[0].home, h1 = g.players[1].home;
+    const free = g.pf.nearestFree(Math.round((h0.x + h1.x) / 2), Math.round((h0.y + h1.y) / 2), 20);
+    const duel = (a, b, n = 1, m = 1) => {
+      const A = [], B = [];
+      for (let i = 0; i < n; i++) A.push(g.spawnUnit(0, a, free[0] + 0.5 - 2.5, free[1] + 0.5 + i * 0.3));
+      for (let i = 0; i < m; i++) B.push(g.spawnUnit(1, b, free[0] + 0.5 + 2.5, free[1] + 0.5 + i * 0.3));
+      for (let i = 0; i < 120 * TICK_RATE; i++) { g.step(); if (A.every((u) => u.dead) || B.every((u) => u.dead)) break; }
+      const res = A.every((u) => u.dead) ? 'B' : B.every((u) => u.dead) ? 'A' : '?';
+      for (const u of [...A, ...B]) if (!u.dead) g.killEntity(u, -1);
+      g.step();
+      return res;
+    };
+    ok(duel('slinger', 'saucier', 2, 2) === 'A', 'Pepper Slinger: two of them beat two Sauciers');
+    ok(duel('slinger', 'mortar', 2, 1) === 'A', 'Pepper Slinger: and a Macaron Mortar');
+    ok(duel('line', 'slinger', 1, 1) === 'A', 'Pepper Slinger: but a Line Cook beats one up close');
+    ok(duel('scooter', 'slinger', 1, 2) === 'A', 'Pepper Slinger: and a Scooter runs two of them down');
+  }
+  // bots: two more levels
+  {
+    const { Bot } = await import('../game/ai.js');
+    const { TacticsBot } = await import('../game/tactics-ai.js');
+    const { CtfBot } = await import('../game/ctf-ai.js');
+    const keys = Object.keys(D.BOT_LEVELS);
+    ok(keys.join() === 'veryeasy,easy,normal,hard,veryhard,extreme', 'bots: Very easy and Very hard sit at either end of the old four', keys.join());
+    const g = mk(['flint', 'nonna', 'hank']);
+    const b1 = new Bot(g, g.players[0], 'veryeasy'), b2 = new Bot(g, g.players[1], 'veryhard');
+    ok(b1.level === 'veryeasy' && b2.level === 'veryhard' && g.players[0].gatherBonus < 1 && g.players[1].gatherBonus > 1, 'bots: each level is a level of its own (Very easy gathers slower, Very hard faster)');
+    g.players[0].ai = b1; g.players[1].ai = b2;
+    let threw = null; try { run(g, 120); } catch (e) { threw = e; }
+    ok(!threw && mine(g, 1, (u) => u.isCook).length > mine(g, 0, (u) => u.isCook).length, 'bots: two minutes in, Very hard has a bigger kitchen than Very easy', threw ? threw.message : `${mine(g, 1, (u) => u.isCook).length} vs ${mine(g, 0, (u) => u.isCook).length} cooks`);
+    ok(new TacticsBot(g, g.players[2], 'veryhard').level === 'veryhard' && new CtfBot(g, g.players[2], 'veryeasy').level === 'veryeasy', 'bots: turn-based and Capture the Flag bots know the new levels too');
+  }
+  // the live score rides along with every player
+  {
+    const g = mk(['flint', 'nonna']); g.step();
+    const r = g.playerRec(g.players[0]);
+    ok(r[29] === g.scoreOf(g.players[0]).total && r.length === 30, 'score: every player record carries the live score');
+  }
+  // capture the flag: quicker fights, stronger items, a bigger personal purse, buffs that outlive a fall
+  {
+    const { CtfGame } = await import('../game/ctf.js');
+    const g = new CtfGame({ players: [{ name: 'A', commander: 'kofi', team: 1, color: 0 }, { name: 'B', commander: 'ryo', team: 2, color: 1 }], seed: 11, ctfCaps: 3, ctfTime: 15 });
+    g.step();
+    const A = g.players[0], B = g.players[1], hA = g.heroOf(A);
+    const base = D.computeStats('kofi', D.CTF.heroAge, []).units.hero_kofi;
+    ok(hA.S.hp === Math.round(base.hp * D.CTF.heroHpMul) && D.CTF.heroHpMul < 1 && D.CTF.heroAtkMul >= 1.8, 'ctf: heroes have less health and hit harder', `${hA.S.hp} hp`);
+    ok(D.CTF.items.skillet.tiers[0][0] >= 7 && D.CTF.items.whites.tiers[2][0] >= 12 && D.CTF.items.espresso.tiers[2][0] <= 0.6, 'ctf: items are stronger for the same price');
+    const t0 = A.res.food, tB = B.res.food;
+    run(g, 10);
+    ok(A.res.food - t0 >= 10 * D.CTF.passiveTips && D.CTF.passiveTips >= 3, 'ctf: Tips come in three times as fast', `${A.res.food - t0} in 10s`);
+    ok(A.res.food !== undefined && B.res.food !== undefined && A.res !== B.res, 'ctf: every hero has a purse of their own');
+    // a camp buff stays through a fall
+    A.campBuffs.b_pepper = g.tick + 90 * TICK_RATE; g.addBuff(hA, 'b_pepper', 90);
+    g.killEntity(hA, 1); g.step();
+    for (let i = 0; i < 40 * TICK_RATE && !g.heroOf(A); i++) g.step();
+    const back = g.heroOf(A);
+    ok(back && back.buffs && back.buffs.b_pepper > g.tick && g.playerRec(A)[30][0] > g.tick, 'ctf: the Ghost Pepper buff is still there after the hero respawns', back ? `ends ${back.buffs && back.buffs.b_pepper} now ${g.tick}` : 'no hero');
+  }
+}
+
 // ----------------------------------------------------------- hostile input fuzz
 {
   const g = mk(['flint', 'nonna'], { seed: 3 });
   const junk = [undefined, null, NaN, Infinity, -1, 0, 1e9, '', 'x', '__proto__', 'constructor', [], {}, [1, 2, 3], { length: 5 }, true];
   const pick = () => junk[(Math.random() * junk.length) | 0];
-  const cmds = ['mv', 'am', 'at', 'hl', 'ga', 'bp', 'bw', 'ba', 'tr', 'rs', 'cq', 'ry', 'st', 'dl', 'ab', 'ul', 'fm', 'sn', 'dr', 'bell', 'zz'];
+  const cmds = ['mv', 'am', 'at', 'hl', 'ga', 'bp', 'bw', 'ba', 'tr', 'rs', 'cq', 'ry', 'st', 'dl', 'ab', 'ul', 'fm', 'sn', 'dr', 'bell', 'gr', 'ej', 'bs', 'bk', 'gl', 'tb', 'zz'];
   let threw = null;
   try {
     for (let i = 0; i < 4000; i++) {
       const ids = Math.random() < 0.5 ? g.units.slice(0, 6).map((u) => u.id) : pick();
-      g.command((Math.random() * 3) | 0, { c: cmds[(Math.random() * cmds.length) | 0], ids, bids: pick(), bid: Math.random() < 0.5 ? hqOf(g, 0).id : pick(), tid: Math.random() < 0.5 ? g.nextId * Math.random() | 0 : pick(), x: pick(), y: pick(), tx: pick(), ty: pick(), x0: pick(), y0: pick(), x1: Math.random() < 0.5 ? 40 : pick(), y1: pick(), b: Math.random() < 0.5 ? (Math.random() < 0.5 ? 'house' : 'gate') : pick(), u: Math.random() < 0.5 ? 'cook' : pick(), tech: Math.random() < 0.5 ? 'age2' : pick(), tree: pick(), i: pick(), n: pick(), q: pick(), f: pick(), v: pick(), on: pick() });
+      g.command((Math.random() * 3) | 0, { c: cmds[(Math.random() * cmds.length) | 0], ids, bids: pick(), bid: Math.random() < 0.5 ? hqOf(g, 0).id : pick(), tid: Math.random() < 0.5 ? g.nextId * Math.random() | 0 : pick(), x: pick(), y: pick(), tx: pick(), ty: pick(), x0: pick(), y0: pick(), x1: Math.random() < 0.5 ? 40 : pick(), y1: pick(), b: Math.random() < 0.5 ? (Math.random() < 0.5 ? 'house' : 'gate') : pick(), u: Math.random() < 0.5 ? 'cook' : pick(), tech: Math.random() < 0.5 ? 'age2' : pick(), tree: pick(), i: pick(), n: pick(), q: pick(), f: pick(), v: pick(), on: pick(), to: pick(), res: Math.random() < 0.5 ? 'wood' : pick() });
       if (i % 40 === 0) { g.step(); g.delta(); }
     }
     run(g, 10);

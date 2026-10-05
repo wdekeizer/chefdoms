@@ -162,6 +162,10 @@ const SOUNDS = {
   ping: () => { [1319, 1760].forEach((f, i) => { tone(f, 0.24, { gain: 0.17, at: i * 0.12 }); tone(f * 2, 0.12, { gain: 0.05, at: i * 0.12 }); }); tone(1760, 0.35, { gain: 0.09, at: 0.34 }); },
   bell: () => [0, 0.3, 0.6].forEach((at) => { metal(622, 0.7, 0.17, at); noise(0.02, { gain: 0.08, freq: 2500, at }); }),          // the alarm bell, three strokes
   allclear: () => { metal(523, 0.8, 0.14, 0); metal(784, 1.0, 0.12, 0.22); },
+  gate_lock: () => { tone(110, 0.12, { gain: 0.16, to: 70, type: 'square' }); noise(0.05, { gain: 0.1, freq: 900, q: 2, at: 0.08 }); metal(330, 0.25, 0.08, 0.1); },   // a heavy bolt slides home
+  gate_open: () => { noise(0.08, { gain: 0.08, freq: 1300, to: 700, q: 2 }); tone(180, 0.12, { gain: 0.08, to: 240, type: 'triangle', at: 0.05 }); },               // the bolt drawn back
+  tribute: () => { [988, 1319].forEach((f, i) => metal(f, 0.35, 0.07, i * 0.07)); noise(0.06, { gain: 0.05, freq: 5000, at: 0.1 }); },                              // coins in a jar
+  garrison: () => { noise(0.05, { gain: 0.08, freq: 600, q: 1.5 }); tone(150, 0.1, { gain: 0.08, to: 110, type: 'triangle', at: 0.04 }); },                      // a door shuts
 
   // --- every kind of unit answers a click in its own voice
   sel_cook: () => { tone(620, 0.05, { gain: 0.09, type: 'triangle' }); tone(830, 0.07, { gain: 0.08, type: 'triangle', at: 0.05 }); },   // cheerful "yes chef"
@@ -216,6 +220,7 @@ const FALLBACK = {
   spawn_cook: 'train', spawn_mil: 'train', spawn_veh: 'train', spawn_siege: 'train', spawn_support: 'train', spawn_hero: 'train',
   g_veg: 'pick', g_spice: 'pick', g_salt: 'pick', g_fish: 'pick', g_garden: 'pick',
   cleaver: 'clang', veh_hit: 'clang', ram_hit: 'clang', smash: 'hit', death_veh: 'death', allclear: 'bell',
+  gate_lock: 'click', gate_open: 'click', tribute: 'click', garrison: 'click',
   ult: 'ability', ult_flambe: 'ult', ult_feast: 'ult', ult_lockdown: 'ult', ult_perfectcut: 'ult', ult_glass: 'ult', ult_swarm: 'ult',
   ult_lastcall: 'ult', ult_storm: 'ult', ult_bark: 'ult', ult_freeze: 'ult', ult_flood: 'ult',
   flag_take: 'ability', flag_lost: 'alert', flag_return: 'built', flag_cap: 'age', flag_lostcap: 'herodown', coin: 'click', buy: 'tech', sudden: 'alert', level: 'tech', levelup: 'age',

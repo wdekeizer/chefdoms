@@ -7,6 +7,12 @@
 import { RES, TICK_RATE, COMMANDERS, TECHS, BUILDINGS, ULT_AGE, MARKET, techCost } from './data.js';
 
 const LEVELS = {
+  // Very easy: slow to think, a small kitchen, gathers 20% slower and hardly ever attacks
+  veryeasy: {
+    think: 60, cooks: [0, 7, 10, 13, 15], ageCooks: [0, 9, 12, 15],
+    wave: [0, 4, 5, 7, 9], waveGrow: 0, firstAttack: 1080, regroup: 240,
+    armyMax: [0, 3, 6, 9, 12], minArmy: [0, 0, 2, 3, 4], techs: 0, ability: false, towers: 0, prod: 1, gatherBonus: 0.8,
+  },
   easy: {
     think: 40, cooks: [0, 10, 15, 20, 24], ageCooks: [0, 10, 15, 20],
     wave: [0, 6, 8, 12, 16], waveGrow: 1, firstAttack: 660, regroup: 120,
@@ -21,6 +27,12 @@ const LEVELS = {
     think: 10, cooks: [0, 18, 30, 40, 48], ageCooks: [0, 14, 24, 34],
     wave: [0, 6, 10, 16, 24], waveGrow: 3, firstAttack: 280, regroup: 40,
     armyMax: [0, 10, 24, 40, 60], minArmy: [0, 3, 6, 10, 12], techs: 2, ability: true, towers: 2, prod: 3,
+  },
+  // Very hard: quicker than Hard, more of everything, and openly gathers 10% faster
+  veryhard: {
+    think: 7, cooks: [0, 19, 32, 44, 52], ageCooks: [0, 15, 25, 35],
+    wave: [0, 6, 11, 17, 26], waveGrow: 3, firstAttack: 260, regroup: 35,
+    armyMax: [0, 11, 26, 44, 66], minArmy: [0, 4, 7, 11, 13], techs: 2, ability: true, towers: 2, prod: 4, gatherBonus: 1.1,
   },
   // Extreme plays the Hard script flat out and, openly, gathers 25% faster.
   extreme: {
@@ -406,8 +418,8 @@ export class Bot {
     const uq = COMMANDERS[P.commander].unique;
     let comp;
     if (a === 1) comp = { line: 1 };
-    else if (a === 2) comp = { line: 4, saucier: 2.5, scooter: 1.5, butcher: 0.5 };
-    else comp = { line: 2.5, saucier: 2, scooter: 0.7, truck: 1.5, butcher: 0.5, catapult: 1.0, ram: 1.2, barista: 0.4, [uq]: 4.5 };
+    else if (a === 2) comp = { line: 4, saucier: 2.5, scooter: 1.5, butcher: 0.5, slinger: 0.6 };
+    else comp = { line: 2.5, saucier: 2, scooter: 0.7, truck: 1.5, butcher: 0.5, slinger: 0.5, catapult: 1.0, ram: 1.2, barista: 0.4, [uq]: 4.5 };
     // react to what the enemies field
     let veh = 0, rng = 0, tot = 0;
     for (const u of g.units) {
@@ -418,6 +430,7 @@ export class Bot {
     if (tot >= 6) {
       if (veh / tot > 0.3 && comp.butcher) comp.butcher *= 4;
       if (rng / tot > 0.35 && comp.scooter) comp.scooter *= 2;
+      if (rng / tot > 0.3 && comp.slinger) comp.slinger *= 4;                   // Pepper Slingers pick off ranged units
     }
     if (P.commander === 'ryo') comp.line *= 1.5;
     if (P.commander === 'zara' && comp.scooter) { comp.scooter *= 1.3; if (comp.truck) comp.truck *= 1.5; }

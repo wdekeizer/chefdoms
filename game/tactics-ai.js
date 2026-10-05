@@ -8,9 +8,11 @@ import { K_UNIT, K_BLDG, K_NODE } from './sim.js';
 import { TILE, RES, NODES, BUILDINGS, TECHS, COMMANDERS, ULT_AGE, TB, MARKET, tbReach, tbPath, tbDist, tbDamage, techCost } from './data.js';
 
 const LEVELS = {
+  veryeasy: { cooks: 1, wave: [0, 2, 3, 4, 5], grow: 0, techs: 0, ability: false, towers: 0, sharp: false, pace: 12, gatherBonus: 0.8 },
   easy:    { cooks: 2, wave: [0, 3, 4, 6, 8],  grow: 0, techs: 0, ability: false, towers: 0, sharp: false, pace: 9 },
   normal:  { cooks: 3, wave: [0, 3, 5, 7, 9],  grow: 1, techs: 1, ability: true,  towers: 0, sharp: true,  pace: 7 },
   hard:    { cooks: 4, wave: [0, 4, 6, 8, 10], grow: 1, techs: 2, ability: true,  towers: 1, sharp: true,  pace: 6 },
+  veryhard: { cooks: 4, wave: [0, 4, 6, 9, 11], grow: 2, techs: 2, ability: true,  towers: 1, sharp: true,  pace: 5, gatherBonus: 1.1 },
   extreme: { cooks: 4, wave: [0, 4, 6, 9, 12], grow: 2, techs: 2, ability: true,  towers: 1, sharp: true,  pace: 5, gatherBonus: 1.25 },
 };
 const ECO_TECHS = ['peeler1', 'hatchet1', 'sifter1', 'peeler2', 'hatchet2', 'sifter2'];
@@ -198,8 +200,8 @@ export class TacticsBot {
   composition() {
     const P = this.P, a = P.age, uq = COMMANDERS[P.commander].unique;
     if (a === 1) return { line: 1 };
-    if (a === 2) return { line: 3, saucier: 2.5, scooter: 1.5, butcher: 0.6, barista: 0.3 };
-    return { line: 2, saucier: 2, scooter: 0.8, truck: 1.5, butcher: 0.5, catapult: 1.2, ram: 1.5, barista: 0.4, [uq]: 4 };
+    if (a === 2) return { line: 3, saucier: 2.5, scooter: 1.5, butcher: 0.6, slinger: 0.6, barista: 0.3 };
+    return { line: 2, saucier: 2, scooter: 0.8, truck: 1.5, butcher: 0.5, slinger: 0.5, catapult: 1.2, ram: 1.5, barista: 0.4, [uq]: 4 };
   }
 
   // ------------------------------------------------------------- prep cooks

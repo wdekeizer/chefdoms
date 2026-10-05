@@ -152,7 +152,7 @@ export class CtfGame extends Game {
     P.res = { food: P.neutral ? 0 : CTF.startTips, wood: 0, spice: 0, salt: 0 };    // food = Tips
     P.items = {}; for (const k of ITEM_KEYS) P.items[k] = 0;
     P.caps = 0; P.deaths = 0; P.minions = 0; P.energyReady = 0; P.earned = 0;
-    P.level = 1; P.xp = 0;
+    P.level = 1; P.xp = 0; P.campBuffs = {};
     P.popCap = 1; P.maxPop = 1;
     return P;
   }
@@ -257,7 +257,8 @@ export class CtfGame extends Game {
       if (P.neutral || !P.alive || P.heroId || !P.heroRespawn || this.tick < P.heroRespawn) continue;
       const base = this.baseOf.get(P.team);
       const pt = this.spawnPoint(base.hq, base.x, base.y + 2);
-      this.spawnUnit(P.idx, COMMANDERS[P.commander].hero, pt[0], pt[1]);
+      const h = this.spawnUnit(P.idx, COMMANDERS[P.commander].hero, pt[0], pt[1]);
+      for (const k in P.campBuffs) if (P.campBuffs[k] > this.tick) this.addBuff(h, k, (P.campBuffs[k] - this.tick) / TICK_RATE);   // a camp buff outlives a fall
       P.heroRespawn = 0;
       this.events.push(['heroup', P.idx]);
     }
@@ -347,7 +348,7 @@ export class CtfGame extends Game {
   capture(f, P) {
     this.caps[P.team] = (this.caps[P.team] || 0) + 1;
     P.caps++;
-    this.earn(P, 50);
+    this.earn(P, CTF.capTips);
     this.gainXp(P, CTF.level.capXp);
     f.x = f.hx; f.y = f.hy;
     this.flagEvent('cap', f, P.idx);
@@ -370,9 +371,12 @@ export class CtfGame extends Game {
         if (!e.camp.alive) {
           e.camp.nextAt = this.tick + e.camp.def.respawn * TICK_RATE; this.events.push(['camp', e.camp.i, 'down']);
           const def = e.camp.def, kh = K && !K.neutral ? this.heroOf(K) : null;
-          if (def.buff && kh) { this.addBuff(kh, def.buff, def.buffDur); this.events.push(['buffcamp', K.idx, e.camp.type]); }   // the last hit takes the buff
+          if (def.buff && kh) {                                         // the last hit takes the buff, and keeps it through a respawn
+            K.campBuffs[def.buff] = this.tick + def.buffDur * TICK_RATE;
+            this.addBuff(kh, def.buff, def.buffDur); this.events.push(['buffcamp', K.idx, e.camp.type]);
+          }
         }
-        if (K && !K.neutral) { this.earn(K, Math.round(e.bounty * (K.gatherBonus || 1))); this.gainXp(K, Math.round(e.bounty * CTF.level.bountyXp)); K.minions++; this.events.push(['bounty', K.idx, e.bounty, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]); }
+        if (K && !K.neutral) { this.earn(K, Math.round(e.bounty * CTF.bountyMul * (K.gatherBonus || 1))); this.gainXp(K, Math.round(e.bounty * CTF.level.bountyXp)); K.minions++; this.events.push(['bounty', K.idx, e.bounty, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]); }
       } else if (e.isHero && !P.neutral) {
         P.deaths++;
         if (K && K !== P && !K.neutral) {
@@ -461,6 +465,7 @@ export class CtfGame extends Game {
     r[21] = ITEM_KEYS.map((k) => P.items[k]);
     r[22] = P.caps; r[23] = P.deaths; r[24] = P.energyReady; r[25] = P.minions; r[26] = P.score.heroKills;
     r[27] = P.level; r[28] = P.xp;
+    r[30] = ['b_pepper', 'b_sugar'].map((k) => ((P.campBuffs[k] || 0) > this.tick ? P.campBuffs[k] : 0));   // the tick each camp buff runs out (0 = none)
     return r;
   }
   ctfRec() { return { caps: this.caps, sudden: this.sudden ? 1 : 0, lvl: this.minionLevel }; }

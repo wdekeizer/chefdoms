@@ -83,7 +83,7 @@ export function beginMatch(m) {
     stats: computeStats(p.commander, 1, []), sig: '',
   }));
   G.tick = m.tick || 0; G.snapAt = 0; G.snapDt = 1000 / G.tickRate / (Number(G.opts.speed) || 1);
-  G.paused = !!m.paused; G.over = null;
+  G.paused = !!m.paused; G.over = null; G.votes = null;
   if (!m.resync) {
     G.sel.clear(); G.groups = {}; G.mode = null;
     G.fx = []; G.projs = []; G.marks = []; G.pings = []; G.teamPings = []; G.lastAlert = null; G.lastAlertAt = 0; G.lastFightAt = 0;
@@ -124,7 +124,7 @@ function upsert(r, now, syncing) {
     if (!e) {
       const size = G.tb ? 1 : (BUILDINGS[r[2]] || { size: 2 }).size;           // on the tactics grid every station is one tile
       e = { id, kind, type: r[2], owner: r[3], tx: r[4], ty: r[5], size, x: r[4] + size / 2, y: r[5] + size / 2, rx: 0, ry: 0, hp: r[6], prog: r[7], qpct: r[8], q: r[9], rally: r[10], inside: r[11] || 0, hitAt: 0, seen: false, gprog: r[7], born: now };
-      e.rx = e.x; e.ry = e.y;
+      e.rx = e.x; e.ry = e.y; bldgFlags(e, r[12]);
       if (G.tb) tbStation(e, r);
       G.ents.set(id, e); G.listsDirty = true;
       setOcc(e, id);
@@ -133,7 +133,7 @@ function upsert(r, now, syncing) {
       return;
     }
     if (r[6] < e.hp) e.hitAt = now;
-    e.hp = r[6]; e.prog = r[7]; e.qpct = r[8]; e.q = r[9]; e.rally = r[10]; e.inside = r[11] || 0;
+    e.hp = r[6]; e.prog = r[7]; e.qpct = r[8]; e.q = r[9]; e.rally = r[10]; e.inside = r[11] || 0; bldgFlags(e, r[12]);
     if (G.tb) tbStation(e, r);
   } else {
     if (!e) {
@@ -176,6 +176,12 @@ function remove(id) {
   G.hooks.removed(e);
 }
 
+/** A station's standing orders: the stance its recruits get, keep them inside, a barred gate; and how many soldiers are inside. */
+function bldgFlags(e, f) {
+  f = f | 0;
+  e.bsn = f & 3; e.keep = !!(f & 4); e.locked = !!(f & 8); e.mil = f >> 4;
+}
+
 function updatePlayer(r) {
   const p = G.ps[r[0]];
   if (!p) return;
@@ -194,8 +200,8 @@ function updatePlayer(r) {
   }
   p.alive = !!r[9]; p.heroId = r[10]; p.heroRespawn = r[11]; p.abilityReady = r[12]; p.lunchUntil = r[13];
   p.pending = r[14]; p.kills = r[15]; p.lost = r[16]; p.razed = r[17]; p.bell = !!r[18];
-  p.ultReady = r[19] || 0; p.lockUntil = r[20] || 0;
-  if (G.ctf) { p.caps = r[22] || 0; p.deaths = r[23] || 0; p.energyReady = r[24] || 0; p.minions = r[25] || 0; p.heroKills = r[26] || 0; p.level = r[27] || 1; p.xp = r[28] || 0; }
+  p.ultReady = r[19] || 0; p.lockUntil = r[20] || 0; p.score = r[29] || 0;
+  if (G.ctf) { p.caps = r[22] || 0; p.deaths = r[23] || 0; p.energyReady = r[24] || 0; p.minions = r[25] || 0; p.heroKills = r[26] || 0; p.level = r[27] || 1; p.xp = r[28] || 0; p.campBuffs = r[30] || [0, 0]; }
   else if (r[21]) p.income = r[21];
 }
 
