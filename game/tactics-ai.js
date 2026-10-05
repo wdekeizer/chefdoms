@@ -14,7 +14,8 @@ const LEVELS = {
   extreme: { cooks: 4, wave: [0, 4, 6, 9, 12], grow: 2, techs: 2, ability: true,  towers: 1, sharp: true,  pace: 5, gatherBonus: 1.25 },
 };
 const ECO_TECHS = ['peeler1', 'hatchet1', 'sifter1', 'peeler2', 'hatchet2', 'sifter2'];
-const MIL_TECHS = ['pans', 'knives1', 'aprons1', 'sauce1', 'meals1', 'knives2', 'aprons2', 'sauce2', 'bumper1', 'meals2', 'ovens', 'grinders', 'cheftable', 'knives3', 'aprons3', 'sauce3', 'bumper2', 'meatballs', 'veteran', 'elite'];
+const MIL_TECHS = ['pans', 'knives1', 'aprons1', 'sauce1', 'smock1', 'meals1', 'hubcap1', 'bumper1', 'knives2', 'aprons2', 'sauce2', 'smock2', 'meals2', 'ovens', 'grinders', 'cheftable',
+  'hubcap2', 'bumper2', 'axle1', 'knives3', 'aprons3', 'sauce3', 'smock3', 'hubcap3', 'bumper3', 'meatballs', 'veteran', 'elite'];
 const PROD = ['grill', 'sauce', 'garage', 'workshop', 'restaurant'];
 const cheb = (ax, ay, bx, by) => Math.max(Math.abs(ax - bx), Math.abs(ay - by));
 

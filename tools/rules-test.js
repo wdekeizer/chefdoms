@@ -1519,6 +1519,71 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
   ok(tg.bldgs.length === nb, 'walls: not on the turn-based grid');
 }
 
+// ----------------------------- v1.5.0: defence range, salt walls, upgrades, keys
+{
+  const D = await import('../game/data.js');
+  // towers outrange every ranged unit, upgrades and all (siege aside); the restaurant reaches further still
+  const full = D.computeStats('odile', 4, Object.keys(D.TECHS)), base = D.computeStats('odile', 1, []);
+  let longest = 0, who = '';
+  for (const k in full.units) { const u = full.units[k]; if (u.tags.includes('ranged') && !u.tags.includes('siege') && u.range > longest) { longest = u.range; who = k; } }
+  ok(D.BUILDINGS.tower.range > longest && base.bldgs.tower.range > longest, 'towers: a plain Pepper Mill Tower outranges every ranged unit, even fully upgraded', `tower ${D.BUILDINGS.tower.range} vs ${who} ${longest}`);
+  ok(D.BUILDINGS.restaurant.range > D.BUILDINGS.tower.range && D.BUILDINGS.tower.sight > D.BUILDINGS.tower.range && D.BUILDINGS.restaurant.sight > D.BUILDINGS.restaurant.range, 'towers: the restaurant reaches further, and both see past their range');
+  ok(D.tbBldg(base.bldgs.tower).rng > D.tbUnit(full.units.mortar).rng && D.tbBldg(base.bldgs.tower).rng > D.tbUnit(full.units.saucier).rng, 'towers: on the turn-based grid too', `${D.tbBldg(base.bldgs.tower).rng} vs ${D.tbUnit(full.units.mortar).rng}`);
+
+  // military upgrades sit with the units they improve, a tier per age from the Diner Age
+  const T = D.TECHS, B = D.BUILDINGS;
+  const line = (b, keys) => keys.every((k) => B[b].techs.includes(k));
+  ok(line('grill', ['pans', 'knives1', 'knives2', 'knives3', 'aprons1', 'aprons2', 'aprons3']) && line('sauce', ['sauce1', 'sauce2', 'sauce3', 'smock1', 'smock2', 'smock3'])
+    && line('garage', ['hubcap1', 'hubcap2', 'hubcap3', 'bumper1', 'bumper2', 'bumper3']) && line('workshop', ['axle1', 'meatballs']), 'upgrades: infantry at the Grill, ranged at the Sauce Station, vehicles at the Garage, siege at the Workshop');
+  ok(['knives', 'aprons', 'sauce', 'smock', 'hubcap', 'bumper'].every((f) => T[f + '1'].age === 2 && T[f + '2'].age === 3 && T[f + '3'].age === 4 && T[f + '2'].req === f + '1' && T[f + '3'].req === f + '2'), 'upgrades: three tiers each, in the Diner, Bistro and Five-Star Ages, one after another');
+  const placed = new Set(); for (const b in B) for (const t of B[b].techs) placed.add(t);
+  ok(Object.keys(T).every((t) => placed.has(t)) && !B.lab.techs.some((t) => /^(knives|aprons|sauce|smock|hubcap|bumper)/.test(t)), 'upgrades: every one is researched somewhere, and the weapons and armour left the Test Kitchen');
+  const k1 = D.computeStats('flint', 2, ['knives1']), k0 = D.computeStats('flint', 2, []);
+  ok(k1.units.line.atk === k0.units.line.atk + 1 && k1.units.scooter.atk === k0.units.scooter.atk, 'upgrades: knives sharpen infantry only (vehicles have hubcaps)');
+  const s1 = D.computeStats('flint', 2, ['smock1']);
+  ok(s1.units.saucier.armor === k0.units.saucier.armor + 1 && s1.units.line.armor === k0.units.line.armor, 'upgrades: smocks armour the ranged units');
+
+  // salt walls: from the Diner Age, three times the crate, dragged over crates they take their place
+  ok(B.saltwall.age === 2 && B.saltgate.age === 2 && B.saltwall.hp >= 3 * B.wall.hp && B.saltwall.cost.salt > 0 && B.saltgate.gate, 'salt walls: Salt Block Walls and Salt Gates from the Diner Age, three times as tough');
+  const g = mk(['flint', 'nonna'], { seed: 7 });
+  g.step();
+  const A = g.players[0];
+  let spot = null;
+  for (let y = 4; y < g.h - 10 && !spot; y++) for (let x = 4; x < g.w - 14 && !spot; x++) {
+    let free = true; for (let xx = x; xx < x + 10 && free; xx++) for (let yy = y; yy < y + 3; yy++) if (g.block[yy * g.w + xx] || g.occ[yy * g.w + xx]) free = false;
+    for (const P of g.players) if (Math.hypot(P.home.x - x, P.home.y - y) < 10) free = false;
+    if (free) spot = [x, y];
+  }
+  const [X, Y] = spot, cook = g.spawnUnit(0, 'cook', X + 0.5, Y + 2.5);
+  A.res.salt = 1000; A.res.wood = 1000;
+  g.command(0, { c: 'bw', b: 'saltwall', ids: [cook.id], x0: X, y0: Y, x1: X + 5, y1: Y });
+  ok(!g.bldgs.some((b) => b.type === 'saltwall'), 'salt walls: not in the Food Cart Age');
+  A.age = 2; g.refreshStats ? g.refreshStats(A) : null; A.stats = D.computeStats(A.commander, 2, A.techs);
+  g.command(0, { c: 'bw', ids: [cook.id], x0: X, y0: Y, x1: X + 5, y1: Y });
+  const crates = g.bldgs.filter((b) => b.type === 'wall' && !b.dead).length;
+  g.command(0, { c: 'bw', b: 'saltwall', ids: [cook.id], x0: X, y0: Y, x1: X + 7, y1: Y });
+  g.step();
+  const salts = g.bldgs.filter((b) => b.type === 'saltwall' && !b.dead), left = g.bldgs.filter((b) => b.type === 'wall' && !b.dead).length;
+  ok(crates === 6 && salts.length === 8 && left === 0 && A.res.salt <= 1000 - 8 * B.saltwall.cost.salt + 1, 'salt walls: dragged over your own crates they replace them, then carry on', `${crates} crates → ${salts.length} salt, ${left} crates left, ${A.res.salt} salt`);
+  g.command(0, { c: 'bp', ids: [], b: 'saltgate', tx: X + 3, ty: Y });
+  g.step();
+  const sg = g.ents.get(g.occ[Y * g.w + X + 3]);
+  ok(sg && sg.type === 'saltgate', 'salt walls: a Salt Gate goes onto a salt block');
+  g.completeBuilding(sg);
+  const { gateKey: gk } = await import('../game/pathfinding.js');
+  ok(g.block[Y * g.w + X + 3] === gk(A.team), 'salt walls: and opens for its own team like any gate');
+}
+
+// the keys: every one the game listens to can be changed (keys.js runs in node too: no localStorage, defaults only)
+{
+  const K = await import('../public/client/keys.js');
+  const ids = K.ACTIONS.map((a) => a.id);
+  ok(['cancel', 'menu', 'chat', 'chat2', 'delete', 'delete2', 'zoomIn2', 'zoomOut2', 'camUpMain', 'camLeftMain', 'grp1', 'grp0'].every((i) => ids.includes(i)), 'keys: cancel, menu, chat, delete, the arrow keys, zoom and control groups are all rebindable actions');
+  ok(['Escape', 'F10', 'Enter', 'Delete', 'Backspace', 'Digit1', 'ArrowUp', 'NumpadAdd'].every((c) => K.canBind(c)) && !K.canBind('F5') && !K.canBind('MetaLeft'), 'keys: any key can be bound except the ones the browser keeps (F5, F11, F12, the system key)');
+  const codes = K.ACTIONS.map((a) => K.keyOf(a.id)).filter(Boolean);
+  ok(new Set(codes).size === codes.length && K.actionOf('Escape') === 'cancel' && K.actionOf('Digit3') === 'grp3' && K.actionOf('ArrowLeft') === 'camLeftMain', 'keys: the defaults never share a key, and Esc / 3 / arrows do what they always did');
+}
+
 // ----------------------------------------------------------- hostile input fuzz
 {
   const g = mk(['flint', 'nonna'], { seed: 3 });

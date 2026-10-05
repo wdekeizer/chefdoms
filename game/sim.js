@@ -1685,9 +1685,9 @@ export class Game {
         const S = P.stats.bldgs[c.b];
         if (!S || S.age > P.age) return;
         const tx = c.tx | 0, ty = c.ty | 0;
-        if (S.gate && tx >= 0 && ty >= 0 && tx < this.w && ty < this.h) {     // a gate on our own Crate Wall takes that crate's place
+        if (S.gate && tx >= 0 && ty >= 0 && tx < this.w && ty < this.h) {     // a gate on one of our own wall blocks takes its place
           const old = this.ents.get(this.occ[ty * this.w + tx]);
-          if (old && !old.dead && old.kind === K_BLDG && old.type === 'wall' && old.owner === pi) {
+          if (old && !old.dead && old.kind === K_BLDG && old.S.wall && !old.S.gate && old.owner === pi) {
             if (!this.canAfford(P, S.cost)) { this.events.push(['note', pi, 'res']); return; }
             if (!old.done && old.paid) this.refund(P, old.paid, 1 - old.prog);
             this.killEntity(old, -1); this.freeTiles(old);
@@ -1701,8 +1701,8 @@ export class Game {
         break;
       }
 
-      case 'bw': {                                  // a line of Crate Wall: one crate per tile, each paid for as it goes down
-        const S = P.stats.bldgs.wall;
+      case 'bw': {                                  // a line of wall: one block per tile, each paid for as it goes down
+        const kind = c.b === 'saltwall' ? 'saltwall' : 'wall', S = P.stats.bldgs[kind];
         if (!S || S.age > P.age) return;
         const inMap = (v, m) => Number.isFinite(v) && v >= 0 && v < m;
         if (!inMap(c.x0, this.w) || !inMap(c.y0, this.h) || !inMap(c.x1, this.w) || !inMap(c.y1, this.h)) return;
@@ -1710,10 +1710,15 @@ export class Game {
         let short = false;
         for (const [x, y] of wallLine(c.x0, c.y0, c.x1, c.y1)) {
           const there = this.ents.get(this.occ[y * this.w + x]);
-          if (there && there.kind === K_BLDG && there.S.wall && there.owner === pi) continue;      // already walled
-          if (!this.canPlace('wall', x, y)) continue;                                          // trees, water, stations: the line skips them
+          if (there && !there.dead && there.kind === K_BLDG && there.S.wall && there.owner === pi) {
+            if (kind !== 'saltwall' || there.type !== 'wall') continue;                       // already walled (gates are kept)
+            if (!this.canAfford(P, S.cost)) { short = true; break; }                         // salt over our own crates: the crate makes way
+            if (!there.done && there.paid) this.refund(P, there.paid, 1 - there.prog);
+            this.killEntity(there, -1); this.freeTiles(there);
+          }
+          if (!this.canPlace(kind, x, y)) continue;                                            // trees, water, stations: the line skips them
           if (!this.pay(P, S.cost)) { short = true; break; }
-          const b = this.addBuilding(pi, 'wall', x, y, false);
+          const b = this.addBuilding(pi, kind, x, y, false);
           b.paid = { ...S.cost };
           placed.push(b);
         }

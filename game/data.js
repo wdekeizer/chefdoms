@@ -7,7 +7,7 @@
 //  (Restart the server afterwards; everyone must reload the page.)
 // ============================================================================
 
-export const VERSION = '1.4.0';
+export const VERSION = '1.5.0';
 export const TICK_RATE = 20;            // simulation ticks per second
 export const DT = 1 / TICK_RATE;
 export const MAX_PLAYERS = 10;
@@ -283,25 +283,24 @@ export const BUILDINGS = {
   }),
   grill: B({
     name: 'Grill Station', desc: 'Trains infantry: Line Cooks and Butchers.',
-    size: 3, hp: 1100, cost: { wood: 125 }, time: 28, age: 1, trains: ['line', 'butcher'], techs: ['pans'],
+    size: 3, hp: 1100, cost: { wood: 125 }, time: 28, age: 1, trains: ['line', 'butcher'], techs: ['pans', 'knives1', 'knives2', 'knives3', 'aprons1', 'aprons2', 'aprons3'],
   }),
   sauce: B({
     name: 'Sauce Station', desc: 'Trains Sauciers, your ranged line.',
-    size: 3, hp: 1000, cost: { wood: 140 }, time: 28, age: 2, trains: ['saucier'],
+    size: 3, hp: 1000, cost: { wood: 140 }, time: 28, age: 2, trains: ['saucier'], techs: ['sauce1', 'sauce2', 'sauce3', 'smock1', 'smock2', 'smock3'],
   }),
   garage: B({
     name: 'Delivery Garage', desc: 'Trains vehicles: Delivery Scooters and Food Trucks.',
-    size: 3, hp: 1100, cost: { wood: 150 }, time: 30, age: 2, trains: ['scooter', 'truck'],
+    size: 3, hp: 1100, cost: { wood: 150 }, time: 30, age: 2, trains: ['scooter', 'truck'], techs: ['hubcap1', 'hubcap2', 'hubcap3', 'bumper1', 'bumper2', 'bumper3'],
   }),
   lab: B({
-    name: 'Test Kitchen', desc: 'Researches weapon, armour and station upgrades.',
+    name: 'Test Kitchen', desc: 'Researches upgrades for the whole brigade and for your stations. (Weapons and armour are upgraded where each kind of unit is trained.)',
     size: 3, hp: 1000, cost: { wood: 150 }, time: 30, age: 2,
-    techs: ['knives1', 'knives2', 'knives3', 'aprons1', 'aprons2', 'aprons3', 'sauce1', 'sauce2', 'sauce3', 'bumper1', 'bumper2', 'ovens', 'meatballs',
-      'clogs', 'meals1', 'meals2', 'kds', 'grinders', 'veteran'],
+    techs: ['clogs', 'meals1', 'meals2', 'kds', 'ovens', 'grinders', 'veteran'],
   }),
   workshop: B({
     name: 'Catering Workshop', desc: 'Builds siege: Meatball Catapults and Battering Baguettes.',
-    size: 3, hp: 1100, cost: { wood: 180, spice: 60 }, time: 34, age: 3, trains: ['catapult', 'ram'],
+    size: 3, hp: 1100, cost: { wood: 180, spice: 60 }, time: 34, age: 3, trains: ['catapult', 'ram'], techs: ['axle1', 'meatballs'],
   }),
   market: B({
     name: 'Farmers Market', desc: 'Trade ingredients for each other. Prices move: whatever everyone sells gets cheaper, whatever everyone buys gets dearer, and they drift back over time.',
@@ -316,15 +315,23 @@ export const BUILDINGS = {
     name: 'Swing Gate', desc: 'Kitchen swing doors for your wall: your team walks straight through, everyone else has to break them down. Place one on your own Crate Wall to swap that crate for a gate.',
     size: 1, hp: 700, armor: 3, parmor: 12, cost: { wood: 30 }, time: 14, age: 1, sight: 2, wall: true, gate: true, tags: ['bldg', 'wall', 'gate'],
   }),
+  saltwall: B({
+    name: 'Salt Block Wall', desc: 'Pressed blocks of salt, three times as tough as crates. Drag it out like a Crate Wall; dragged over your own crates it replaces them.',
+    size: 1, hp: 1200, armor: 5, parmor: 18, cost: { salt: 6 }, time: 8, age: 2, sight: 1, wall: true, salt: true, tags: ['bldg', 'wall'],
+  }),
+  saltgate: B({
+    name: 'Salt Gate', desc: 'A gate set in salt blocks: your team walks through, everyone else has to batter it down. Place it on one of your own wall blocks to swap it in.',
+    size: 1, hp: 1800, armor: 5, parmor: 18, cost: { salt: 30, wood: 20 }, time: 18, age: 2, sight: 2, wall: true, gate: true, salt: true, tags: ['bldg', 'wall', 'gate'],
+  }),
   tower: B({
     name: 'Pepper Mill Tower', desc: 'Defensive tower. Grinds peppercorns at anything hostile in range.',
     size: 2, hp: 850, armor: 3, parmor: 9, cost: { wood: 50, salt: 110 }, time: 32, age: 2,
-    atk: 8, range: 7, reload: 1.5, proj: 'pepper', sight: 9, tags: ['bldg', 'tower', 'def'],
+    atk: 8, range: 9, reload: 1.5, proj: 'pepper', sight: 10, tags: ['bldg', 'tower', 'def'],      // (outranges every ranged unit, upgrades and all)
   }),
   restaurant: B({
     name: 'Signature Restaurant', desc: 'Your flagship and your strongest defence: hurls three plates per volley at anything hostile. Trains your commander\'s unique unit.',
     size: 4, hp: 2800, armor: 4, parmor: 10, cost: { wood: 250, salt: 500 }, time: 60, age: 3,
-    atk: 11, range: 8, reload: 1.6, proj: 'plate', shots: 3, sight: 10, trains: ['unique'], techs: ['elite', 'cheftable'], tags: ['bldg', 'def'],
+    atk: 11, range: 10, reload: 1.6, proj: 'plate', shots: 3, sight: 11, trains: ['unique'], techs: ['elite', 'cheftable'], tags: ['bldg', 'def'],
   }),
 };
 
@@ -362,35 +369,59 @@ export const TECHS = {
   carts: { name: 'Rolling Carts', desc: 'Prep Cooks carry another +5 and move 10% faster.', cost: { food: 200, wood: 150 }, time: 35, age: 3, req: 'basket',
     mods: [{ sel: 'cook', stat: 'carry', add: 5 }, { sel: 'cook', stat: 'speed', mul: 1.1 }] },
 
-  // Test Kitchen — military
-  knives1: { name: 'Honed Knives', desc: 'Infantry and vehicles +1 attack.', cost: { food: 100, spice: 50 }, time: 25, age: 2,
-    mods: [{ sel: 'inf', stat: 'atk', add: 1 }, { sel: 'veh', stat: 'atk', add: 1 }] },
-  knives2: { name: 'Carbon Steel', desc: 'Infantry and vehicles +1 attack.', cost: { food: 200, spice: 120 }, time: 35, age: 3, req: 'knives1',
-    mods: [{ sel: 'inf', stat: 'atk', add: 1 }, { sel: 'veh', stat: 'atk', add: 1 }] },
-  knives3: { name: 'Damascus Edge', desc: 'Infantry and vehicles +2 attack.', cost: { food: 300, spice: 250 }, time: 45, age: 4, req: 'knives2',
-    mods: [{ sel: 'inf', stat: 'atk', add: 2 }, { sel: 'veh', stat: 'atk', add: 2 }] },
-  aprons1: { name: 'Padded Aprons', desc: 'Infantry and ranged units +1 armour (melee and ranged).', cost: { food: 100 }, time: 25, age: 2,
-    mods: [{ sel: 'inf', stat: 'armor', add: 1 }, { sel: 'inf', stat: 'parmor', add: 1 }, { sel: 'ranged', stat: 'armor', add: 1 }, { sel: 'ranged', stat: 'parmor', add: 1 }] },
-  aprons2: { name: 'Leather Aprons', desc: 'Infantry and ranged units +1 armour.', cost: { food: 200, spice: 100 }, time: 35, age: 3, req: 'aprons1',
-    mods: [{ sel: 'inf', stat: 'armor', add: 1 }, { sel: 'inf', stat: 'parmor', add: 1 }, { sel: 'ranged', stat: 'armor', add: 1 }, { sel: 'ranged', stat: 'parmor', add: 1 }] },
-  aprons3: { name: 'Chainmail Aprons', desc: 'Infantry and ranged units +1 armour, +2 vs ranged.', cost: { food: 300, spice: 200 }, time: 45, age: 4, req: 'aprons2',
-    mods: [{ sel: 'inf', stat: 'armor', add: 1 }, { sel: 'inf', stat: 'parmor', add: 2 }, { sel: 'ranged', stat: 'armor', add: 1 }, { sel: 'ranged', stat: 'parmor', add: 2 }] },
+  // Grill Station — infantry (Line Cooks, Butchers and the infantry specials)
+  knives1: { name: 'Honed Knives', desc: 'Infantry +1 attack.', cost: { food: 100, spice: 50 }, time: 25, age: 2,
+    mods: [{ sel: 'inf', stat: 'atk', add: 1 }] },
+  knives2: { name: 'Carbon Steel', desc: 'Infantry +1 attack.', cost: { food: 200, spice: 120 }, time: 35, age: 3, req: 'knives1',
+    mods: [{ sel: 'inf', stat: 'atk', add: 1 }] },
+  knives3: { name: 'Damascus Edge', desc: 'Infantry +2 attack.', cost: { food: 300, spice: 250 }, time: 45, age: 4, req: 'knives2',
+    mods: [{ sel: 'inf', stat: 'atk', add: 2 }] },
+  aprons1: { name: 'Padded Aprons', desc: 'Infantry +1 armour (melee and ranged).', cost: { food: 100 }, time: 25, age: 2,
+    mods: [{ sel: 'inf', stat: 'armor', add: 1 }, { sel: 'inf', stat: 'parmor', add: 1 }] },
+  aprons2: { name: 'Leather Aprons', desc: 'Infantry +1 armour.', cost: { food: 200, spice: 100 }, time: 35, age: 3, req: 'aprons1',
+    mods: [{ sel: 'inf', stat: 'armor', add: 1 }, { sel: 'inf', stat: 'parmor', add: 1 }] },
+  aprons3: { name: 'Chainmail Aprons', desc: 'Infantry +1 armour, +2 against thrown things.', cost: { food: 300, spice: 200 }, time: 45, age: 4, req: 'aprons2',
+    mods: [{ sel: 'inf', stat: 'armor', add: 1 }, { sel: 'inf', stat: 'parmor', add: 2 }] },
+
+  // Sauce Station — ranged units (and the sauce they share with your towers)
   sauce1: { name: 'Hotter Sauce', desc: 'Ranged units and defensive stations +1 attack.', cost: { food: 100, spice: 50 }, time: 25, age: 2,
     mods: [{ sel: 'ranged', stat: 'atk', add: 1 }, { sel: 'bldg', stat: 'atk', add: 1 }] },
   sauce2: { name: 'Ghost Pepper Extract', desc: 'Ranged units and defensive stations +1 attack and +1 range.', cost: { food: 200, spice: 150 }, time: 35, age: 3, req: 'sauce1',
     mods: [{ sel: 'ranged', stat: 'atk', add: 1 }, { sel: 'ranged', stat: 'range', add: 1 }, { sel: 'bldg', stat: 'atk', add: 1 }, { sel: 'bldg', stat: 'range', add: 1 }] },
   sauce3: { name: 'Pure Capsaicin', desc: 'Ranged units and defensive stations +2 attack.', cost: { food: 300, spice: 300 }, time: 45, age: 4, req: 'sauce2',
     mods: [{ sel: 'ranged', stat: 'atk', add: 2 }, { sel: 'bldg', stat: 'atk', add: 2 }] },
-  bumper1: { name: 'Reinforced Bumpers', desc: 'Vehicles +1 armour and +10% HP.', cost: { food: 150, spice: 100 }, time: 30, age: 3,
+  smock1: { name: 'Oilcloth Smocks', desc: 'Ranged units +1 armour (melee and ranged).', cost: { food: 100 }, time: 25, age: 2,
+    mods: [{ sel: 'ranged', stat: 'armor', add: 1 }, { sel: 'ranged', stat: 'parmor', add: 1 }] },
+  smock2: { name: 'Waxed Canvas', desc: 'Ranged units +1 armour.', cost: { food: 200, spice: 100 }, time: 35, age: 3, req: 'smock1',
+    mods: [{ sel: 'ranged', stat: 'armor', add: 1 }, { sel: 'ranged', stat: 'parmor', add: 1 }] },
+  smock3: { name: 'Fireproof Whites', desc: 'Ranged units +1 armour, +2 against thrown things.', cost: { food: 300, spice: 200 }, time: 45, age: 4, req: 'smock2',
+    mods: [{ sel: 'ranged', stat: 'armor', add: 1 }, { sel: 'ranged', stat: 'parmor', add: 2 }] },
+
+  // Delivery Garage — vehicles
+  hubcap1: { name: 'Spiked Hubcaps', desc: 'Vehicles +1 attack.', cost: { food: 100, spice: 50 }, time: 25, age: 2,
+    mods: [{ sel: 'veh', stat: 'atk', add: 1 }] },
+  hubcap2: { name: 'Chrome Grilles', desc: 'Vehicles +1 attack.', cost: { food: 200, spice: 120 }, time: 35, age: 3, req: 'hubcap1',
+    mods: [{ sel: 'veh', stat: 'atk', add: 1 }] },
+  hubcap3: { name: 'Ram Bars', desc: 'Vehicles +2 attack.', cost: { food: 300, spice: 250 }, time: 45, age: 4, req: 'hubcap2',
+    mods: [{ sel: 'veh', stat: 'atk', add: 2 }] },
+  bumper1: { name: 'Reinforced Bumpers', desc: 'Vehicles +1 armour and +10% HP.', cost: { food: 125, spice: 75 }, time: 30, age: 2,
     mods: [{ sel: 'veh', stat: 'armor', add: 1 }, { sel: 'veh', stat: 'parmor', add: 1 }, { sel: 'veh', stat: 'hp', mul: 1.1 }] },
-  bumper2: { name: 'Turbo Engines', desc: 'Vehicles move 10% faster and gain +10% HP.', cost: { food: 250, spice: 200 }, time: 40, age: 4, req: 'bumper1',
+  bumper2: { name: 'Turbo Engines', desc: 'Vehicles move 10% faster and gain +10% HP.', cost: { food: 225, spice: 150 }, time: 40, age: 3, req: 'bumper1',
     mods: [{ sel: 'veh', stat: 'speed', mul: 1.1 }, { sel: 'veh', stat: 'hp', mul: 1.1 }] },
-  ovens: { name: 'Brick Ovens', desc: 'All stations +20% HP and +1 armour.', cost: { wood: 200, salt: 150 }, time: 40, age: 3,
-    mods: [{ sel: 'bldg', stat: 'hp', mul: 1.2 }, { sel: 'bldg', stat: 'armor', add: 1 }] },
+  bumper3: { name: 'Armoured Chassis', desc: 'Vehicles +1 armour, +2 against thrown things.', cost: { food: 300, spice: 250 }, time: 45, age: 4, req: 'bumper2',
+    mods: [{ sel: 'veh', stat: 'armor', add: 1 }, { sel: 'veh', stat: 'parmor', add: 2 }] },
+
+  // Catering Workshop — siege
+  axle1: { name: 'Greased Axles', desc: 'Siege moves 20% faster and gains +15% HP.', cost: { food: 200, wood: 150 }, time: 35, age: 3,
+    mods: [{ sel: 'siege', stat: 'speed', mul: 1.2 }, { sel: 'siege', stat: 'hp', mul: 1.15 }] },
   meatballs: { name: 'Extra-Firm Meatballs', desc: 'Siege +25% attack; Catapults +1 range.', cost: { food: 250, spice: 250 }, time: 45, age: 4,
     mods: [{ sel: 'siege', stat: 'atk', mul: 1.25 }, { sel: 'catapult', stat: 'range', add: 1 }] },
 
-  // General military upgrades, one or two per age
+  // Test Kitchen — the whole brigade and your stations
+  ovens: { name: 'Brick Ovens', desc: 'All stations +20% HP and +1 armour.', cost: { wood: 200, salt: 150 }, time: 40, age: 3,
+    mods: [{ sel: 'bldg', stat: 'hp', mul: 1.2 }, { sel: 'bldg', stat: 'armor', add: 1 }] },
+
+  // general upgrades (Cast-Iron Pans is the Grill Station's first, from the very first age)
   pans: { name: 'Cast-Iron Pans', desc: 'Line Cooks +1 attack and +10 HP. Available from the very first age.', cost: { food: 100, wood: 50 }, time: 22, age: 1,
     mods: [{ sel: 'line', stat: 'atk', add: 1 }, { sel: 'line', stat: 'hp', add: 10 }] },
   clogs: { name: 'Non-Slip Clogs', desc: 'All military units move 8% faster.', cost: { food: 125, wood: 75 }, time: 25, age: 2,

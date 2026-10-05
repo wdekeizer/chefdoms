@@ -346,6 +346,8 @@ table.score tr.won td { background: rgba(240,180,28,.08); }
 .keybtn.wait { border-color: #8dff6a; color: #c9ffbf; }
 .keybtn.unset { color: var(--muted); }
 .keygrid { display: grid; grid-template-columns: repeat(5, 54px); gap: 5px; margin: 4px 0 6px; }
+.keygrid.groups { grid-template-columns: repeat(5, auto); justify-content: start; gap: 5px 12px; }
+.grpkey { display: flex; align-items: center; gap: 5px; font-weight: 700; font-size: 12px; color: var(--muted); }
 .check { display: flex; gap: 9px; align-items: flex-start; margin: 7px 0; cursor: pointer; }
 .check input { margin-top: 3px; accent-color: var(--accent-2); width: 16px; height: 16px; padding: 0; }
 .vol.wide { grid-template-columns: 110px 1fr; margin: 8px 0; }

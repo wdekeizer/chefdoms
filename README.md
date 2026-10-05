@@ -144,11 +144,13 @@ every Prep Cook drops their load at the door and shelters inside the nearest Kit
 hurt them. Every 5 cooks inside add one plate to the HQ's volley. "All clear" sends everyone straight back to the job
 they had.
 
-**Walls and gates** (real-time only, from the start). Select Prep Cooks, press **Crate Wall** on their card, then press
-where the wall should start and drag to where it ends: a line of crates (5 Firewood each, at most 40 per drag) is laid
-along the way, going round trees and stations, with a preview of how many crates and what they cost. The cooks build it
-crate by crate. A **Swing Gate** (30 Firewood) goes in a gap, or straight onto one of your own crates (it takes its
-place): your team walks through it, everyone else is stopped. Enemy soldiers go round a wall when there is a sensible
+**Walls and gates** (real-time only). Select Prep Cooks and press **Walls & gates** on their card: a page with the
+**Crate Wall** (from the start), the **Salt Block Wall** (Diner Age onwards, 6 Salt a block, three times as tough), the
+**Swing Gate** and the **Salt Gate**, plus Back (Esc works too). Pick a wall, press where it should start and drag to
+where it ends: a line of blocks (at most 40 per drag) is laid along the way, going round trees and stations, with a
+preview of how many blocks and what they cost. The cooks build it block by block. Dragged over your own crates, a salt
+wall replaces them. A gate goes in a gap, or straight onto one of your own wall blocks (it takes its place): your team
+walks through it, everyone else is stopped. Enemy soldiers go round a wall when there is a sensible
 way round and break through it when there is not (Battering Baguettes and catapults make short work of it; ranged units
 barely scratch it). Workers never break walls. Walls do not count as stations for Conquest or the scores.
 
@@ -179,12 +181,21 @@ Ranged units barely scratch stations. Bring Line Cooks, your unique unit, or sie
 | Stand Down | Never pick a fight (not even when hit) until you order an attack |
 | Loose / Service Line / Square / V Wedge / Spread Out | The shape your army takes on every move order. Infantry and vehicles go in front, ranged behind, siege and Baristas at the back, and a formation marches at the pace of its slowest member. |
 
-**Defences.** Pepper Mill Towers, Kitchen HQs and the Signature Restaurant shoot at intruders. The restaurant is the
-big one: three plates per volley, each at a different target. The Twin Grinders upgrade adds a projectile to all of them.
+**Defences.** Pepper Mill Towers, Kitchen HQs and the Signature Restaurant shoot at intruders. A tower reaches 9 tiles,
+further than any ranged unit even fully upgraded (only siege can stand off and shell it); the restaurant reaches 10 and
+throws three plates per volley, each at a different target. The Twin Grinders upgrade adds a projectile to all of them.
 
-**Upgrades.** Besides the weapon, armour and economy lines there are general military upgrades in every age:
-Cast-Iron Pans (Food Cart Age, at the Grill Station), Non-Slip Clogs, Family Meal, Order Tickets and Mise en Place (Diner),
-Staff Banquet, Twin Grinders and Chef's Table (Bistro), Michelin Discipline (Five-Star).
+**Upgrades.** Each kind of unit is upgraded where it is trained, one tier per age from the Diner Age (the card shows the
+next tier once the last one is done):
+
+| Station | Upgrades |
+|---|---|
+| Grill Station (infantry) | Cast-Iron Pans (Food Cart Age); Honed Knives → Carbon Steel → Damascus Edge (attack); Padded → Leather → Chainmail Aprons (armour) |
+| Sauce Station (ranged) | Hotter Sauce → Ghost Pepper Extract → Pure Capsaicin (attack, also for towers and other armed stations; the second adds range); Oilcloth Smocks → Waxed Canvas → Fireproof Whites (armour) |
+| Delivery Garage (vehicles) | Spiked Hubcaps → Chrome Grilles → Ram Bars (attack); Reinforced Bumpers → Turbo Engines → Armoured Chassis (armour, HP, speed) |
+| Catering Workshop (siege) | Greased Axles (Bistro: faster, tougher siege), Extra-Firm Meatballs (Five-Star: harder hits, catapult range) |
+| Test Kitchen (everyone) | Non-Slip Clogs, Family Meal → Staff Banquet, Order Tickets, Brick Ovens, Twin Grinders, Michelin Discipline |
+| Kitchen HQ / Pantry | the ages, Oven Mitts, Mise en Place / the gathering upgrades |
 
 **Pings.** Hold Alt and click the map or the minimap (or press `M`, then click) to flash a marker, with a sound, for
 your whole team. Tab jumps the camera to the latest alert or ping.
@@ -209,7 +220,8 @@ a graph of score / army / staff / ingredients / kills over time for every player
 Your commander is free, respawns at the Kitchen HQ a while after falling, and grows stronger with each age.
 All commanders are original characters; names, buffs and everything else live in `game/data.js`.
 
-**Controls** (every hotkey can be changed under Menu → Controls & hotkeys; the table shows the defaults)
+**Controls** (every key can be changed under Menu → Controls & hotkeys, Esc, Enter, Delete, F10, the arrow keys and the
+control-group numbers included; the table shows the defaults)
 
 | | |
 |---|---|
@@ -241,6 +253,11 @@ type** (untick it if double-clicking a cook keeps grabbing every cook); both are
 Q E R T Y / F G H J K / Z X C V B and the Kitchen HQ key becomes N. The same screen has the camera speed, the edge
 scrolling switch and a "reset to defaults" button. The pointer keeps scrolling for a moment after it slips past the
 window edge; Menu → Full screen makes edge scrolling nicer still.
+
+**Full screen and Esc.** In Chrome and Edge, Menu → Full screen keeps you in full screen when you press Esc (Esc does its
+normal game job; hold it for a couple of seconds to leave full screen). Browsers only allow that on the host's own
+computer (`localhost`) or over https; friends joining by IP address, and Firefox, should press **F11** instead, which
+gives a full screen that Esc does not close (F11 again leaves it).
 
 ## Turn-based mode
 

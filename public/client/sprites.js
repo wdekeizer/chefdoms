@@ -1313,6 +1313,8 @@ const B_ART = dict({
   },
   wall(c, tc) { wallArt(c, tc, 2 | 8, false); },          // (command card icon: a straight run)
   gate(c, tc) { gateArt(c, tc, 2 | 8, false); },
+  saltwall(c, tc) { wallArt(c, tc, 2 | 8, false, true); },
+  saltgate(c, tc) { gateArt(c, tc, 2 | 8, false, false, true); },
   _(c, tc, N) {
     pad(c, N); bshadow(c, 0.25, N * 0.4, N - 0.25, N - 0.2);
     wall(c, 0.25, N * 0.6, N - 0.25, N - 0.15, STONE); roof(c, 0.12, N - 0.12, -0.2, N * 0.22, N * 0.6 + 0.12, N * 0.25, tc); door(c, N / 2 - 0.2, N - 0.15, 0.4, N * 0.25);
@@ -1326,8 +1328,28 @@ function wallCrate(c, x, y, w, h, tc) {                 // a crate standing on (
   if (tc) box(c, x + w * 0.1, y - h * 0.62, w * 0.8, h * 0.24, 0.01, tc, LW * 0.7);               // painted in the team colour
   box(c, x - 0.015, y - h - 0.09, w + 0.03, 0.1, 0.02, lt(WOOD_L, 0.18), LW * 0.8);              // lid
 }
-function wallArt(c, tc, mask, site) {
+const SALT = '#eef2f4', SALT_D = '#b9c7cf';
+function saltBlock(c, x, y, w, h, tc) {                 // a pressed salt brick standing on (x, y), sparkling a little
+  box(c, x, y - h, w, h, 0.03, SALT);
+  pen(c, SALT_D, LW, [x + w * 0.5, y - h, x + w * 0.5, y - h * 0.5]); pen(c, SALT_D, LW, [x, y - h * 0.5, x + w, y - h * 0.5]);
+  pen(c, SALT_D, LW, [x + w * 0.25, y - h * 0.5, x + w * 0.25, y]); pen(c, SALT_D, LW, [x + w * 0.75, y - h * 0.5, x + w * 0.75, y]);
+  if (tc) box(c, x + w * 0.08, y - h * 0.62, w * 0.84, h * 0.22, 0.01, tc, LW * 0.7);
+  box(c, x - 0.02, y - h - 0.08, w + 0.04, 0.09, 0.03, '#fbfdfe', LW * 0.8);
+  dot(c, x + w * 0.2, y - h * 0.78, 0.022, '#ffffff'); dot(c, x + w * 0.72, y - h * 0.3, 0.018, '#ffffff');
+}
+function wallArt(c, tc, mask, site, salt) {
   if (L === 0) { c.fillStyle = 'rgba(28,38,18,0.25)'; c.beginPath(); rr(c, 0.14, 0.62, 0.78, 0.36, 0.12); c.fill(); }
+  if (salt) {                                             // salt blocks: a taller, solid rampart
+    const low = site ? 0.2 : 0.42;
+    if (mask & 1) { box(c, 0.28, -0.14, 0.44, 0.66, 0.03, SALT_D, LW); for (let y = 0.0; y < 0.5; y += 0.15) pen(c, dk(SALT_D, 0.15), LW, [0.3, y, 0.7, y]); }
+    if (mask & 8) saltBlock(c, -0.02, 0.86, 0.52, low, null);
+    if (mask & 2) saltBlock(c, 0.5, 0.86, 0.52, low, null);
+    if (mask & 4) { box(c, 0.28, 0.5, 0.44, 0.56, 0.03, SALT_D, LW); for (let y = 0.64; y < 1.02; y += 0.15) pen(c, dk(SALT_D, 0.15), LW, [0.3, y, 0.7, y]); }
+    if (site) { saltBlock(c, 0.22, 0.9, 0.56, 0.3, null); limb(c, 0.14, 0.94, 0.4, 0.8, 0.05, WOOD); return; }
+    saltBlock(c, 0.16, 0.9, 0.68, 0.42, null);
+    saltBlock(c, 0.2, 0.42, 0.6, 0.38, tc);
+    return;
+  }
   const low = site ? 0.18 : 0.3;                          // the connecting crates (a pillar sits on every tile)
   if (mask & 1) { box(c, 0.32, -0.08, 0.36, 0.62, 0.02, WOOD, LW); for (let y = 0.05; y < 0.5; y += 0.16) pen(c, WOOD_D, LW, [0.34, y, 0.66, y]); }
   if (mask & 8) wallCrate(c, -0.02, 0.86, 0.5, low, null);
@@ -1341,14 +1363,15 @@ function wallArt(c, tc, mask, site) {
   wallCrate(c, 0.2, 0.9, 0.6, 0.36, null);
   wallCrate(c, 0.24, 0.45, 0.52, 0.32, tc);
 }
-function gateArt(c, tc, mask, open, site) {
+function gateArt(c, tc, mask, open, site, salt) {
   const vert = (mask & 5) && !(mask & 10);               // in a north-south wall: the wall runs on behind and in front of the doorway
   if (vert) {
     if (mask & 1) { box(c, 0.32, -0.08, 0.36, 0.5, 0.02, WOOD, LW); for (let y = 0.05; y < 0.4; y += 0.16) pen(c, WOOD_D, LW, [0.34, y, 0.66, y]); }
     if (mask & 4) { box(c, 0.32, 0.86, 0.36, 0.2, 0.02, WOOD, LW); }
   }
   if (L === 0) { c.fillStyle = 'rgba(28,38,18,0.25)'; c.beginPath(); rr(c, 0.04, 0.62, 0.96, 0.36, 0.12); c.fill(); }
-  limb(c, 0.08, 0.92, 0.08, site ? 0.3 : -0.3, 0.13, WOOD_D); limb(c, 0.92, 0.92, 0.92, site ? 0.3 : -0.3, 0.13, WOOD_D);   // posts
+  if (salt) { saltBlock(c, -0.06, 0.94, 0.24, site ? 0.6 : 1.26, null); saltBlock(c, 0.82, 0.94, 0.24, site ? 0.6 : 1.26, null); }   // salt pillars
+  else { limb(c, 0.08, 0.92, 0.08, site ? 0.3 : -0.3, 0.13, WOOD_D); limb(c, 0.92, 0.92, 0.92, site ? 0.3 : -0.3, 0.13, WOOD_D); }   // posts
   if (site) { limb(c, 0.08, 0.5, 0.92, 0.5, 0.06, WOOD_L); return; }
   box(c, -0.02, -0.42, 1.04, 0.2, 0.04, tc, LW);                                                   // the sign over the door
   pen(c, '#fff8ea', Math.max(LW * 1.6, 0.03), [0.3, -0.32, 0.7, -0.32]);
@@ -1368,11 +1391,11 @@ const WALL_BOX = [0.25, 0.75, 1.5, 1.95];
  * o = { mask (neighbours to join), open (gate), progress (< 1 = still being built), ghost: false|'ok'|'bad' }
  */
 export function drawWall(ctx, type, color, x, y, scale, o = {}) {
-  const gate = type === 'gate', col = safeColor(color), mask = (o.mask | 0) & 15, bi = bucketIdx(scale);
+  const gate = type === 'gate' || type === 'saltgate', salt = type === 'saltwall' || type === 'saltgate', col = safeColor(color), mask = (o.mask | 0) & 15, bi = bucketIdx(scale);
   const site = o.progress != null && o.progress < 1;
-  const variant = o.ghost ? (gate ? 7 : 5) + (o.ghost === 'bad' ? 1 : 0) : gate ? (site ? 4 : o.open ? 3 : 2) : site ? 1 : 0;
+  const variant = (o.ghost ? (gate ? 7 : 5) + (o.ghost === 'bad' ? 1 : 0) : gate ? (site ? 4 : o.open ? 3 : 2) : site ? 1 : 0) + (salt ? 9 : 0);
   const key = K_WALL + ((variant * 64 + colorId(col)) * 16 + mask) * 32 + bi;
-  const art = (c) => (gate ? gateArt(c, col, mask, !!o.open, site) : wallArt(c, col, mask, site));
+  const art = (c) => (gate ? gateArt(c, col, mask, !!o.open, site, salt) : wallArt(c, col, mask, site, salt));
   let sp = cache.get(key);
   if (!sp) {
     sp = miss(key, (s) => {
@@ -1660,6 +1683,25 @@ const TECH_ART = dict({
     c.beginPath(); c.moveTo(-0.22, 0.42); c.lineTo(-0.22, 0.14); c.arc(0, 0.14, 0.22, PI, 0); c.lineTo(0.22, 0.42); c.closePath(); ink(c, '#40302c'); flame(c, 0, 0.4, 0.9, 0);
   },
   meatballs(c) { meatball(c, -0.2, 0.2, 0.22); meatball(c, 0.22, 0.2, 0.21); meatball(c, 0.02, -0.14, 0.25); },
+  smock(c, t) {                                        // ranged armour: a sauce-spattered smock, tougher cloth every tier
+    const col = ['#f3d9c2', '#f3d9c2', '#c9935a', '#dfe6ea'][t] || '#f3d9c2';
+    limb(c, -0.3, -0.26, -0.46, 0.18, 0.12, col); limb(c, 0.3, -0.26, 0.46, 0.18, 0.12, col);
+    poly(c, [-0.22, -0.36, 0.22, -0.36, 0.32, -0.22, 0.3, 0.44, -0.3, 0.44, -0.32, -0.22], col);
+    poly(c, [-0.1, -0.36, 0, -0.22, 0.1, -0.36], dk(col, 0.18));
+    ell(c, 0.1, 0.12, 0.09, 0.06, SAUCE, 0.4, 0); dot(c, -0.08, 0.26, 0.035, SAUCE); dot(c, 0.2, -0.04, 0.025, SAUCE);
+    if (t === 3) for (let y = -0.12; y < 0.4; y += 0.16) pen(c, dk(col, 0.25), LW, [-0.26, y, 0.26, y]);
+  },
+  hubcap(c) {                                          // vehicle attack: a spiked hubcap
+    for (let i = 0; i < 8; i++) { const a = i * PI / 4; poly(c, [Math.cos(a - 0.18) * 0.34, Math.sin(a - 0.18) * 0.34, Math.cos(a) * 0.5, Math.sin(a) * 0.5, Math.cos(a + 0.18) * 0.34, Math.sin(a + 0.18) * 0.34], STEEL); }
+    ell(c, 0, 0, 0.36, 0.36, '#3b3a40'); ell(c, 0, 0, 0.22, 0.22, STEEL); ell(c, 0, 0, 0.07, 0.07, dk(STEEL, 0.3));
+    for (let i = 0; i < 5; i++) { const a = i * TAU / 5; dot(c, Math.cos(a) * 0.14, Math.sin(a) * 0.14, 0.03, dk(STEEL, 0.35)); }
+    glint(c, -0.1, -0.12, 0.08, 0.04, 0.6);
+  },
+  axle(c) {                                            // siege: two wheels on a greased axle
+    limb(c, -0.34, 0.12, 0.34, 0.12, 0.09, IRON);
+    for (const x of [-0.34, 0.34]) { ell(c, x, 0.12, 0.17, 0.3, WOOD); ell(c, x, 0.12, 0.06, 0.1, WOOD_D); }
+    c.beginPath(); c.moveTo(0, -0.46); c.quadraticCurveTo(0.14, -0.24, 0, -0.16); c.quadraticCurveTo(-0.14, -0.24, 0, -0.46); ink(c, '#e8c34a');
+  },
   peeler(c) {
     c.save(); c.rotate(-PI / 4);
     for (const m of [-1, 1]) { c.beginPath(); c.moveTo(-0.08, 0); c.quadraticCurveTo(0.1, m * 0.02, 0.16, m * 0.17); c.lineTo(0.46, m * 0.17); pen(c, dk(STEEL, 0.36), 0.085); pen(c, STEEL, 0.05); }
@@ -1879,6 +1921,10 @@ const UI_ART = dict({
     poly(c, [0.06, -0.5, 0.46, -0.34, 0.14, -0.1], '#57d657');
   },
   done(c) { ell(c, 0, 0, 0.46, 0.46, '#3f9a52'); pen(c, OUTLINE, 0.2, [-0.22, 0.02, -0.06, 0.2, 0.24, -0.18]); pen(c, '#fff8ea', 0.11, [-0.22, 0.02, -0.06, 0.2, 0.24, -0.18]); },
+  back(c) {                                            // back to the main card: a curled arrow
+    c.beginPath(); c.arc(0.06, 0.06, 0.3, -PI * 0.9, PI * 0.55); pen(c, OUTLINE, 0.2); c.beginPath(); c.arc(0.06, 0.06, 0.3, -PI * 0.9, PI * 0.55); pen(c, '#fff8ea', 0.11);
+    poly(c, [-0.46, -0.2, -0.12, -0.32, -0.3, 0.02], '#fff8ea');
+  },
   next(c, col) {                                       // "the next one": a unit dot and a double chevron
     ell(c, -0.26, 0.02, 0.2, 0.2, col || '#e2403a');
     for (const x of [0.02, 0.26]) { pen(c, OUTLINE, 0.17, [x, -0.3, x + 0.22, 0, x, 0.3]); pen(c, '#fff8ea', 0.09, [x, -0.3, x + 0.22, 0, x, 0.3]); }

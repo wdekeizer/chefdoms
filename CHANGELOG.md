@@ -3,6 +3,27 @@
 Everyone in a match needs the same version: after the host updates, friends run `git pull` in their copy
 (the lobby chat warns when a copy and the server differ).
 
+## v1.5.0
+
+**Real-time**
+- Pepper Mill Towers reach 9 tiles (were 7), further than any ranged unit even fully upgraded; the Signature Restaurant
+  reaches 10 (was 8). They see a tile further too. On the turn-based grid that is 4 tiles for both.
+- **Salt Block Walls** and **Salt Gates** from the Diner Age: three times as tough as crates. Dragged over your own crates,
+  a salt wall replaces them; gates go onto either kind of wall. Walls and gates now have a page of their own on the
+  Prep Cook card (Walls & gates), which brings the Deliver button back.
+
+**Upgrades** (both modes)
+- Every military upgrade is researched where its units are trained, a tier per age from the Diner Age: infantry
+  attack and armour at the Grill Station, ranged attack and new ranged armour at the Sauce Station, new vehicle attack
+  and a third vehicle armour tier at the Delivery Garage, siege at the Catering Workshop (new: Greased Axles). The Test
+  Kitchen keeps the upgrades for the whole brigade and for stations. Bots research them too.
+
+**Controls**
+- Every key can be changed in Controls & hotkeys: Cancel (Esc), Delete, Chat, Menu (F10), the arrow keys, the numpad
+  zoom keys and the ten control groups are now ordinary actions. Click a key to change it; right-click leaves it empty.
+- Menu → Full screen no longer drops out when you press Esc (Chrome and Edge, on the host's computer or over https;
+  elsewhere use F11, which Esc does not close).
+
 ## v1.4.0
 
 **Real-time**

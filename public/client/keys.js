@@ -10,15 +10,27 @@
 const GRID_CLASSIC = ['KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB'];
 const GRID_WASD = ['KeyQ', 'KeyE', 'KeyR', 'KeyT', 'KeyY', 'KeyF', 'KeyG', 'KeyH', 'KeyJ', 'KeyK', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB'];
 
-/** id, label, classic default, WASD-preset default, group. '' = no key. */
+/** id, label, classic default, WASD-preset default, group. '' = no key. Every key the game listens to is in here. */
 export const ACTIONS = [
-  ['camUp', 'Camera up (extra key)', '', 'KeyW', 'Camera'],
-  ['camLeft', 'Camera left (extra key)', '', 'KeyA', 'Camera'],
-  ['camDown', 'Camera down (extra key)', '', 'KeyS', 'Camera'],
-  ['camRight', 'Camera right (extra key)', '', 'KeyD', 'Camera'],
+  ['camUpMain', 'Camera up', 'ArrowUp', 'ArrowUp', 'Camera'],
+  ['camLeftMain', 'Camera left', 'ArrowLeft', 'ArrowLeft', 'Camera'],
+  ['camDownMain', 'Camera down', 'ArrowDown', 'ArrowDown', 'Camera'],
+  ['camRightMain', 'Camera right', 'ArrowRight', 'ArrowRight', 'Camera'],
+  ['camUp', 'Camera up (second key)', '', 'KeyW', 'Camera'],
+  ['camLeft', 'Camera left (second key)', '', 'KeyA', 'Camera'],
+  ['camDown', 'Camera down (second key)', '', 'KeyS', 'Camera'],
+  ['camRight', 'Camera right (second key)', '', 'KeyD', 'Camera'],
   ['zoomIn', 'Zoom in', 'Equal', 'Equal', 'Camera'],
   ['zoomOut', 'Zoom out', 'Minus', 'Minus', 'Camera'],
+  ['zoomIn2', 'Zoom in (second key)', 'NumpadAdd', 'NumpadAdd', 'Camera'],
+  ['zoomOut2', 'Zoom out (second key)', 'NumpadSubtract', 'NumpadSubtract', 'Camera'],
   ['follow', 'Lock / free the camera on your hero (capture the flag)', 'KeyY', 'Semicolon', 'Camera'],
+  ['cancel', 'Cancel / close a card page / deselect', 'Escape', 'Escape', 'Commands'],
+  ['delete', 'Delete the selected units or stations (with Shift: a Kitchen HQ too)', 'Delete', 'Delete', 'Commands'],
+  ['delete2', 'Delete (second key)', 'Backspace', 'Backspace', 'Commands'],
+  ['chat', 'Chat (with Shift: team chat)', 'Enter', 'Enter', 'Commands'],
+  ['chat2', 'Chat (second key)', 'NumpadEnter', 'NumpadEnter', 'Commands'],
+  ['menu', 'Menu', 'F10', 'F10', 'Commands'],
   ['ability', 'Commander ability', 'Space', 'Space', 'Commands'],
   ['ultimate', 'Commander ultimate (from the Bistro Age)', 'KeyO', 'KeyO', 'Commands'],
   ['endTurn', 'End your turn (turn-based mode)', 'KeyI', 'KeyI', 'Commands'],
@@ -32,6 +44,7 @@ export const ACTIONS = [
   ['formation', 'Next formation', 'KeyL', 'KeyL', 'Commands'],
   ['pause', 'Pause (host only)', 'KeyP', 'KeyP', 'Commands'],
   ...GRID_CLASSIC.map((code, i) => ['card' + i, `Command card: row ${((i / 5) | 0) + 1}, button ${(i % 5) + 1}`, code, GRID_WASD[i], 'Command card']),
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((d) => ['grp' + d, `Control group ${d}`, 'Digit' + d, 'Digit' + d, 'Control groups']),
 ].map(([id, label, def, wasd, group]) => ({ id, label, def, wasd, group }));
 
 const store = {
@@ -79,6 +92,8 @@ const NAMES = {
   Space: 'Space', Backquote: '`', Period: '.', Comma: ',', Tab: 'Tab', Equal: '=', Minus: '-', Slash: '/', Backslash: '\\', Semicolon: ';', Quote: "'",
   BracketLeft: '[', BracketRight: ']', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Insert: 'Ins', Home: 'Home', End: 'End',
   PageUp: 'PgUp', PageDown: 'PgDn', CapsLock: 'Caps', ShiftLeft: 'L-Shift', ShiftRight: 'R-Shift', ControlLeft: 'L-Ctrl', ControlRight: 'R-Ctrl', AltLeft: 'L-Alt', AltRight: 'R-Alt',
+  Escape: 'Esc', Enter: 'Enter', NumpadEnter: 'Num Enter', Delete: 'Del', Backspace: 'Backspace', NumpadAdd: 'Num +', NumpadSubtract: 'Num −',
+  NumpadMultiply: 'Num *', NumpadDivide: 'Num /', NumpadDecimal: 'Num .',
 };
 /** Short printable name of a key code: 'KeyQ' -> 'Q', 'Digit1' -> '1', 'Space' -> 'Space'. */
 export function keyLabel(code) {
@@ -91,8 +106,8 @@ export function keyLabel(code) {
 }
 export const labelOf = (id) => keyLabel(keyOf(id));
 
-/** Keys that cannot be rebound because the game uses them for fixed things. */
-const RESERVED = /^(Escape|Enter|NumpadEnter|Delete|Backspace|F\d+|Digit\d|Arrow(Up|Down|Left|Right)|Meta(Left|Right)|OS(Left|Right))$/;
+/** Keys the browser or the system keeps for itself (reload, full screen, developer tools, the Windows / Command key). */
+const RESERVED = /^(F5|F11|F12|Meta(Left|Right)|OS(Left|Right))$/;
 export const canBind = (code) => !!code && !RESERVED.test(code);
 
 rebuild();

@@ -256,7 +256,7 @@ G.hooks.event = (ev) => {
     case 'built': {
       const b = G.ents.get(ev[2]);
       if (mine && G.tick > 20) {
-        if (b && b.type === 'wall') { if (now - (G.lastWallSfx || 0) > 1500) { G.lastWallSfx = now; sfx('hammer'); } }     // a crate goes up: a knock, not a fanfare
+        if (b && (b.type === 'wall' || b.type === 'saltwall')) { if (now - (G.lastWallSfx || 0) > 1500) { G.lastWallSfx = now; sfx('hammer'); } }     // a wall block goes up: a knock, not a fanfare
         else sfx('built');
       }
       break;
@@ -499,6 +499,7 @@ function boot() {
   IN.initInput(canvas, {
     selection: () => UI.refreshAll(true),
     cardKey: (i, shift) => UI.cardKey(i, shift),
+    cardBack: () => UI.cardBack(),
     unitSound,
     openChat: (team) => UI.openChat(team),
     toggleMenu: (v) => UI.toggleMenu(v),

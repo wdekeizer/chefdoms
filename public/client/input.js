@@ -11,7 +11,7 @@ import { actionOf, keyOf, labelOf } from './keys.js';
 import * as TAC from './tactics.js';
 
 const keys = {};
-let hooks = { selection() {}, cardKey() { return false; }, openChat() {}, toggleMenu() {}, note() {}, unitSound() {} };
+let hooks = { selection() {}, cardKey() { return false; }, cardBack() { return false; }, openChat() {}, toggleMenu() {}, note() {}, unitSound() {} };
 let canvas = null;
 let pan = null;                 // middle-mouse camera drag
 let lastClick = { id: 0, t: 0 };
@@ -323,8 +323,11 @@ function onKeyDown(ev) {
   const double = lastTap.code === ev.code && now - lastTap.t < 350;
   if (!ev.repeat) lastTap = { code: ev.code, t: now };
 
-  if (/^Digit[0-9]$/.test(ev.code)) {
-    const d = ev.code.slice(5);
+  const act = actionOf(ev.code);
+  if (/^Arrow/.test(ev.code)) ev.preventDefault();                 // (never scroll the page)
+  if (!act) return;
+  if (act.startsWith('grp')) {                                     // control groups: Ctrl / Shift / Alt + key saves, the key alone recalls
+    const d = act.slice(3);
     if (ev.ctrlKey || ev.shiftKey || ev.altKey) { G.groups[d] = [...G.sel]; hooks.note('Group ' + d + ' set'); }
     else if (G.groups[d]) {
       const list = G.groups[d].map((id) => G.ents.get(id)).filter((e) => e && canSee(e));
@@ -337,23 +340,21 @@ function onKeyDown(ev) {
     ev.preventDefault();
     return;
   }
-  switch (ev.code) {
-    case 'Escape':
-      if (G.mode) G.mode = null; else if (!hooks.toggleMenu(false) && !(G.ctf && G.me >= 0)) { G.sel.clear(); hooks.selection(); }
+  switch (act) {
+    case 'cancel':
+      ev.preventDefault();
+      if (G.mode) G.mode = null;
+      else if (hooks.cardBack()) { /* closed the walls page */ }
+      else if (!hooks.toggleMenu(false) && !(G.ctf && G.me >= 0)) { G.sel.clear(); hooks.selection(); }
       return;
-    case 'Delete': case 'Backspace': deleteSelected(ev.shiftKey); return;
-    case 'Enter': case 'NumpadEnter': hooks.openChat(ev.shiftKey); ev.preventDefault(); return;
-    case 'F10': hooks.toggleMenu(); ev.preventDefault(); return;
-    case 'NumpadAdd': zoomBy(1, window.innerWidth / 2, window.innerHeight / 2); return;
-    case 'NumpadSubtract': zoomBy(-1, window.innerWidth / 2, window.innerHeight / 2); return;
-    case 'ArrowUp': case 'ArrowDown': case 'ArrowLeft': case 'ArrowRight': ev.preventDefault(); return;
+    case 'delete': case 'delete2': ev.preventDefault(); deleteSelected(ev.shiftKey); return;
+    case 'chat': case 'chat2': hooks.openChat(ev.shiftKey); ev.preventDefault(); return;
+    case 'menu': hooks.toggleMenu(); ev.preventDefault(); return;
   }
   if (ev.ctrlKey || ev.metaKey) return;                            // leave browser shortcuts alone
-  const act = actionOf(ev.code);
-  if (!act) return;
   ev.preventDefault();
   if (act.startsWith('cam')) return;                               // held keys are read every frame in updateInput
-  if (ev.repeat && act !== 'zoomIn' && act !== 'zoomOut') return;
+  if (ev.repeat && !act.startsWith('zoom')) return;
   if (act.startsWith('card')) { hooks.cardKey(+act.slice(4), ev.shiftKey); return; }
   switch (act) {
     case 'ability': cmd({ c: 'ab' }); break;
@@ -369,8 +370,8 @@ function onKeyDown(ev) {
     case 'bell': toggleBell(); break;
     case 'formation': if (G.tb) break; setFormation((G.formation + 1) % FORMATIONS.length); hooks.note('Formation: ' + FORMATIONS[G.formation].name); hooks.selection(); break;
     case 'pause': if (G.cid === G.hostId) send({ t: 'pause' }); break;
-    case 'zoomIn': zoomBy(1, window.innerWidth / 2, window.innerHeight / 2); break;
-    case 'zoomOut': zoomBy(-1, window.innerWidth / 2, window.innerHeight / 2); break;
+    case 'zoomIn': case 'zoomIn2': zoomBy(1, window.innerWidth / 2, window.innerHeight / 2); break;
+    case 'zoomOut': case 'zoomOut2': zoomBy(-1, window.innerWidth / 2, window.innerHeight / 2); break;
   }
 }
 
@@ -442,7 +443,7 @@ function onMouseUp(ev) {
     updateMouse(ev);
     const st = G.mode.start, ex = Math.floor(G.mouse.wx), ey = Math.floor(G.mouse.wy);
     const ids = selected().filter((e) => e.owner === G.me && e.type === 'cook').map((e) => e.id);
-    if (ids.length) { cmd({ c: 'bw', ids, x0: st[0], y0: st[1], x1: ex, y1: ey, q: ev.shiftKey ? 1 : 0 }); sfx('place'); }
+    if (ids.length) { cmd({ c: 'bw', b: G.mode.b || 'wall', ids, x0: st[0], y0: st[1], x1: ex, y1: ey, q: ev.shiftKey ? 1 : 0 }); sfx('place'); }
     if (ev.shiftKey && ids.length) G.mode.start = null; else G.mode = null;            // Shift: lay another stretch
     return;
   }
@@ -466,10 +467,11 @@ export function updateInput(dt) {
   const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
   let dx = 0, dy = 0;
   if (!typing) {
-    if (keys.ArrowLeft || keys[keyOf('camLeft')]) dx -= 1;
-    if (keys.ArrowRight || keys[keyOf('camRight')]) dx += 1;
-    if (keys.ArrowUp || keys[keyOf('camUp')]) dy -= 1;
-    if (keys.ArrowDown || keys[keyOf('camDown')]) dy += 1;
+    const held = (a, b) => keys[keyOf(a)] || keys[keyOf(b)];
+    if (held('camLeftMain', 'camLeft')) dx -= 1;
+    if (held('camRightMain', 'camRight')) dx += 1;
+    if (held('camUpMain', 'camUp')) dy -= 1;
+    if (held('camDownMain', 'camDown')) dy += 1;
   }
   // The pointer at (or just past) a window edge scrolls. In a browser window the pointer easily
   // overshoots the edge, so it keeps counting for a moment after it has left the page.

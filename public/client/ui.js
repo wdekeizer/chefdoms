@@ -244,6 +244,9 @@ function openCommanderPicker(slot, edit) {
 // ============================================================================
 const BUILD_ORDER = ['house', 'pantry', 'garden', 'grill', 'sauce', 'garage', 'lab', 'workshop', 'tower', 'restaurant', 'hq', 'market'];
 let card = new Array(15).fill(null), cardSig = '', selSig = '', hoverCard = -1;
+let cardPage = '', cardPageSel = '';          // 'walls' while the Prep Cooks' walls & gates page is open (for the cooks it was opened for)
+/** Close an open card page (Cancel does this before it deselects anything). True if there was one. */
+export function cardBack() { if (!cardPage) return false; cardPage = ''; refreshCard(true); return true; }
 let cardBtns = [], resEls = {}, lastSlow = 0, menuOpen = false;
 const gridLabel = (i) => labelOf('card' + i);
 
@@ -256,10 +259,12 @@ function buildStatic() {
   resEls.age = h('span', null, '');
   resEls.clock = h('span', { class: 'clock' }, '0:00');
   resEls.ping = h('span', { class: 'ping' }, '');
+  const menuBtn = h('button', { class: 'btn small ghost', onclick: () => toggleMenu() }, `Menu (${labelOf('menu') || '—'})`);
+  onKeysChanged(() => { menuBtn.textContent = `Menu (${labelOf('menu') || '—'})`; });
   $('topbar').replaceChildren(
     h('div', { class: 'res-group' }, ...res, resEls.tips, (resEls.popBox.append(resEls.pop), resEls.popBox)),
     h('div', { class: 'age' }, resEls.age),
-    h('div', { class: 'top-right' }, resEls.clock, resEls.ping, h('button', { class: 'btn small ghost', onclick: () => toggleMenu() }, 'Menu (F10)')));
+    h('div', { class: 'top-right' }, resEls.clock, resEls.ping, menuBtn));
 
   // command card
   const cc = $('card');
@@ -316,7 +321,7 @@ export function addChat(m) {
 export function openChat(team) {
   const input = $('chat-input');
   input.dataset.team = team ? '1' : '0';
-  input.placeholder = team ? 'Message your team…' : 'Message everyone… (Shift+Enter for team chat)';
+  input.placeholder = team ? 'Message your team…' : `Message everyone… (Shift+${labelOf('chat') || 'Enter'} for team chat)`;
   $('chatbox').classList.remove('hidden');
   $('chatlog').classList.add('open');
   input.focus();
@@ -393,6 +398,23 @@ function buildCard() {
   const stop = { icon: ['ui', 'stop'], title: 'Stop', desc: 'Drop whatever they are doing.', ok: true, run: () => hooks.stop() };
   if (units.length) {
     if (units.every((e) => e.type === 'cook')) {
+      const selKey = units.map((e) => e.id).join(',');
+      if (cardPage && cardPageSel !== selKey) cardPage = '';
+      if (cardPage === 'walls') {                    // walls & gates: crates from the start, salt from the Diner Age
+        ['wall', 'saltwall', 'gate', 'saltgate'].forEach((k, i) => {
+          const S = st.bldgs[k], line = !S.gate;
+          card[i] = {
+            icon: ['building', k], title: S.name, sub: line ? `${Object.keys(S.cost).map((r) => S.cost[r] + ' ' + RES_INFO[r].name).join(' + ')} a block` : '', desc: S.desc, cost: S.cost,
+            time: S.time / st.misc.buildMul, ok: me.age >= S.age, why: `Requires the ${AGE_NAMES[S.age]}`, stats: { hp: S.hp },
+            active: G.mode && (line ? G.mode.type === 'wall' && (G.mode.b || 'wall') === k : G.mode.type === 'place' && G.mode.b === k),
+            hint: line ? 'Then press where the wall starts and drag to where it ends. Hold Shift to lay several stretches.' + (k === 'saltwall' ? ' Dragged over your own crates, it replaces them.' : '')
+              : 'Then click a gap in your wall, or one of your own wall blocks to swap it for the gate.',
+            run: () => { G.mode = line ? { type: 'wall', b: k } : { type: 'place', b: k }; },
+          };
+        });
+        card[14] = { icon: ['ui', 'back'], title: 'Back', desc: 'Back to the Prep Cooks\' other jobs.', hint: `${labelOf('cancel')} does the same.`, ok: true, run: () => { cardPage = ''; G.mode = null; refreshCard(true); } };
+        return;
+      }
       BUILD_ORDER.forEach((b, i) => {
         const S = st.bldgs[b];
         card[i] = {
@@ -402,12 +424,11 @@ function buildCard() {
           run: () => { G.mode = { type: 'place', b }; },
         };
       });
-      // walls: drag out a line of crates; gates go in a gap or on a crate (the bell lives on the quick bar, and delivering is a right-click)
-      const W = st.bldgs.wall, Gt = st.bldgs.gate;
-      card[12] = { icon: ['building', 'wall'], title: W.name, sub: `${W.cost.wood} Firewood a crate`, desc: W.desc, cost: W.cost, time: W.time / st.misc.buildMul, ok: me.age >= W.age, why: `Requires the ${AGE_NAMES[W.age]}`,
-        active: G.mode && G.mode.type === 'wall', stats: { hp: W.hp }, hint: 'Then press where the wall starts and drag to where it ends. Hold Shift to lay several stretches.', run: () => { G.mode = { type: 'wall' }; } };
-      card[13] = { icon: ['building', 'gate'], title: Gt.name, desc: Gt.desc, cost: Gt.cost, time: Gt.time / st.misc.buildMul, ok: me.age >= Gt.age, why: `Requires the ${AGE_NAMES[Gt.age]}`,
-        active: G.mode && G.mode.type === 'place' && G.mode.b === 'gate', stats: { hp: Gt.hp }, hint: 'Then click a gap in your wall, or one of your own crates to swap it for a gate.', run: () => { G.mode = { type: 'place', b: 'gate' }; } };
+      // walls and gates have a page of their own; the bell lives on the quick bar
+      card[12] = { icon: ['building', me.age >= 2 ? 'saltwall' : 'wall'], title: 'Walls & gates', desc: 'Crate Walls and Swing Gates from the start; Salt Block Walls and Salt Gates (much tougher) from the Diner Age.', ok: true,
+        hint: 'Opens the walls page.', run: () => { cardPage = 'walls'; cardPageSel = selKey; G.mode = null; refreshCard(true); } };
+      const carrying = units.some((e) => e.carry);
+      card[13] = { icon: ['ui', 'drop'], title: 'Deliver', desc: 'Carry what they are holding to the nearest drop-off right now. (Right-clicking a Kitchen HQ or Pantry does the same.)', ok: carrying, why: 'Nobody here is carrying anything', run: () => cmd({ c: 'dr', ids: units.map((e) => e.id) }) };
       card[14] = stop;
     } else {
       const army = units.filter((e) => e.type !== 'cook');
@@ -938,6 +959,13 @@ const store = {
   get(k) { try { return localStorage.getItem('chefdoms.' + k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem('chefdoms.' + k, v); } catch { /* private mode */ } },
 };
+/** In full screen, ask the browser to hand Esc to the game instead of leaving full screen (Chrome and Edge, on localhost or https:
+ *  holding Esc still leaves). Elsewhere F11 gives a full screen that Esc does not close. */
+async function lockEscape() {
+  try { if (document.fullscreenElement && navigator.keyboard && navigator.keyboard.lock) { await navigator.keyboard.lock(['Escape']); return true; } } catch { /* not allowed here */ }
+  return false;
+}
+document.addEventListener('fullscreenchange', () => { if (document.fullscreenElement) lockEscape().then((ok) => { if (!ok) note('Tip: in this browser Esc leaves full screen. F11 gives you a full screen that Esc cannot close.', 'warn'); }); });
 function toggleFullscreen() {
   try {
     if (document.fullscreenElement) document.exitFullscreen();
@@ -1023,28 +1051,26 @@ export function showControls() {
     if (!listening) return;
     ev.preventDefault(); ev.stopPropagation();
     const id = listening;
-    if (ev.code === 'Escape') { /* keep the old key */ }
-    else if (ev.code === 'Backspace' || ev.code === 'Delete') setKey(id, '');
-    else if (canBind(ev.code)) setKey(id, ev.code);
-    else { note('That key is reserved', 'warn'); return; }
+    if (/^(Shift|Control|Alt)(Left|Right)$/.test(ev.code)) return;          // (modifiers alone: wait for the real key)
+    if (canBind(ev.code)) setKey(id, ev.code);
+    else { note('The browser keeps that key for itself', 'warn'); return; }
     listening = null; modal.classList.remove('keys-open');
     draw();
   };
   const close = () => { window.removeEventListener('keydown', onKey, true); modal.remove(); };
   window.addEventListener('keydown', onKey, true);
 
-  const keyBtn = (id) => h('button', { class: 'keybtn' + (listening === id ? ' wait' : '') + (keyOf(id) ? '' : ' unset'), title: 'Click, then press the new key (Backspace = no key, Esc = cancel)',
-    onclick: () => { listening = listening === id ? null : id; modal.classList.toggle('keys-open', !!listening); draw(); } }, listening === id ? 'press a key…' : keyLabel(keyOf(id)) || '—');
+  const keyBtn = (id) => h('button', { class: 'keybtn' + (listening === id ? ' wait' : '') + (keyOf(id) ? '' : ' unset'), title: 'Click, then press the new key (any key at all). Click again to cancel; right-click to leave it without a key.',
+    onclick: () => { listening = listening === id ? null : id; modal.classList.toggle('keys-open', !!listening); draw(); },
+    oncontextmenu: (ev) => { ev.preventDefault(); setKey(id, ''); listening = null; modal.classList.remove('keys-open'); draw(); } }, listening === id ? 'press a key…' : keyLabel(keyOf(id)) || '—');
   const draw = () => {
     const mouse = [
       ['Left-click / drag', 'Select a unit or box-select your army (double-click: all of that type on screen)'],
       ['Right-click', 'Smart order: move, attack, gather, build / repair, deliver to a Kitchen HQ or Pantry, or set a station\'s rally point'],
       ['Shift + order', 'Queue the order after the current one'],
       ['Alt + click', 'Ping that spot for your team (works on the minimap too)'],
-      ['Arrow keys · screen edge · middle-drag', 'Move the camera · mouse wheel zooms · click the minimap to jump'],
-      ['Ctrl or Shift + 1…9', 'Save a control group · press the number to recall it (twice: jump there)'],
-      ['Delete', 'Remove the selected units or stations (Shift+Delete for a Kitchen HQ)'],
-      ['Enter / Shift+Enter · Esc · F10', 'Chat with everyone / your team · cancel · menu'],
+      ['Screen edge · middle-drag', 'Move the camera · mouse wheel zooms · click the minimap to jump'],
+      ['Ctrl or Shift + a group key', 'Save a control group · the key alone recalls it (twice: jump there)'],
     ];
     const turnRows = [
       ['Left-click', 'Select a unit or station · click a blue tile to move there · click a red enemy to attack it'],
@@ -1074,9 +1100,10 @@ export function showControls() {
           h('table', { class: 'keytable fixed' }, turnRows.map((r) => h('tr', null, h('td', { class: 'k' }, r[0]), h('td', null, r[1]))))),
         h('div', null,
           h('h3', null, 'Commands'), rows('Commands'),
+          h('h3', null, 'Control groups'), h('div', { class: 'keygrid groups' }, group('Control groups').map((a) => h('label', { class: 'grpkey' }, h('span', null, a.label.replace('Control group ', '')), keyBtn(a.id)))),
           h('h3', null, 'Mouse and fixed keys'),
           h('table', { class: 'keytable fixed' }, mouse.map((r) => h('tr', null, h('td', { class: 'k' }, r[0]), h('td', null, r[1])))))),
-      h('p', { class: 'muted' }, 'Click a key to change it, then press the new one. A key can only do one thing: giving it to another action takes it away from the old one. Goal of the game: destroy every enemy Kitchen HQ (or every station, if the host picked Conquest).'),
+      h('p', { class: 'muted' }, 'Every key can be changed: click it, then press the new one (right-click: no key). A key can only do one thing: giving it to another action takes it away from the old one. Goal of the game: destroy every enemy Kitchen HQ (or every station, if the host picked Conquest).'),
       h('div', { class: 'over-btns' },
         h('button', { class: 'btn', onclick: () => { resetKeys(); listening = null; draw(); } }, 'Reset keys to defaults'),
         h('button', { class: 'btn primary', onclick: close }, 'Done')));

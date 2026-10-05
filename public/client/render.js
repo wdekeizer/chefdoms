@@ -705,19 +705,24 @@ export function render(now) {
     ctx.strokeRect(ox + tx * s, oy + ty * s, B.size * s, B.size * s);
   }
   if (mode && mode.type === 'wall' && G.mouse.inside) {        // laying a wall: the line from where the drag began to the pointer
+    const kind = mode.b || 'wall', salt = kind === 'saltwall';
     const ex = Math.floor(G.mouse.wx), ey = Math.floor(G.mouse.wy), st = mode.start || [ex, ey];
-    const line = wallLine(st[0], st[1], ex, ey), me = G.ps[G.me], cost = me.stats.bldgs.wall.cost.wood || 0;
-    let n = 0, money = me.res.wood;
+    const line = wallLine(st[0], st[1], ex, ey), me = G.ps[G.me], cost = me.stats.bldgs[kind].cost;
+    const money = { ...me.res };
+    let n = 0;
     const plan = line.map(([x, y]) => {
       const there = G.ents.get(G.occ[y * G.w + x]);
-      if (there && there.kind === K_BLDG && there.type === 'wall' && there.owner === G.me) return null;      // already walled
-      const ok = canPlaceLocal('wall', x, y) && money >= cost;
-      if (ok) { n++; money -= cost; }
+      const mine = there && there.kind === K_BLDG && BUILDINGS[there.type] && BUILDINGS[there.type].wall && there.owner === G.me;
+      if (mine && !(salt && there.type === 'wall')) return null;                       // already walled (salt replaces our crates)
+      const afford = Object.keys(cost).every((r) => money[r] >= cost[r]);
+      const ok = (mine || canPlaceLocal(kind, x, y)) && afford;
+      if (ok) { n++; for (const r in cost) money[r] -= cost[r]; }
       return [x, y, ok];
     });
-    for (const p of plan) if (p) SPR.drawWall(ctx, 'wall', colorOf(G.me), ox + p[0] * s, oy + p[1] * s, s, { mask: 0, ghost: p[2] ? 'ok' : 'bad' });
+    for (const p of plan) if (p) SPR.drawWall(ctx, kind, colorOf(G.me), ox + p[0] * s, oy + p[1] * s, s, { mask: 0, ghost: p[2] ? 'ok' : 'bad' });
     mode.plan = { start: st, end: [ex, ey], n };
-    const fs = Math.max(12 * dpr, s * 0.32), text = n ? `${n} crate${n === 1 ? '' : 's'} · ${n * cost} Firewood` : 'Nothing to build here';
+    const price = Object.keys(cost).map((r) => `${n * cost[r]} ${RES_INFO[r].name}`).join(' + ');
+    const fs = Math.max(12 * dpr, s * 0.32), text = n ? `${n} ${salt ? 'salt block' : 'crate'}${n === 1 ? '' : 's'} · ${price}` : 'Nothing to build here';
     ctx.font = `800 ${Math.round(fs)}px "Trebuchet MS", "Segoe UI", sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     const lx = ox + (ex + 1.2) * s, ly = oy + (ey - 0.4) * s;
     ctx.lineWidth = Math.max(3, fs / 4); ctx.strokeStyle = 'rgba(20,12,10,0.9)'; ctx.strokeText(text, lx, ly);
@@ -738,9 +743,9 @@ export function render(now) {
 export function canPlaceLocal(type, tx, ty) {
   const n = BUILDINGS[type].size;
   if (tx < 0 || ty < 0 || tx + n > G.w || ty + n > G.h) return false;
-  if (BUILDINGS[type].gate) {                                  // a gate may go on one of our own Crate Walls (it takes that crate's place)
+  if (BUILDINGS[type].gate) {                                  // a gate may go on one of our own wall blocks (it takes that block's place)
     const there = G.ents.get(G.occ[ty * G.w + tx]);
-    if (there && there.kind === K_BLDG && there.type === 'wall' && there.owner === G.me) return true;
+    if (there && there.kind === K_BLDG && BUILDINGS[there.type] && BUILDINGS[there.type].wall && !BUILDINGS[there.type].gate && there.owner === G.me) return true;
   }
   for (let y = ty; y < ty + n; y++) for (let x = tx; x < tx + n; x++) {
     const i = y * G.w + x, tl = G.tiles[i];

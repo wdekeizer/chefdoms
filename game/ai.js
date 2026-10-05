@@ -31,8 +31,8 @@ const LEVELS = {
 };
 
 const ECO_TECHS = ['hatchet1', 'peeler1', 'basket', 'sifter1', 'peeler2', 'hatchet2', 'carts', 'sifter2'];
-const MIL_TECHS = ['pans', 'knives1', 'aprons1', 'sauce1', 'meals1', 'clogs', 'mise', 'knives2', 'aprons2', 'sauce2', 'bumper1', 'meals2', 'ovens', 'kds', 'grinders', 'cheftable',
-  'knives3', 'aprons3', 'sauce3', 'bumper2', 'meatballs', 'veteran'];
+const MIL_TECHS = ['pans', 'knives1', 'aprons1', 'sauce1', 'smock1', 'meals1', 'clogs', 'mise', 'hubcap1', 'bumper1', 'knives2', 'aprons2', 'sauce2', 'smock2', 'meals2', 'ovens', 'kds',
+  'grinders', 'cheftable', 'hubcap2', 'bumper2', 'axle1', 'knives3', 'aprons3', 'sauce3', 'smock3', 'hubcap3', 'bumper3', 'meatballs', 'veteran'];
 const PROD = ['grill', 'sauce', 'garage', 'workshop', 'restaurant'];
 
 export class Bot {
@@ -170,8 +170,9 @@ export class Bot {
     if (!(T.setAge ? g.canAfford(P, cost) : this.canSpend(cost))) return false;
     for (const type in this.c.B) {
       if (!BUILDINGS[type].techs.includes(key)) continue;
+      const room = T.setAge || BUILDINGS[type].trains.length ? 1 : 0;       // a busy barracks takes the upgrade after the soldier in training
       for (const b of this.c.B[type]) {
-        if (!b.done || b.q.length > (T.setAge ? 1 : 0)) continue;
+        if (!b.done || b.q.length > room) continue;
         g.command(P.idx, { c: 'rs', bid: b.id, tech: key });
         return P.pending.has(key);
       }
