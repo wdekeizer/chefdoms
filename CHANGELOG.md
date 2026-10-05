@@ -3,6 +3,22 @@
 Everyone in a match needs the same version: after the host updates, friends run `git pull` in their copy
 (the lobby chat warns when a copy and the server differ).
 
+## v1.4.0
+
+**Real-time**
+- **Walls and gates.** Prep Cooks can lay a **Crate Wall**: press where it starts, drag to where it ends, and a line of
+  crates (5 Firewood each) goes down, with a cost preview. **Swing Gates** (30 Firewood) let your team through and stop
+  everyone else; place one on your own crate to swap it in. Enemy soldiers go round walls when they can and break
+  through when they cannot; workers never do. Walls join up as they are built and do not count for Conquest or scores.
+  (They take the Deliver and bell slots on the Prep Cook card: delivering is a right-click on a drop-off, and the bell is
+  on the quick bar and the Kitchen HQ.)
+- Gathering is 20% faster, and Veggie Patches, gardens and fishing 40% faster, so food is the best start.
+
+**Everywhere**
+- The selection info is plain text just left of the minimap instead of a big box at the top left.
+- Menu: **Zoom** sensitivity slider (the wheel now follows how far you scroll, so trackpads zoom smoothly), and
+  **Double-click selects all of a type** can be switched off (Ctrl+click still works).
+
 ## v1.3.0
 
 **Capture the Flag**

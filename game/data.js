@@ -7,7 +7,7 @@
 //  (Restart the server afterwards; everyone must reload the page.)
 // ============================================================================
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 export const TICK_RATE = 20;            // simulation ticks per second
 export const DT = 1 / TICK_RATE;
 export const MAX_PLAYERS = 10;
@@ -117,7 +117,9 @@ export const UNITS = {
     desc: 'Gathers ingredients, builds and repairs stations.',
     tags: ['cook'], hp: 35, atk: 3, reload: 1.5, speed: 2.0, sight: 5,
     cost: { food: 50 }, time: 13, carry: 10,
-    gather: { food: 0.60, garden: 0.50, fish: 0.56, wood: 0.55, spice: 0.55, salt: 0.50 },
+    // per second (v1.4.0: everything 20% faster, Veggie Patches, gardens and fishing 40%, so they pay best early on);
+    // turn-based income only looks at these relative to the base, so it is unaffected
+    gather: { food: 0.84, garden: 0.70, fish: 0.78, wood: 0.66, spice: 0.66, salt: 0.60 },
   }),
   line: U({
     name: 'Line Cook', role: 'Frying-pan infantry',
@@ -304,6 +306,15 @@ export const BUILDINGS = {
   market: B({
     name: 'Farmers Market', desc: 'Trade ingredients for each other. Prices move: whatever everyone sells gets cheaper, whatever everyone buys gets dearer, and they drift back over time.',
     size: 3, hp: 1200, cost: { wood: 175 }, time: 35, age: 2, sight: 4, tags: ['bldg', 'market'],
+  }),
+  // walls (v1.4.0, real-time only): one tile each, dragged out in a line; gates let your own team through
+  wall: B({
+    name: 'Crate Wall', desc: 'Stacked produce crates that block the way. Drag to lay a whole line at once (every crate costs a little Firewood). Soldiers break through an enemy wall when there is no sensible way round.',
+    size: 1, hp: 400, armor: 2, parmor: 12, cost: { wood: 5 }, time: 5, age: 1, sight: 1, wall: true, tags: ['bldg', 'wall'],
+  }),
+  gate: B({
+    name: 'Swing Gate', desc: 'Kitchen swing doors for your wall: your team walks straight through, everyone else has to break them down. Place one on your own Crate Wall to swap that crate for a gate.',
+    size: 1, hp: 700, armor: 3, parmor: 12, cost: { wood: 30 }, time: 14, age: 1, sight: 2, wall: true, gate: true, tags: ['bldg', 'wall', 'gate'],
   }),
   tower: B({
     name: 'Pepper Mill Tower', desc: 'Defensive tower. Grinds peppercorns at anything hostile in range.',
@@ -918,6 +929,27 @@ export function ctfHeroStats(base, items, cmd, level = 1) {
   return S;
 }
 export const ctfItemCost = (key, lv) => { const it = CTF.items[key]; return it && lv < it.tiers.length ? it.tiers[lv][1] : 0; };
+
+/**
+ * The tiles of a wall dragged from (x0,y0) to (x1,y1): a 4-connected staircase (every tile shares an edge with
+ * the next, so no unit can squeeze through a diagonal gap), at most `max` tiles. Same on server and client.
+ */
+export const WALL_MAX = 40;
+export function wallLine(x0, y0, x1, y1, max = WALL_MAX) {
+  x0 |= 0; y0 |= 0; x1 |= 0; y1 |= 0;
+  const out = [[x0, y0]], sx = Math.sign(x1 - x0), sy = Math.sign(y1 - y0), dx = x1 - x0, dy = y1 - y0;
+  let x = x0, y = y0;
+  while ((x !== x1 || y !== y1) && out.length < max) {
+    // step along whichever axis keeps the staircase closest to the straight line
+    const off = (px, py) => Math.abs((px - x0) * dy - (py - y0) * dx);
+    if (x === x1) y += sy;
+    else if (y === y1) x += sx;
+    else if (off(x + sx, y) <= off(x, y + sy)) x += sx;
+    else y += sy;
+    out.push([x, y]);
+  }
+  return out;
+}
 
 // Deterministic PRNG (mulberry32) — used by map generation so a seed fully
 // describes a map.

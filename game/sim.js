@@ -7,9 +7,9 @@ import {
   TICK_RATE, DT, RES, TILE, TREE_WOOD, NODES, BUILDINGS, TECHS, COMMANDERS, BUFFS,
   AURA_RADIUS, ZARA_TIP, HERO_RESPAWN, START_RES, MAP_SIZES, mapSizeFor,
   GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, FORMATIONS, ULT_AGE, CTF, MARKET, marketQuote,
-  computeStats, techCost, techTime, trainList,
+  computeStats, techCost, techTime, trainList, wallLine,
 } from './data.js';
-import { Pathfinder } from './pathfinding.js';
+import { Pathfinder, gateKey } from './pathfinding.js';
 import { generateMap } from './mapgen.js';
 
 export const K_UNIT = 0, K_BLDG = 1, K_NODE = 2;
@@ -53,6 +53,8 @@ export class Game {
       else if (t === TILE.WATER) this.block[i] = 1;
     }
     this.pf = new Pathfinder(this.w, this.h, this.block);
+    this.wallTeam = new Int16Array(N).fill(-1);    // team of the wall / gate on a tile (-1 = none): soldiers may break through enemy ones
+    this.pf.wallTeam = this.wallTeam;
 
     this.tick = 0;
     this.nextId = 1;
@@ -137,6 +139,7 @@ export class Game {
       const i = y * this.w + x;
       this.occ[i] = b.id;
       if (!S.walkable) this.block[i] = 1;
+      if (S.wall) this.wallTeam[i] = P.team;                 // (a gate opens for its team once it is finished)
     }
     this.ents.set(b.id, b); this.bldgs.push(b);
     if (done) this.completeBuilding(b);
@@ -146,7 +149,8 @@ export class Game {
   completeBuilding(b) {
     b.done = true; b.prog = 1;
     if (b.hp > b.S.hp) b.hp = b.S.hp;
-    if (this.tick > 0) this.players[b.owner].score.built++;
+    if (b.S.gate) { const k = gateKey(this.players[b.owner].team); if (k > 0) this.block[b.ty * this.w + b.tx] = k; }   // the swing doors open for our side
+    if (this.tick > 0 && !b.S.wall) this.players[b.owner].score.built++;
     this.refreshBuildings(this.players[b.owner]);
     this.events.push(['built', b.owner, b.id]);
   }
@@ -305,9 +309,13 @@ export class Game {
     if (this.pathBudget > 0 && this.pf.expanded < (this.pathStop || Infinity)) { this.pathBudget--; this.computePath(u); }
     else if (!u.wantPath) { u.wantPath = true; this.pathQueue.push(u); }
   }
+  /** Can unit u stand on tile i? (open ground, or one of its own team's finished gates) */
+  open(u, i) { const v = this.block[i]; return v === 0 || v === (u.gk || (u.gk = gateKey(this.players[u.owner].team))); }
+  /** Soldiers may plan a route through an enemy wall (and break it when they get there); workers go round. */
+  canBreach(u) { return u.S.atk > 0 && !u.isCook && !u.camp && !u.S.heal; }
   computePath(u) {
     u.wantPath = false;
-    const r = this.pf.find(u.x, u.y, u.goal);
+    const r = this.pf.find(u.x, u.y, u.goal, this.players[u.owner].team, this.canBreach(u));
     u.path = r ? r.pts : null; u.pi = 0; u.partial = r ? r.partial : false;
   }
 
@@ -326,7 +334,14 @@ export class Game {
       let nx, ny, reached;
       if (d <= rem) { nx = tx; ny = ty; reached = true; rem -= d; }
       else { nx = u.x + (dx / d) * rem; ny = u.y + (dy / d) * rem; reached = false; rem = 0; }
-      if (block[(ny | 0) * w + (nx | 0)]) { u.path = null; return 2; }
+      const ni = (ny | 0) * w + (nx | 0);
+      if (block[ni] && !this.open(u, ni)) {
+        if (this.wallTeam[ni] >= 0 && this.canBreach(u)) {                   // an enemy wall on the planned route: break it (see updateUnit)
+          const wb = this.ents.get(this.occ[ni]);
+          if (wb && !wb.dead && this.hostile(u.owner, wb.owner)) u.breach = wb.id;
+        }
+        u.path = null; return 2;
+      }
       if (dx > 0.01) u.face = 1; else if (dx < -0.01) u.face = -1;
       u.x = nx; u.y = ny;
       if (reached) u.pi += 2;
@@ -367,7 +382,7 @@ export class Game {
     if (u.cd > 0) u.cd--;
     if (u.inside) { u.st = ST.INSIDE; u.tgt = 0; return; }
     if (u.expire && tick >= u.expire) { this.killEntity(u, -1); return; }        // a hired rider heads home
-    if (this.block[(u.y | 0) * this.w + (u.x | 0)]) this.unstick(u);
+    { const i = (u.y | 0) * this.w + (u.x | 0); if (this.block[i] && !this.open(u, i)) this.unstick(u); }
     if (u.stunned) { u.st = ST.IDLE; u.tgt = 0; return; }                         // stuck in caramel
     const o = u.order;
     if (!o) {
@@ -482,6 +497,14 @@ export class Game {
       }
       default: this.nextOrder(u);
     }
+    if (u.breach) {                                 // walked into an enemy wall on the way: knock it down, then carry on
+      const wb = this.ents.get(u.breach), cur = u.order;
+      u.breach = 0;
+      if (wb && !wb.dead && this.hostile(u.owner, wb.owner) && !(cur && cur.t === 'attack' && cur.id === wb.id)) {
+        if (cur) { cur.pathed = false; cur.go = 0; cur.tries = 0; cur.fails = 0; }
+        this.beginOrder(u, { t: 'attack', id: wb.id, resume: cur || null, breach: true });
+      }
+    }
   }
 
   /** How far a unit on "Hold the Line" looks for trouble. */
@@ -548,7 +571,7 @@ export class Game {
     b.inside = Math.max(0, b.inside - 1);
     const pt = this.spawnPoint(b, tx ?? b.x, ty ?? b.y + b.size);
     u.x = pt[0] + (Math.random() - 0.5) * 0.5; u.y = pt[1] + (Math.random() - 0.5) * 0.5;
-    if (this.block[(u.y | 0) * this.w + (u.x | 0)]) { u.x = pt[0]; u.y = pt[1]; }
+    { const i = (u.y | 0) * this.w + (u.x | 0); if (this.block[i] && !this.open(u, i)) { u.x = pt[0]; u.y = pt[1]; } }
   }
   /** All clear: come out (if inside) and pick up where we left off. */
   restore(u) {
@@ -588,7 +611,7 @@ export class Game {
       if (best) return best;
     }
     for (const b of this.bldgs) {
-      if (b.dead || players[b.owner].team === team) continue;
+      if (b.dead || players[b.owner].team === team || b.S.wall) continue;      // (walls only when they are in the way, or ordered)
       if (b.id === u.ignoreId && tick < u.ignoreUntil) continue;
       const d = rectDist(u.x, u.y, b);
       if (d > R || (S.minRange > 0 && d < S.minRange)) continue;
@@ -947,9 +970,10 @@ export class Game {
       let nx = u.x + ax, ny = u.y + ay;
       nx = nx < 0.3 ? 0.3 : nx > maxX ? maxX : nx;
       ny = ny < 0.3 ? 0.3 : ny > maxY ? maxY : ny;
-      if (!block[(ny | 0) * w + (nx | 0)]) { u.x = nx; u.y = ny; }
-      else if (!block[(u.y | 0) * w + (nx | 0)]) u.x = nx;
-      else if (!block[(ny | 0) * w + (u.x | 0)]) u.y = ny;
+      const a = (ny | 0) * w + (nx | 0), b = (u.y | 0) * w + (nx | 0), c = (ny | 0) * w + (u.x | 0);
+      if (!block[a] || this.open(u, a)) { u.x = nx; u.y = ny; }
+      else if (!block[b] || this.open(u, b)) u.x = nx;
+      else if (!block[c] || this.open(u, c)) u.y = ny;
     }
   }
 
@@ -1352,7 +1376,7 @@ export class Game {
   freeTiles(e) {
     for (let y = e.ty; y < e.ty + e.size; y++) for (let x = e.tx; x < e.tx + e.size; x++) {
       const i = y * this.w + x;
-      if (this.occ[i] === e.id) { this.occ[i] = 0; const t = this.tiles[i]; this.block[i] = t === TILE.WATER || t === TILE.TREE ? 1 : 0; }
+      if (this.occ[i] === e.id) { this.occ[i] = 0; this.wallTeam[i] = -1; const t = this.tiles[i]; this.block[i] = t === TILE.WATER || t === TILE.TREE ? 1 : 0; }
     }
   }
 
@@ -1390,7 +1414,7 @@ export class Game {
         db = true;
         this.freeTiles(e);
         for (const it of e.q) if (it.k === 't') P.pending.delete(it.key);
-        if (K && K !== P) { K.score.razed++; P.score.bldgLost++; }
+        if (K && K !== P && !e.S.wall) { K.score.razed++; P.score.bldgLost++; }
         if (e.inside > 0) {                        // the shelter fell: everyone inside spills out and runs for the next one
           for (const u of this.units) {
             if (u.inside !== e.id || u.dead) continue;
@@ -1432,7 +1456,7 @@ export class Game {
       let has = false;
       for (const b of this.bldgs) {
         if (b.dead || b.owner !== P.idx) continue;
-        if (hqOnly ? b.type === 'hq' && b.done : b.type !== 'garden') { has = true; break; }
+        if (hqOnly ? b.type === 'hq' && b.done : b.type !== 'garden' && !b.S.wall) { has = true; break; }
       }
       if (!has) this.eliminate(P);
     }
@@ -1661,11 +1685,44 @@ export class Game {
         const S = P.stats.bldgs[c.b];
         if (!S || S.age > P.age) return;
         const tx = c.tx | 0, ty = c.ty | 0;
+        if (S.gate && tx >= 0 && ty >= 0 && tx < this.w && ty < this.h) {     // a gate on our own Crate Wall takes that crate's place
+          const old = this.ents.get(this.occ[ty * this.w + tx]);
+          if (old && !old.dead && old.kind === K_BLDG && old.type === 'wall' && old.owner === pi) {
+            if (!this.canAfford(P, S.cost)) { this.events.push(['note', pi, 'res']); return; }
+            if (!old.done && old.paid) this.refund(P, old.paid, 1 - old.prog);
+            this.killEntity(old, -1); this.freeTiles(old);
+          }
+        }
         if (!this.canPlace(c.b, tx, ty)) { this.events.push(['note', pi, 'place']); return; }
         if (!this.pay(P, S.cost)) { this.events.push(['note', pi, 'res']); return; }
         const b = this.addBuilding(pi, c.b, tx, ty, false);
         b.paid = { ...S.cost };
         for (const u of this.ownUnits(pi, c.ids)) if (u.isCook) this.setOrder(u, { t: 'build', id: b.id }, q);
+        break;
+      }
+
+      case 'bw': {                                  // a line of Crate Wall: one crate per tile, each paid for as it goes down
+        const S = P.stats.bldgs.wall;
+        if (!S || S.age > P.age) return;
+        const inMap = (v, m) => Number.isFinite(v) && v >= 0 && v < m;
+        if (!inMap(c.x0, this.w) || !inMap(c.y0, this.h) || !inMap(c.x1, this.w) || !inMap(c.y1, this.h)) return;
+        const placed = [];
+        let short = false;
+        for (const [x, y] of wallLine(c.x0, c.y0, c.x1, c.y1)) {
+          const there = this.ents.get(this.occ[y * this.w + x]);
+          if (there && there.kind === K_BLDG && there.S.wall && there.owner === pi) continue;      // already walled
+          if (!this.canPlace('wall', x, y)) continue;                                          // trees, water, stations: the line skips them
+          if (!this.pay(P, S.cost)) { short = true; break; }
+          const b = this.addBuilding(pi, 'wall', x, y, false);
+          b.paid = { ...S.cost };
+          placed.push(b);
+        }
+        if (short) this.events.push(['note', pi, 'res']);
+        if (!placed.length) { if (!short) this.events.push(['note', pi, 'place']); return; }
+        // spread the builders along the line; each moves on to the nearest unfinished crate when it is done
+        const cooks = this.ownUnits(pi, c.ids).filter((u) => u.isCook);
+        cooks.forEach((u, k) => this.setOrder(u, { t: 'build', id: placed[Math.floor((k * placed.length) / cooks.length)].id }, q));
+        this.events.push(['walls', pi, placed.length]);
         break;
       }
 

@@ -18,6 +18,7 @@ let lastClick = { id: 0, t: 0 };
 let lastTap = { code: '', t: 0 };
 let edgeScroll = true;
 let camSpeed = 1;               // multiplier from the Controls menu
+let dblSelect = true;           // double-click selects every unit of that type on screen (Controls menu)
 let leftAt = 0;                 // when the pointer last left the page (it keeps scrolling for a moment)
 
 const EDGE_X = 10, EDGE_TOP = 8, EDGE_BOTTOM = 6;   // px from each window edge that scroll the camera (narrow where the HUD has buttons)
@@ -25,6 +26,7 @@ const CAM_PX_PER_S = 1500;      // camera speed in screen pixels per second at 1
 
 export function setEdgeScroll(v) { edgeScroll = !!v; }
 export function setCamSpeed(v) { camSpeed = Math.max(0.4, Math.min(2.5, Number(v) || 1)); }
+export function setDblSelect(v) { dblSelect = !!v; }
 export const mark = (x, y, color) => G.marks.push({ x, y, t0: performance.now(), color });
 
 function centerOn(x, y, unlock) { if (unlock && G.follow) toggleFollow(false); G.cam.x = x; G.cam.y = y; }
@@ -234,7 +236,7 @@ function clickSelect(wx, wy, ev) {
   const e = pickEntity(wx, wy);
   const now = performance.now();
   if (!e) { if (!ev.shiftKey) G.sel.clear(); return; }
-  const dbl = (e.id === lastClick.id && now - lastClick.t < 350) || ev.ctrlKey;
+  const dbl = (dblSelect && e.id === lastClick.id && now - lastClick.t < 350) || ev.ctrlKey;      // (Ctrl+click always works)
   lastClick = { id: e.id, t: now };
   if (dbl && e.owner === G.me) {                // everything of this type on screen
     const same = (e.kind === K_UNIT ? G.units : G.bldgs).filter((x) => x.owner === G.me && x.type === e.type && canSee(x) && inView(x));
@@ -399,6 +401,11 @@ function onMouseDown(ev) {
     return;
   }
   if (G.tb) { TAC.click(wx, wy, false); return; }
+  if (mode && mode.type === 'wall') {                                 // a wall: press where it starts, drag, let go where it ends
+    mode.start = [Math.floor(wx), Math.floor(wy)];
+    ev.preventDefault();
+    return;
+  }
   if (mode && mode.type === 'place') {
     const B = BUILDINGS[mode.b];
     const tx = Math.round(wx - B.size / 2), ty = Math.round(wy - B.size / 2);
@@ -431,6 +438,14 @@ function onMouseMove(ev) {
 
 function onMouseUp(ev) {
   if (ev.button === 1) { pan = null; return; }
+  if (ev.button === 0 && G.mode && G.mode.type === 'wall' && G.mode.start && G.phase === 'game') {
+    updateMouse(ev);
+    const st = G.mode.start, ex = Math.floor(G.mouse.wx), ey = Math.floor(G.mouse.wy);
+    const ids = selected().filter((e) => e.owner === G.me && e.type === 'cook').map((e) => e.id);
+    if (ids.length) { cmd({ c: 'bw', ids, x0: st[0], y0: st[1], x1: ex, y1: ey, q: ev.shiftKey ? 1 : 0 }); sfx('place'); }
+    if (ev.shiftKey && ids.length) G.mode.start = null; else G.mode = null;            // Shift: lay another stretch
+    return;
+  }
   if (ev.button !== 0 || !G.drag) return;
   const d = G.drag;
   G.drag = null;
@@ -488,7 +503,14 @@ export function initInput(cv, h) {
   cv.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
-  cv.addEventListener('wheel', (ev) => { if (G.phase === 'game') { zoomBy(ev.deltaY < 0 ? 1 : -1, ev.clientX, ev.clientY); ev.preventDefault(); } }, { passive: false });
+  cv.addEventListener('wheel', (ev) => {
+    if (G.phase !== 'game') return;
+    ev.preventDefault();
+    if (!ev.deltaY) return;
+    // a mouse-wheel notch is about 100 px (3 lines); trackpads send many small deltas, so they zoom smoothly instead of racing
+    const notches = Math.min(3, Math.abs(ev.deltaY) / (ev.deltaMode === 1 ? 3 : ev.deltaMode === 2 ? 0.3 : 100));
+    zoomBy(ev.deltaY < 0 ? 1 : -1, ev.clientX, ev.clientY, notches);
+  }, { passive: false });
   window.addEventListener('contextmenu', (ev) => { if (G.phase === 'game') ev.preventDefault(); });
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', (ev) => { keys[ev.code] = false; });

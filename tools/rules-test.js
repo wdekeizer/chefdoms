@@ -1418,17 +1418,118 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
   }
 }
 
+// ------------------------------------- v1.4.0: walls and gates, faster gathering
+{
+  const { UNITS: U0, BUILDINGS: B0, wallLine, WALL_MAX } = await import('../game/data.js');
+  const { gateKey } = await import('../game/pathfinding.js');
+  // gathering: 20% faster, food sources 40%
+  const gr = U0.cook.gather;
+  ok(gr.food === 0.84 && gr.garden === 0.7 && gr.fish === 0.78 && gr.wood === 0.66 && gr.spice === 0.66 && gr.salt === 0.6, 'gathering is 20% faster, Veggie Patches, gardens and fishing 40%', JSON.stringify(gr));
+  ok(gr.food > gr.wood && gr.fish > gr.spice && gr.garden > gr.salt, 'food sources now out-gather everything else');
+
+  // the line a dragged wall follows: 4-connected, capped
+  const line = wallLine(2, 3, 9, 7);
+  let joined = true;
+  for (let i = 1; i < line.length; i++) if (Math.abs(line[i][0] - line[i - 1][0]) + Math.abs(line[i][1] - line[i - 1][1]) !== 1) joined = false;
+  ok(joined && line[0][0] === 2 && line[0][1] === 3 && line[line.length - 1][0] === 9 && line[line.length - 1][1] === 7, 'walls: a dragged line is a staircase with no diagonal gaps', JSON.stringify(line));
+  ok(wallLine(0, 0, 200, 0).length === WALL_MAX && wallLine(5, 5, 5, 5).length === 1, `walls: one drag lays at most ${WALL_MAX} crates`);
+  ok(B0.wall.size === 1 && B0.gate.size === 1 && B0.wall.wall && B0.gate.gate && B0.wall.age === 1, 'walls: one-tile Crate Walls and Swing Gates from the start');
+
+  // find an open 13x13 patch well away from both bases
+  const g = mk(['flint', 'nonna'], { seed: 7 });
+  g.step();
+  const [A, Bp] = g.players;
+  let spot = null;
+  for (let y = 4; y < g.h - 17 && !spot; y++) for (let x = 4; x < g.w - 17 && !spot; x++) {
+    let free = true;
+    for (let yy = y; yy < y + 13 && free; yy++) for (let xx = x; xx < x + 13 && free; xx++) if (g.block[yy * g.w + xx] || g.occ[yy * g.w + xx]) free = false;
+    for (const P of g.players) if (Math.hypot(P.home.x - (x + 6), P.home.y - (y + 6)) < 16) free = false;
+    if (free) spot = [x, y];
+  }
+  ok(!!spot, 'walls: (setup) an open patch to build on');
+  const [X, Y] = spot;
+  const cook = g.spawnUnit(0, 'cook', X + 1.5, Y + 1.5);
+  // drag a line: one crate per tile, paid per crate, cooks sent to build
+  A.res.wood = 1000;
+  g.command(0, { c: 'bw', ids: [cook.id], x0: X + 2, y0: Y + 1, x1: X + 10, y1: Y + 1 });
+  const crates = g.bldgs.filter((b) => b.type === 'wall' && b.owner === 0);
+  ok(crates.length === 9 && A.res.wood === 1000 - 9 * B0.wall.cost.wood && cook.order && cook.order.t === 'build', 'walls: dragging lays a crate on every tile and sends the cook to build them', `${crates.length} crates, ${A.res.wood} wood`);
+  g.command(0, { c: 'bw', ids: [cook.id], x0: X + 2, y0: Y + 1, x1: X + 12, y1: Y + 1 });
+  ok(g.bldgs.filter((b) => b.type === 'wall' && b.owner === 0).length === 11, 'walls: dragging over an existing stretch only adds the missing crates');
+  A.res.wood = 12;
+  g.command(0, { c: 'bw', ids: [cook.id], x0: X + 2, y0: Y + 2, x1: X + 9, y1: Y + 2 });
+  ok(g.bldgs.filter((b) => b.type === 'wall' && b.owner === 0).length === 13 && A.res.wood === 2, 'walls: the line stops where the Firewood runs out');
+  let wallsAt = 0; for (let i = 0; i < 300 && g.bldgs.some((b) => b.type === 'wall' && !b.done); i++) g.step();
+  wallsAt = g.bldgs.filter((b) => b.type === 'wall' && b.done).length;
+  ok(wallsAt >= 2, 'walls: the cook works its way along the line', `${wallsAt} finished`);
+  ok(g.block[(Y + 1) * g.w + X + 2] === 1 && g.wallTeam[(Y + 1) * g.w + X + 2] === A.team, 'walls: a crate blocks its tile and remembers whose it is');
+  ok(A.score.built === 0, 'walls: crates do not count as stations built');
+  // a gate on our own crate takes its place
+  A.res.wood = 500;
+  const crate0 = g.ents.get(g.occ[(Y + 1) * g.w + X + 5]);
+  g.command(0, { c: 'bp', ids: [], b: 'gate', tx: X + 5, ty: Y + 1 });
+  g.step();
+  const gate0 = g.ents.get(g.occ[(Y + 1) * g.w + X + 5]);
+  ok(crate0.dead && gate0 && gate0.type === 'gate' && A.res.wood >= 500 - B0.gate.cost.wood && A.res.wood <= 500 - B0.gate.cost.wood + B0.wall.cost.wood, 'walls: a gate placed on your own crate replaces it (an unbuilt crate is refunded)', String(A.res.wood));
+  ok(g.block[(Y + 1) * g.w + X + 5] === 1, 'walls: an unfinished gate is shut to everyone');
+  g.completeBuilding(gate0); gate0.hp = gate0.S.hp;
+  ok(g.block[(Y + 1) * g.w + X + 5] === gateKey(A.team), 'walls: a finished gate opens for its own team');
+  ok(g.pf.isBlocked(X + 5, Y + 1) && !g.canPlace('gate', X + 5, Y + 1), 'walls: outside a search the gate counts as closed, and nothing else builds on it');
+
+  // a ring with a gate: ours walk through, an enemy cook cannot get in, enemy soldiers break in
+  const g2 = mk(['flint', 'nonna'], { seed: 7 });
+  g2.step();
+  const ring = [];
+  for (let i = 3; i <= 9; i++) ring.push([X + i, Y + 3], [X + i, Y + 9]);
+  for (let i = 4; i <= 8; i++) ring.push([X + 3, Y + i], [X + 9, Y + i]);
+  const ringB = ring.map(([x, y]) => g2.addBuilding(0, x === X + 6 && y === Y + 9 ? 'gate' : 'wall', x, y, true));
+  const inside = [X + 6.5, Y + 6.5], inBox = (u) => u.x > X + 4 && u.x < X + 9 && u.y > Y + 4 && u.y < Y + 9;
+  const own = g2.spawnUnit(0, 'line', X + 6.5, Y + 11.5), foeCook = g2.spawnUnit(1, 'cook', X + 11.5, Y + 6.5);
+  const foes = [0, 1, 2].map((k) => g2.spawnUnit(1, 'line', X + 1.5, Y + 5.5 + k));
+  g2.command(0, { c: 'mv', ids: [own.id], x: inside[0], y: inside[1] });
+  g2.command(1, { c: 'mv', ids: [foeCook.id, ...foes.map((u) => u.id)], x: inside[0], y: inside[1] });
+  let ownIn = 0, foeIn = 0, cookIn = false, breached = false;
+  for (let t = 0; t < 60 * TICK_RATE; t++) {
+    g2.step(); g2.delta();
+    if (!ownIn && inBox(own)) ownIn = g2.tick;
+    if (!foeIn && foes.some(inBox)) foeIn = g2.tick;
+    if (inBox(foeCook)) cookIn = true;
+    if (foes.some((u) => u.order && u.order.t === 'attack' && u.order.breach)) breached = true;
+  }
+  ok(ownIn && ownIn < 4 * TICK_RATE, 'walls: your own units walk straight through your gate', `${(ownIn / TICK_RATE).toFixed(1)}s`);
+  ok(!cookIn, 'walls: an enemy worker cannot get through');
+  ok(breached && foeIn > 0 && ringB.some((b) => b.dead), 'walls: enemy soldiers with no way round break through the wall and carry on', `in after ${(foeIn / TICK_RATE).toFixed(1)}s`);
+  ok(Bp.score.razed === 0, 'walls: breaking a crate is not counted as razing a station');
+  // idle soldiers leave walls alone; conquest does not count walls
+  const g3 = mk(['flint', 'nonna'], { seed: 7, victory: 'conquest' });
+  g3.step();
+  const lone = g3.addBuilding(0, 'wall', X + 6, Y + 6, true), guard = g3.spawnUnit(1, 'line', X + 6.5, Y + 7.6);
+  run(g3, 3);
+  ok(!guard.order || guard.order.id !== lone.id, 'walls: idle soldiers do not pick fights with walls');
+  for (const b of g3.bldgs) if (b.owner === 0 && b !== lone) g3.killEntity(b, 1);
+  run(g3, 2);
+  ok(!g3.players[0].alive, 'walls: in Conquest a few crates do not keep you in the game');
+  // turn-based has no walls
+  const { TacticsGame: TG } = await import('../game/tactics.js');
+  const tg = new TG({ players: [{ name: 'A', commander: 'flint', team: 0, color: 0 }, { name: 'B', commander: 'nonna', team: 1, color: 1 }], mapSize: 'small', startRes: 'feast', popCap: 100, seed: 5 });
+  tg.step();
+  const tcook = tg.units.find((u) => u.owner === 0 && u.type === 'cook'), nb = tg.bldgs.length;
+  tg.command(0, { c: 'bp', id: tcook.id, b: 'wall', x: tcook.tx + 1, y: tcook.ty });
+  for (let i = 0; i < 50; i++) tg.step();
+  ok(tg.bldgs.length === nb, 'walls: not on the turn-based grid');
+}
+
 // ----------------------------------------------------------- hostile input fuzz
 {
   const g = mk(['flint', 'nonna'], { seed: 3 });
   const junk = [undefined, null, NaN, Infinity, -1, 0, 1e9, '', 'x', '__proto__', 'constructor', [], {}, [1, 2, 3], { length: 5 }, true];
   const pick = () => junk[(Math.random() * junk.length) | 0];
-  const cmds = ['mv', 'am', 'at', 'hl', 'ga', 'bp', 'ba', 'tr', 'rs', 'cq', 'ry', 'st', 'dl', 'ab', 'ul', 'fm', 'sn', 'dr', 'bell', 'zz'];
+  const cmds = ['mv', 'am', 'at', 'hl', 'ga', 'bp', 'bw', 'ba', 'tr', 'rs', 'cq', 'ry', 'st', 'dl', 'ab', 'ul', 'fm', 'sn', 'dr', 'bell', 'zz'];
   let threw = null;
   try {
     for (let i = 0; i < 4000; i++) {
       const ids = Math.random() < 0.5 ? g.units.slice(0, 6).map((u) => u.id) : pick();
-      g.command((Math.random() * 3) | 0, { c: cmds[(Math.random() * cmds.length) | 0], ids, bids: pick(), bid: Math.random() < 0.5 ? hqOf(g, 0).id : pick(), tid: Math.random() < 0.5 ? g.nextId * Math.random() | 0 : pick(), x: pick(), y: pick(), tx: pick(), ty: pick(), b: Math.random() < 0.5 ? 'house' : pick(), u: Math.random() < 0.5 ? 'cook' : pick(), tech: Math.random() < 0.5 ? 'age2' : pick(), tree: pick(), i: pick(), n: pick(), q: pick(), f: pick(), v: pick(), on: pick() });
+      g.command((Math.random() * 3) | 0, { c: cmds[(Math.random() * cmds.length) | 0], ids, bids: pick(), bid: Math.random() < 0.5 ? hqOf(g, 0).id : pick(), tid: Math.random() < 0.5 ? g.nextId * Math.random() | 0 : pick(), x: pick(), y: pick(), tx: pick(), ty: pick(), x0: pick(), y0: pick(), x1: Math.random() < 0.5 ? 40 : pick(), y1: pick(), b: Math.random() < 0.5 ? (Math.random() < 0.5 ? 'house' : 'gate') : pick(), u: Math.random() < 0.5 ? 'cook' : pick(), tech: Math.random() < 0.5 ? 'age2' : pick(), tree: pick(), i: pick(), n: pick(), q: pick(), f: pick(), v: pick(), on: pick() });
       if (i % 40 === 0) { g.step(); g.delta(); }
     }
     run(g, 10);

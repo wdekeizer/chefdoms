@@ -253,9 +253,14 @@ G.hooks.event = (ev) => {
     case 'tech':
       if (mine) { UI.note('Upgrade complete: ' + TECHS[ev[2]].name, 'good'); sfx('tech'); }
       break;
-    case 'built':
-      if (mine && G.tick > 20) sfx('built');
+    case 'built': {
+      const b = G.ents.get(ev[2]);
+      if (mine && G.tick > 20) {
+        if (b && b.type === 'wall') { if (now - (G.lastWallSfx || 0) > 1500) { G.lastWallSfx = now; sfx('hammer'); } }     // a crate goes up: a knock, not a fanfare
+        else sfx('built');
+      }
       break;
+    }
     case 'placed': {
       const b = G.ents.get(ev[1]);
       if (b && canSee(b)) G.fx.push({ kind: 'dust', x: b.x, y: b.y + b.size * 0.3, t0: now, dur: 500, k: b.size * 0.5 });
@@ -485,6 +490,8 @@ function boot() {
     stop: () => IN.stopSelected(),
     setEdgeScroll: (v) => IN.setEdgeScroll(v),
     setCamSpeed: (v) => IN.setCamSpeed(v),
+    setDblSelect: (v) => IN.setDblSelect(v),
+    setZoomSens: (v) => R.setZoomSens(v),
     setFormation: (f) => IN.setFormation(f),
     toggleBell: () => IN.toggleBell(),
     toggleFollow: () => IN.toggleFollow(),
@@ -500,6 +507,8 @@ function boot() {
   TAC.initTactics({ note: (t) => { UI.note(t, 'warn'); sfx('error'); }, sound: unitSound, selection: () => UI.refreshAll(true), canAfford: UI.canAfford });
   IN.setEdgeScroll(store.get('edge') !== '0');
   IN.setCamSpeed(Number(store.get('camSpeed')) || 1);
+  IN.setDblSelect(store.get('dblSelect') !== '0');
+  R.setZoomSens(Number(store.get('zoomSens')) || 1);
 
   // minimap: left-drag moves the camera, right-click sends the selection there
   let mmDrag = false;

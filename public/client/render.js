@@ -3,7 +3,7 @@
 // ============================================================================
 import { G, K_UNIT, K_BLDG, canSee, isAlly, maxHp, statsOf, updateFog, isSpectator, campOf } from './state.js';
 import * as SPR from './sprites.js';
-import { BUILDINGS, RES, TILE, PLAYER_COLORS, AURA_RADIUS, COMMANDERS, BUFFS, NODES, RES_INFO, TB, CTF, NEUTRAL_COLOR } from '/game/data.js';
+import { BUILDINGS, RES, TILE, PLAYER_COLORS, AURA_RADIUS, COMMANDERS, BUFFS, NODES, RES_INFO, TB, CTF, NEUTRAL_COLOR, wallLine } from '/game/data.js';
 import { T as TAC, flagsOf, F_DONE, myTurn, playing, nodeIncome } from './tactics.js';
 
 export const ZOOMS = [16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96];   // device px per tile (sprite cache buckets)
@@ -65,12 +65,16 @@ export function clampCamera() {
   G.cam.y = Math.max(minY, Math.min(maxY, G.cam.y));
 }
 
-export function zoomBy(dir, sx, sy) {
-  const i = ZOOMS.indexOf(G.cam.scale);
-  const ni = Math.max(0, Math.min(ZOOMS.length - 1, (i < 0 ? 5 : i) + dir));
-  if (ZOOMS[ni] === G.cam.scale) return;
+let zoomSens = 1;                     // Controls menu: how far one wheel notch (or key press) zooms
+export function setZoomSens(v) { zoomSens = Math.max(0.2, Math.min(3, Number(v) || 1)); }
+const ZOOM_STEP = 1.2;                // one notch at 100% sensitivity (the old fixed zoom steps)
+export function zoomBy(dir, sx, sy, notches = 1) {
+  const lo = ZOOMS[0], hi = ZOOMS[ZOOMS.length - 1], cur = G.cam.scale;
+  let ns = Math.round(Math.max(lo, Math.min(hi, cur * Math.pow(ZOOM_STEP, dir * notches * zoomSens))));
+  if (ns === cur && notches >= 0.5) ns = Math.max(lo, Math.min(hi, cur + Math.sign(dir)));     // always move at least a pixel per notch
+  if (ns === cur) return;
   const [wx, wy] = screenToWorld(sx, sy);
-  G.cam.scale = ZOOMS[ni];
+  G.cam.scale = ns;
   // keep the point under the cursor fixed
   G.cam.x = wx - (sx * dpr - W / 2) / G.cam.scale;
   G.cam.y = wy - (sy * dpr - H / 2) / G.cam.scale;
@@ -233,7 +237,28 @@ function stationBox(type, tx, ty, s) {
   const N = BUILDINGS[type] ? BUILDINGS[type].size : 2, wide = type === 'garden' ? 1 : 1 + 0.1 * (N - 1);
   return [ox + (tx + 0.5 - wide / 2) * s, oy + (ty + 1 - wide) * s, (s * wide) / N];
 }
-const drawStation = (type, owner, tx, ty, s, o) => { const b = stationBox(type, tx, ty, s); SPR.drawBuilding(ctx, type, colorOf(owner), b[0], b[1], b[2], o); };
+const drawStation = (type, owner, tx, ty, s, o) => {
+  if (BUILDINGS[type] && BUILDINGS[type].wall && !G.tb) { SPR.drawWall(ctx, type, colorOf(owner), ox + tx * s, oy + ty * s, s, { ...o, mask: wallMask(tx, ty, owner), open: o.open }); return; }
+  const b = stationBox(type, tx, ty, s); SPR.drawBuilding(ctx, type, colorOf(owner), b[0], b[1], b[2], o);
+};
+const teamOf = (owner) => (G.players[owner] ? G.players[owner].team : -99);
+/** Which neighbours of a wall tile are walls or gates of the same team (1 = N, 2 = E, 4 = S, 8 = W): they join up. */
+function wallMask(tx, ty, owner) {
+  const team = teamOf(owner);
+  const at = (x, y) => {
+    if (x < 0 || y < 0 || x >= G.w || y >= G.h) return false;
+    const e = G.ents.get(G.occ[y * G.w + x]);
+    return !!(e && e.kind === K_BLDG && BUILDINGS[e.type] && BUILDINGS[e.type].wall && teamOf(e.owner) === team);
+  };
+  return (at(tx, ty - 1) ? 1 : 0) | (at(tx + 1, ty) ? 2 : 0) | (at(tx, ty + 1) ? 4 : 0) | (at(tx - 1, ty) ? 8 : 0);
+}
+/** A finished gate swings open while one of its own side's units (that we can see) is at the door. */
+function gateOpen(e) {
+  if (e.prog < 100) return false;
+  const team = teamOf(e.owner);
+  for (const u of G.units) if (Math.abs(u.rx - e.x) < 1.35 && Math.abs(u.ry - e.y) < 1.35 && teamOf(u.owner) === team && canSee(u)) return true;
+  return false;
+}
 const FOOT = 0.3;            // turn-based: units stand lower on their tile, so the sprite sits inside it
 
 function tileFill(i, s, fill, stroke, inset = 0.06) {
@@ -500,7 +525,7 @@ export function render(now) {
       } else if (e.kind === K_BLDG) {
         const vis = isAlly(e.owner) || e.vis;
         const mh = maxHp(e);
-        drawStation(e.type, e.owner, e.tx, e.ty, s, { progress: (vis ? e.prog : e.gprog) / 100, t: t + e.id, hpFrac: vis && e.prog >= 100 ? e.hp / mh : 1, ghost: false });
+        drawStation(e.type, e.owner, e.tx, e.ty, s, { progress: (vis ? e.prog : e.gprog) / 100, t: t + e.id, hpFrac: vis && e.prog >= 100 ? e.hp / mh : 1, ghost: false, open: e.type === 'gate' && vis && gateOpen(e) });
         if (G.ps[e.owner].lockUntil > (tac ? 0 : G.tick) && vis) {                         // Lockdown: steel shutters
           ctx.globalAlpha = 0.28 + 0.08 * Math.sin(t * 4); ctx.fillStyle = '#9fc4e8'; ctx.fillRect(ox + e.tx * s, oy + (e.ty - 0.2) * s, e.size * s, (e.size + 0.2) * s);
           ctx.globalAlpha = 0.9; ctx.strokeStyle = '#dff0ff'; ctx.lineWidth = lw * 0.6; ctx.strokeRect(ox + e.tx * s + 1, oy + (e.ty - 0.2) * s, e.size * s - 2, (e.size + 0.2) * s - 1); ctx.globalAlpha = 1;
@@ -674,9 +699,30 @@ export function render(now) {
     const tx = Math.round(G.mouse.wx - B.size / 2), ty = Math.round(G.mouse.wy - B.size / 2);
     const ok = canPlaceLocal(mode.b, tx, ty);
     mode.tx = tx; mode.ty = ty; mode.ok = ok;
-    SPR.drawBuilding(ctx, mode.b, colorOf(G.me), ox + tx * s, oy + ty * s, s, { progress: 1, t, hpFrac: 1, ghost: ok ? 'ok' : 'bad' });
+    if (B.wall) SPR.drawWall(ctx, mode.b, colorOf(G.me), ox + tx * s, oy + ty * s, s, { mask: wallMask(tx, ty, G.me), ghost: ok ? 'ok' : 'bad' });
+    else SPR.drawBuilding(ctx, mode.b, colorOf(G.me), ox + tx * s, oy + ty * s, s, { progress: 1, t, hpFrac: 1, ghost: ok ? 'ok' : 'bad' });
     ctx.strokeStyle = ok ? 'rgba(140,255,120,0.9)' : 'rgba(255,90,80,0.9)'; ctx.lineWidth = lw;
     ctx.strokeRect(ox + tx * s, oy + ty * s, B.size * s, B.size * s);
+  }
+  if (mode && mode.type === 'wall' && G.mouse.inside) {        // laying a wall: the line from where the drag began to the pointer
+    const ex = Math.floor(G.mouse.wx), ey = Math.floor(G.mouse.wy), st = mode.start || [ex, ey];
+    const line = wallLine(st[0], st[1], ex, ey), me = G.ps[G.me], cost = me.stats.bldgs.wall.cost.wood || 0;
+    let n = 0, money = me.res.wood;
+    const plan = line.map(([x, y]) => {
+      const there = G.ents.get(G.occ[y * G.w + x]);
+      if (there && there.kind === K_BLDG && there.type === 'wall' && there.owner === G.me) return null;      // already walled
+      const ok = canPlaceLocal('wall', x, y) && money >= cost;
+      if (ok) { n++; money -= cost; }
+      return [x, y, ok];
+    });
+    for (const p of plan) if (p) SPR.drawWall(ctx, 'wall', colorOf(G.me), ox + p[0] * s, oy + p[1] * s, s, { mask: 0, ghost: p[2] ? 'ok' : 'bad' });
+    mode.plan = { start: st, end: [ex, ey], n };
+    const fs = Math.max(12 * dpr, s * 0.32), text = n ? `${n} crate${n === 1 ? '' : 's'} · ${n * cost} Firewood` : 'Nothing to build here';
+    ctx.font = `800 ${Math.round(fs)}px "Trebuchet MS", "Segoe UI", sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const lx = ox + (ex + 1.2) * s, ly = oy + (ey - 0.4) * s;
+    ctx.lineWidth = Math.max(3, fs / 4); ctx.strokeStyle = 'rgba(20,12,10,0.9)'; ctx.strokeText(text, lx, ly);
+    ctx.fillStyle = n ? '#ffe8a8' : '#ff8a7a'; ctx.fillText(text, lx, ly);
+    ctx.textBaseline = 'alphabetic';
   }
   if (G.drag) {
     const d = G.drag;
@@ -692,6 +738,10 @@ export function render(now) {
 export function canPlaceLocal(type, tx, ty) {
   const n = BUILDINGS[type].size;
   if (tx < 0 || ty < 0 || tx + n > G.w || ty + n > G.h) return false;
+  if (BUILDINGS[type].gate) {                                  // a gate may go on one of our own Crate Walls (it takes that crate's place)
+    const there = G.ents.get(G.occ[ty * G.w + tx]);
+    if (there && there.kind === K_BLDG && there.type === 'wall' && there.owner === G.me) return true;
+  }
   for (let y = ty; y < ty + n; y++) for (let x = tx; x < tx + n; x++) {
     const i = y * G.w + x, tl = G.tiles[i];
     if ((tl !== TILE.GRASS && tl !== TILE.STUMP) || G.occ[i] || !G.fogExp[i]) return false;

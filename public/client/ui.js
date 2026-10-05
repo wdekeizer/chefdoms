@@ -74,7 +74,7 @@ function tbBldgText(S) {
   return bits.join(' · ');
 }
 
-let hooks = { selectHero() {}, selectIdle() {}, selectArmy() {}, stop() {}, leaveToLobby() {}, setEdgeScroll() {}, setCamSpeed() {}, setFormation() {}, toggleBell() {} };
+let hooks = { selectHero() {}, selectIdle() {}, selectArmy() {}, stop() {}, leaveToLobby() {}, setEdgeScroll() {}, setCamSpeed() {}, setDblSelect() {}, setZoomSens() {}, setFormation() {}, toggleBell() {} };
 export function initUI(hk) { hooks = { ...hooks, ...hk }; buildStatic(); }
 
 // ============================================================================
@@ -402,9 +402,12 @@ function buildCard() {
           run: () => { G.mode = { type: 'place', b }; },
         };
       });
-      const carrying = units.some((e) => e.carry);
-      card[12] = { icon: ['ui', 'drop'], title: 'Deliver', desc: 'Carry what they are holding to the nearest drop-off right now. (Right-clicking a Kitchen HQ or Pantry does the same.)', ok: carrying, why: 'Nobody here is carrying anything', run: () => cmd({ c: 'dr', ids: units.map((e) => e.id) }) };
-      card[13] = bellCard(me);
+      // walls: drag out a line of crates; gates go in a gap or on a crate (the bell lives on the quick bar, and delivering is a right-click)
+      const W = st.bldgs.wall, Gt = st.bldgs.gate;
+      card[12] = { icon: ['building', 'wall'], title: W.name, sub: `${W.cost.wood} Firewood a crate`, desc: W.desc, cost: W.cost, time: W.time / st.misc.buildMul, ok: me.age >= W.age, why: `Requires the ${AGE_NAMES[W.age]}`,
+        active: G.mode && G.mode.type === 'wall', stats: { hp: W.hp }, hint: 'Then press where the wall starts and drag to where it ends. Hold Shift to lay several stretches.', run: () => { G.mode = { type: 'wall' }; } };
+      card[13] = { icon: ['building', 'gate'], title: Gt.name, desc: Gt.desc, cost: Gt.cost, time: Gt.time / st.misc.buildMul, ok: me.age >= Gt.age, why: `Requires the ${AGE_NAMES[Gt.age]}`,
+        active: G.mode && G.mode.type === 'place' && G.mode.b === 'gate', stats: { hp: Gt.hp }, hint: 'Then click a gap in your wall, or one of your own crates to swap it for a gate.', run: () => { G.mode = { type: 'place', b: 'gate' }; } };
       card[14] = stop;
     } else {
       const army = units.filter((e) => e.type !== 'cook');
@@ -955,6 +958,7 @@ export function toggleMenu(force) {
       h('h2', null, 'Menu'),
       h('button', { class: 'btn', onclick: () => toggleMenu(false) }, 'Back to the kitchen'),
       soundControls(),
+      h('div', { class: 'sound-box' }, ...mouseControls(false)),
       h('button', { class: 'btn', onclick: () => { toggleMenu(false); showControls(); } }, 'Controls & hotkeys'),
       h('button', { class: 'btn', onclick: () => { toggleFullscreen(); toggleMenu(false); } }, document.fullscreenElement ? 'Leave full screen' : 'Full screen (best for edge scrolling)'),
       host && !G.over && h('button', { class: 'btn', onclick: () => { send({ t: 'pause' }); toggleMenu(false); } }, G.paused ? 'Resume match' : 'Pause match'),
@@ -970,6 +974,19 @@ function confirmTwice(btn, text) {
   btn.dataset.armed = '1'; btn.textContent = text + ' Click again.';
   setTimeout(() => { btn.dataset.armed = '0'; }, 4000);
   return false;
+}
+
+/** Zoom sensitivity and double-click selection: in the menu and in Controls (both read and write the same setting). */
+function mouseControls(wide) {
+  let dbl = store.get('dblSelect') !== '0';
+  const zsens = Number(store.get('zoomSens')) || 1;
+  const pct = h('b', { class: 'vol-val' }, Math.round(zsens * 100) + '%');
+  return [
+    h('label', { class: 'vol' + (wide ? ' wide' : ''), title: 'How far one notch of the mouse wheel (or a zoom key) zooms' }, h('span', null, wide ? 'Zoom sensitivity' : 'Zoom'),
+      h('input', { type: 'range', min: '20', max: '300', step: '10', value: String(Math.round(zsens * 100)), oninput: (ev) => { store.set('zoomSens', String(ev.target.value / 100)); hooks.setZoomSens(ev.target.value / 100); pct.textContent = ev.target.value + '%'; } }), pct),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: dbl ? '' : null, onchange: (ev) => { dbl = ev.target.checked; store.set('dblSelect', dbl ? '1' : '0'); hooks.setDblSelect(dbl); } }),
+      h('span', null, h('b', null, 'Double-click selects all of a type'), wide ? [h('br'), h('span', { class: 'muted' }, 'Double-clicking a Prep Cook (or any unit or station) picks up every one of them on screen. Ctrl+click still does it when this is off.')] : null)),
+  ];
 }
 
 function soundControls() {
@@ -1048,6 +1065,7 @@ export function showControls() {
             h('span', null, h('b', null, 'Edge scrolling'), h('br'), h('span', { class: 'muted' }, 'Push the pointer against a window edge to scroll. Full screen makes this much nicer.'))),
           h('label', { class: 'vol wide' }, h('span', null, 'Camera speed'),
             h('input', { type: 'range', min: '50', max: '220', step: '10', value: String(Math.round(speed * 100)), oninput: (ev) => { store.set('camSpeed', String(ev.target.value / 100)); hooks.setCamSpeed(ev.target.value / 100); } })),
+          ...mouseControls(true),
           rows('Camera'),
           h('h3', null, 'Command card'),
           h('div', { class: 'keygrid' }, group('Command card').map((a) => keyBtn(a.id))),

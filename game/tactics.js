@@ -812,7 +812,7 @@ export class TacticsGame extends Game {
         break;
       }
       case 'tbd': {                                    // a Prep Cook (walks and) starts a station on the tile next to it
-        if (typeof c.b !== 'string' || !Object.hasOwn(BUILDINGS, c.b)) return;
+        if (typeof c.b !== 'string' || !Object.hasOwn(BUILDINGS, c.b) || BUILDINGS[c.b].wall) return;      // (no walls on the grid)
         const u = this.ownUnit(pi, c.id), S = P.stats.bldgs[c.b];
         if (!u || !u.isCook || u.acted || !S || !Number.isFinite(c.x) || !Number.isFinite(c.y)) return;
         if (S.age > P.age) return;

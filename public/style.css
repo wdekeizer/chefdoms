@@ -265,13 +265,18 @@ table.score tr.won td { background: rgba(240,180,28,.08); }
 #chatbox { position: absolute; left: 10px; bottom: 196px; width: 420px; }
 #chatbox input { width: 100%; background: rgba(27,20,17,.95); border-color: var(--accent-2); }
 
-/* The HUD floats over the map: command card bottom-left, minimap bottom-right, selection top-left. No bar across the bottom. */
+/* The HUD floats over the map: command card bottom-left, minimap bottom-right, what is selected as plain text just left
+   of the minimap. No bar across the bottom and no boxes over the map. */
 #hud > #bottom { position: absolute; inset: 0; pointer-events: none; }
 #mm-wrap { position: absolute; right: 8px; bottom: 8px; width: 188px; height: 188px; border: 3px solid var(--edge-hi); border-radius: 10px; overflow: hidden; background: #000; box-shadow: 0 4px 14px rgba(0,0,0,.6); pointer-events: auto; }
 #minimap { width: 100%; height: 100%; display: block; cursor: pointer; }
-#selpanel { position: absolute; left: 8px; top: 50px; width: min(440px, calc(100vw - 16px)); max-height: calc(100vh - 300px); overflow: hidden auto;
-  background: rgba(34,23,18,.93); border: 2px solid var(--edge); border-radius: 12px; padding: 8px 10px; box-shadow: 0 6px 18px rgba(0,0,0,.5); pointer-events: auto; }
+#selpanel { position: absolute; right: 336px; bottom: 6px; width: min(440px, calc(100vw - 680px)); max-height: 52vh; overflow: hidden auto; padding: 2px 4px;   /* clear of the quick bar over the minimap */
+  pointer-events: auto; text-shadow: 0 1px 2px #000, 0 0 3px #000, 0 0 7px rgba(0,0,0,.85); }
 #selpanel.empty { display: none; }
+#selpanel .sel-ico { display: none; }                 /* text only: the portrait would just cover more of the map */
+#selpanel .muted { color: #e2d2b2; }
+#selpanel .sel-desc { color: #f1e4c8; }
+#selpanel .sel-hp .bar { box-shadow: 0 1px 3px rgba(0,0,0,.8); }
 .sel-one { display: flex; gap: 12px; }
 .sel-ico { width: 84px; height: 84px; border-radius: 12px; flex: none; align-self: flex-start; }
 .sel-ico.res-big { background: #2d2019; border: 1px solid var(--edge); display: flex; align-items: center; justify-content: center; }
@@ -344,6 +349,10 @@ table.score tr.won td { background: rgba(240,180,28,.08); }
 .check { display: flex; gap: 9px; align-items: flex-start; margin: 7px 0; cursor: pointer; }
 .check input { margin-top: 3px; accent-color: var(--accent-2); width: 16px; height: 16px; padding: 0; }
 .vol.wide { grid-template-columns: 110px 1fr; margin: 8px 0; }
+.vol:has(.vol-val) { grid-template-columns: 62px 1fr 40px; }
+.vol.wide:has(.vol-val) { grid-template-columns: 110px 1fr 40px; }
+.vol .vol-val { font-size: 12px; color: var(--accent-2); text-align: right; font-variant-numeric: tabular-nums; }
+.sound-box .check { margin: 0; }
 .sound-box .row { display: flex; gap: 6px; }
 
 /* --------------------------------------------------- end of match: tabs, graph */
@@ -441,8 +450,8 @@ button.mk-cell:disabled { opacity: .4; cursor: default; color: var(--muted); }
 
 #banner { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-weight: 800; padding: 6px 18px; border-radius: 0 0 10px 10px; }
 
-@media (max-width: 1340px) {                     /* the turn bar / score bar would sit on the selection panel */
-  body.tb #selpanel, body.ctf #selpanel { top: 100px; }
+@media (max-width: 1060px) {                     /* narrow windows: the text goes above the minimap and quick bar instead */
+  #selpanel { right: 8px; bottom: 256px; width: min(420px, calc(100vw - 16px)); max-height: 30vh; }
 }
 @media (max-width: 900px) {
   .modes { grid-template-columns: 1fr; }

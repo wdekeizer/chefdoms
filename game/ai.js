@@ -481,7 +481,7 @@ export class Bot {
     const strong = siege >= 2 || this.c.army.length >= 12;
     let best = null, bd = Infinity;
     for (const b of g.bldgs) {
-      if (b.dead || !g.hostile(pi, b.owner)) continue;
+      if (b.dead || !g.hostile(pi, b.owner) || b.S.wall) continue;              // (walls get broken on the way, never chosen as the goal)
       let d = Math.hypot(b.x - from.x, b.y - from.y);
       if (b.type === 'garden') d += 15;
       if (strong) { if (b.type === 'hq') d -= 40; }

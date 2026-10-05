@@ -2,11 +2,21 @@
 //  Grid pathfinding: A* (8-way, no corner cutting) + line-of-sight smoothing.
 //  One Pathfinder instance is shared by the whole match and reuses its typed
 //  arrays between searches, so a search allocates almost nothing.
+//
+//  Walls and gates (v1.4.0): a finished gate's tile holds GATE_BASE + team in
+//  the block grid, so it is open to that team and shut to everyone else. A
+//  search for a soldier may also go THROUGH an enemy wall or gate (wallTeam
+//  says whose it is) at a heavy price: soldiers go round a wall when there is a
+//  reasonable way round, and break through it when there is not.
 // ============================================================================
 
 const SQRT2 = Math.SQRT2;
 const DX = [1, -1, 0, 0, 1, 1, -1, -1];
 const DY = [0, 0, 1, -1, 1, -1, 1, -1];
+
+export const GATE_BASE = 2;              // block value of a finished gate: GATE_BASE + team (team 0..250)
+export const gateKey = (team) => (team >= 0 && team <= 250 ? GATE_BASE + team : -1);
+const BREACH_COST = 28;                  // a tile of enemy wall costs as much as this many tiles of detour
 
 function octile(dx, dy) {
   return dx > dy ? dx + (SQRT2 - 1) * dy : dy + (SQRT2 - 1) * dx;
@@ -16,6 +26,8 @@ export class Pathfinder {
   /** @param {Uint8Array} block  1 = impassable tile (kept up to date by the sim) */
   constructor(w, h, block) {
     this.w = w; this.h = h; this.block = block;
+    this.wallTeam = null;                // Int16Array: the team whose wall/gate stands on a tile, -1 = none (set by the sim)
+    this.gk = -1;                        // during a search: the block value that counts as open (our own gates)
     const n = w * h;
     this.g = new Float32Array(n);
     this.f = new Float32Array(n);
@@ -29,14 +41,16 @@ export class Pathfinder {
   }
 
   isBlocked(x, y) {
-    return x < 0 || y < 0 || x >= this.w || y >= this.h || this.block[y * this.w + x] !== 0;
+    if (x < 0 || y < 0 || x >= this.w || y >= this.h) return true;
+    const v = this.block[y * this.w + x];
+    return v !== 0 && v !== this.gk;
   }
   blockedAt(fx, fy) { return this.isBlocked(Math.floor(fx), Math.floor(fy)); }
 
   /** Nearest walkable tile to (x,y) within maxR rings, or null. */
   nearestFree(x, y, maxR) {
     x = Math.max(0, Math.min(this.w - 1, x)); y = Math.max(0, Math.min(this.h - 1, y));
-    if (!this.block[y * this.w + x]) return [x, y];
+    if (!this.isBlocked(x, y)) return [x, y];
     for (let r = 1; r <= maxR; r++) {
       let best = null, bd = Infinity;
       for (let yy = y - r; yy <= y + r; yy++) {
@@ -107,9 +121,15 @@ export class Pathfinder {
    *   goal = { rect:[x0,y0,x1,y1] } → walk to any free tile touching that footprint
    * Returns { pts:[x,y,x,y,...], partial } or null when there is nowhere to go.
    * `partial` means the goal is unreachable and the path leads as close as possible.
+   * team >= 0: that team's finished gates are open. breach: may cross enemy walls/gates (at BREACH_COST a tile);
+   * the walker finds out when it bumps into one (the sim then has it attack that wall).
    */
-  find(sx, sy, goal) {
-    const w = this.w, h = this.h, block = this.block;
+  find(sx, sy, goal, team = -1, breach = false) {
+    this.gk = gateKey(team);
+    try { return this._find(sx, sy, goal, team, breach); } finally { this.gk = -1; }
+  }
+  _find(sx, sy, goal, team, breach) {
+    const w = this.w, h = this.h, block = this.block, gk = this.gk, wt = breach && team >= 0 ? this.wallTeam : null;
     const stx = Math.max(0, Math.min(w - 1, Math.floor(sx)));
     const sty = Math.max(0, Math.min(h - 1, Math.floor(sy)));
     const rect = goal.rect || null;
@@ -121,7 +141,7 @@ export class Pathfinder {
       px = goal.x; py = goal.y;
       gx = Math.max(0, Math.min(w - 1, Math.floor(px)));
       gy = Math.max(0, Math.min(h - 1, Math.floor(py)));
-      if (block[gy * w + gx]) {
+      if (this.isBlocked(gx, gy)) {
         const nf = this.nearestFree(gx, gy, 16);
         if (!nf) return null;
         gx = nf[0]; gy = nf[1]; px = gx + 0.5; py = gy + 0.5;
@@ -159,9 +179,16 @@ export class Pathfinder {
         const nx = cx + DX[d], ny = cy + DY[d];
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const ni = ny * w + nx;
-        if (block[ni] || closed[ni] === gen) continue;
+        if (closed[ni] === gen) continue;
+        const bv = block[ni];
+        let extra = 0;
+        if (bv !== 0 && bv !== gk) {
+          if (!wt || wt[ni] < 0 || wt[ni] === team) continue;                // a wall of an enemy can be broken through; nothing else
+          if (d >= 4) continue;                                               // (straight at it, never diagonally)
+          extra = BREACH_COST;
+        }
         if (d >= 4 && (block[cy * w + nx] || block[ny * w + cx])) continue;   // no cutting corners
-        const ng = gc + (d >= 4 ? SQRT2 : 1);
+        const ng = gc + (d >= 4 ? SQRT2 : 1) + extra;
         if (seen[ni] !== gen || ng < g[ni]) {
           g[ni] = ng; parent[ni] = cur; seen[ni] = gen;
           const hh = H(nx, ny);

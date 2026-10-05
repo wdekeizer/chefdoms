@@ -98,7 +98,7 @@ const NB = BUCKETS.length, BK = new Uint8Array(130);
 for (let s = 0, i = 0; s < 130; s++) { while (i < NB - 1 && BUCKETS[i] < s) i++; BK[s] = i; }
 const bucketIdx = (s) => BK[s >= 128 ? 128 : s > 0 ? Math.ceil(s - 0.01) : 0];
 const FRAME_STRIDE = 512;                         // unit keys: ...frame(3) | face(1) | carry(3) | bucket(5)
-const K_UNIT = 0, K_TREE = 1 << 27, K_NODE = 2 << 27, K_PROJ = 3 << 27, K_FX = 4 << 27, K_BLD = 5 << 27;
+const K_UNIT = 0, K_TREE = 1 << 27, K_NODE = 2 << 27, K_PROJ = 3 << 27, K_FX = 4 << 27, K_BLD = 5 << 27, K_WALL = 6 << 27;
 const MAX_PX = 30e6, MAX_SPRITES = 7000;        // cache budget (~120 MB of RGBA worst case)
 const KEEP = 5000;                                // sprites drawn within the last KEEP blits (~2 busy frames) are never evicted
 const FRAME_MS = 14;
@@ -1311,11 +1311,84 @@ const B_ART = dict({
     awning(c, 1.5, 2.5, 2.6, 2.82, tc, 5);
     for (const x of [1.4, 2.6]) { box(c, x - 0.09, 3.74, 0.18, 0.2, 0.03, '#b9693f'); ball(c, x, 3.6, 0.16, LEAF_D); }
   },
+  wall(c, tc) { wallArt(c, tc, 2 | 8, false); },          // (command card icon: a straight run)
+  gate(c, tc) { gateArt(c, tc, 2 | 8, false); },
   _(c, tc, N) {
     pad(c, N); bshadow(c, 0.25, N * 0.4, N - 0.25, N - 0.2);
     wall(c, 0.25, N * 0.6, N - 0.25, N - 0.15, STONE); roof(c, 0.12, N - 0.12, -0.2, N * 0.22, N * 0.6 + 0.12, N * 0.25, tc); door(c, N / 2 - 0.2, N - 0.15, 0.4, N * 0.25);
   },
 });
+// ---- walls (v1.4.0): one tile each, drawn to join up with the walls next door. mask: 1 = N, 2 = E, 4 = S, 8 = W.
+function wallCrate(c, x, y, w, h, tc) {                 // a crate standing on (x, y): its front, with a lid on top
+  box(c, x, y - h, w, h, 0.02, WOOD_L);
+  pen(c, WOOD_D, LW * 1.2, [x + w * 0.1, y - h, x + w * 0.1, y]); pen(c, WOOD_D, LW * 1.2, [x + w * 0.9, y - h, x + w * 0.9, y]);
+  pen(c, WOOD_D, LW, [x, y - h * 0.5, x + w, y - h * 0.5]);
+  if (tc) box(c, x + w * 0.1, y - h * 0.62, w * 0.8, h * 0.24, 0.01, tc, LW * 0.7);               // painted in the team colour
+  box(c, x - 0.015, y - h - 0.09, w + 0.03, 0.1, 0.02, lt(WOOD_L, 0.18), LW * 0.8);              // lid
+}
+function wallArt(c, tc, mask, site) {
+  if (L === 0) { c.fillStyle = 'rgba(28,38,18,0.25)'; c.beginPath(); rr(c, 0.14, 0.62, 0.78, 0.36, 0.12); c.fill(); }
+  const low = site ? 0.18 : 0.3;                          // the connecting crates (a pillar sits on every tile)
+  if (mask & 1) { box(c, 0.32, -0.08, 0.36, 0.62, 0.02, WOOD, LW); for (let y = 0.05; y < 0.5; y += 0.16) pen(c, WOOD_D, LW, [0.34, y, 0.66, y]); }
+  if (mask & 8) wallCrate(c, -0.02, 0.86, 0.5, low, null);
+  if (mask & 2) wallCrate(c, 0.52, 0.86, 0.5, low, null);
+  if (mask & 4) { box(c, 0.32, 0.5, 0.36, 0.56, 0.02, WOOD, LW); for (let y = 0.62; y < 1.02; y += 0.16) pen(c, WOOD_D, LW, [0.34, y, 0.66, y]); }
+  if (site) {                                             // being built: a single crate and some loose planks
+    wallCrate(c, 0.24, 0.9, 0.52, 0.3, null);
+    limb(c, 0.16, 0.92, 0.42, 0.78, 0.05, WOOD); limb(c, 0.58, 0.95, 0.86, 0.86, 0.05, WOOD_L);
+    return;
+  }
+  wallCrate(c, 0.2, 0.9, 0.6, 0.36, null);
+  wallCrate(c, 0.24, 0.45, 0.52, 0.32, tc);
+}
+function gateArt(c, tc, mask, open, site) {
+  const vert = (mask & 5) && !(mask & 10);               // in a north-south wall: the wall runs on behind and in front of the doorway
+  if (vert) {
+    if (mask & 1) { box(c, 0.32, -0.08, 0.36, 0.5, 0.02, WOOD, LW); for (let y = 0.05; y < 0.4; y += 0.16) pen(c, WOOD_D, LW, [0.34, y, 0.66, y]); }
+    if (mask & 4) { box(c, 0.32, 0.86, 0.36, 0.2, 0.02, WOOD, LW); }
+  }
+  if (L === 0) { c.fillStyle = 'rgba(28,38,18,0.25)'; c.beginPath(); rr(c, 0.04, 0.62, 0.96, 0.36, 0.12); c.fill(); }
+  limb(c, 0.08, 0.92, 0.08, site ? 0.3 : -0.3, 0.13, WOOD_D); limb(c, 0.92, 0.92, 0.92, site ? 0.3 : -0.3, 0.13, WOOD_D);   // posts
+  if (site) { limb(c, 0.08, 0.5, 0.92, 0.5, 0.06, WOOD_L); return; }
+  box(c, -0.02, -0.42, 1.04, 0.2, 0.04, tc, LW);                                                   // the sign over the door
+  pen(c, '#fff8ea', Math.max(LW * 1.6, 0.03), [0.3, -0.32, 0.7, -0.32]);
+  if (open) {                                                                                      // swung open: thin panels by the posts
+    box(c, 0.14, 0.2, 0.12, 0.62, 0.03, '#c98d54'); box(c, 0.74, 0.2, 0.12, 0.62, 0.03, '#c98d54');
+  } else {                                                                                         // saloon doors: scalloped tops, porthole windows
+    for (const [x0, x1] of [[0.14, 0.49], [0.51, 0.86]]) {
+      c.beginPath(); c.moveTo(x0, 0.84); c.lineTo(x0, 0.3); c.quadraticCurveTo((x0 + x1) / 2, x0 < 0.5 ? 0.12 : 0.36, x1, 0.24); c.lineTo(x1, 0.84); c.closePath(); ink(c, '#c98d54');
+      ell(c, (x0 + x1) / 2, 0.48, 0.07, 0.07, '#8cc3d4', 0, LW * 0.8);
+      pen(c, '#8a5a32', LW, [x0 + 0.04, 0.68, x1 - 0.04, 0.68]);
+    }
+  }
+}
+const WALL_BOX = [0.25, 0.75, 1.5, 1.95];
+/**
+ * Draw one Crate Wall / Swing Gate tile with the top-left of its tile on (x, y).
+ * o = { mask (neighbours to join), open (gate), progress (< 1 = still being built), ghost: false|'ok'|'bad' }
+ */
+export function drawWall(ctx, type, color, x, y, scale, o = {}) {
+  const gate = type === 'gate', col = safeColor(color), mask = (o.mask | 0) & 15, bi = bucketIdx(scale);
+  const site = o.progress != null && o.progress < 1;
+  const variant = o.ghost ? (gate ? 7 : 5) + (o.ghost === 'bad' ? 1 : 0) : gate ? (site ? 4 : o.open ? 3 : 2) : site ? 1 : 0;
+  const key = K_WALL + ((variant * 64 + colorId(col)) * 16 + mask) * 32 + bi;
+  const art = (c) => (gate ? gateArt(c, col, mask, !!o.open, site) : wallArt(c, col, mask, site));
+  let sp = cache.get(key);
+  if (!sp) {
+    sp = miss(key, (s) => {
+      const src = bake(s, WALL_BOX, art);
+      if (!o.ghost) return src;
+      const cv = document.createElement('canvas'); cv.width = src.w; cv.height = src.h;
+      const c = cv.getContext('2d'); c.drawImage(src.cv, 0, 0); c.globalCompositeOperation = 'source-atop'; c.globalAlpha = 0.5;
+      c.fillStyle = o.ghost === 'bad' ? '#ff3b30' : '#3ddc64'; c.fillRect(0, 0, src.w, src.h);
+      return { cv, ox: src.ox, oy: src.oy, w: src.w, h: src.h, s: src.s, used: 0 };
+    });
+  }
+  const ga = ctx.globalAlpha;
+  if (o.ghost) ctx.globalAlpha = ga * 0.7;
+  blit(ctx, sp, x, y, scale);
+  ctx.globalAlpha = ga;
+}
 const bSize = (type) => (BLD[type] ? BLD[type].size : 2);
 const bArt = (c, type, tc) => (B_ART[type] || B_ART._)(c, tc, bSize(type));
 

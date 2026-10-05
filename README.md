@@ -121,26 +121,36 @@ A friend's copy uses its own `public/music` and `public/sfx` folders, so each pl
 
 | | |
 |---|---|
-| **Produce** | Pick it from Veggie Patches, fish it from the Fishing Spots on a pond's shore, then build Garden Plots (endless, one Prep Cook each). Pays for most units. |
+| **Produce** | Pick it from Veggie Patches, fish it from the Fishing Spots on a pond's shore, then build Garden Plots (endless, one Prep Cook each). The quickest thing to gather, so it pays to start there. Pays for most units. |
 | **Firewood** | Chop trees. Pays for stations. |
 | **Spice** | Dig Spice Mounds. Pays for the good stuff: advanced units, upgrades, new ages. |
 | **Salt** | Chip Salt Rocks (every base starts with two deposits, and the map holds plenty more). Pays for towers, your Signature Restaurant (500) and extra Kitchen HQs. |
 | **Staff** | Your population. Build Break Rooms to raise the limit. |
 
+Gathering is brisk: Prep Cooks pick Produce (Veggie Patches, gardens, fishing) fastest, about a third quicker than
+chopping, digging or chipping.
+
 **The Farmers Market** (Diner Age, 175 Firewood) trades ingredients for each other. Select it and its trading table
-appears top left: each row is what you hand over (100 of it), each column what you get back. Click a cell to trade
+appears beside the minimap: each row is what you hand over (100 of it), each column what you get back. Click a cell to trade
 once, Shift-click for five. Spice and Salt are worth more than Produce and Firewood. Prices are shared by everyone in
 the match: whatever gets sold becomes cheaper, whatever gets bought dearer, and they drift back to normal over time.
 The market keeps a cut, so trading back and forth loses.
 
 Prep Cooks carry what they gather to the nearest Kitchen HQ or Pantry, so build Pantries next to distant resources.
-Right-click a Kitchen HQ or Pantry with cooks selected (or press Deliver on their command card) and they bank what they
-are holding straight away. A cook holding one ingredient who is sent to gather another banks the first on the way.
+Right-click a Kitchen HQ or Pantry with cooks selected and they bank what they are holding straight away. A cook holding one ingredient who is sent to gather another banks the first on the way.
 
 **The bell.** Under attack? Ring the bell (the bell button above the minimap, on the Kitchen HQ's card, or the `U` key):
 every Prep Cook drops their load at the door and shelters inside the nearest Kitchen HQ (30 each), where nothing can
 hurt them. Every 5 cooks inside add one plate to the HQ's volley. "All clear" sends everyone straight back to the job
 they had.
+
+**Walls and gates** (real-time only, from the start). Select Prep Cooks, press **Crate Wall** on their card, then press
+where the wall should start and drag to where it ends: a line of crates (5 Firewood each, at most 40 per drag) is laid
+along the way, going round trees and stations, with a preview of how many crates and what they cost. The cooks build it
+crate by crate. A **Swing Gate** (30 Firewood) goes in a gap, or straight onto one of your own crates (it takes its
+place): your team walks through it, everyone else is stopped. Enemy soldiers go round a wall when there is a sensible
+way round and break through it when there is not (Battering Baguettes and catapults make short work of it; ranged units
+barely scratch it). Workers never break walls. Walls do not count as stations for Conquest or the scores.
 
 **Ages:** Food Cart → Diner → Bistro → Five-Star. Advance at the Kitchen HQ. Each age unlocks units, stations and upgrades,
 and makes your commander stronger.
@@ -203,7 +213,7 @@ All commanders are original characters; names, buffs and everything else live in
 
 | | |
 |---|---|
-| Left-click / drag | Select; double-click selects all of that type on screen |
+| Left-click / drag | Select; double-click (or Ctrl+click) selects all of that type on screen. Double-click can be switched off in the Menu |
 | Right-click | Smart order: move, attack (sword cursor), gather (basket cursor), build/repair (hammer), deliver to a Kitchen HQ or Pantry, or set a station's rally point |
 | Shift + order | Queue it after the current one |
 | Alt + click | Ping the map for your team |
@@ -216,11 +226,16 @@ All commanders are original characters; names, buffs and everything else live in
 | Tab | Jump to the last alert or ping |
 | Y | Lock the camera on your hero, or free it again (Capture the Flag) |
 | Ctrl or Shift + 1…9 | Save a control group; the number recalls it |
-| Arrows, screen edge, middle-drag, minimap | Move the camera; mouse wheel (or = and -) zooms |
+| Arrows, screen edge, middle-drag, minimap | Move the camera; mouse wheel (or = and -) zooms (Menu → Zoom sets how far a notch goes) |
 | Delete | Remove selected units/stations |
 | Enter / Shift+Enter | Chat with everyone / your team |
 | F10, P | Menu, pause (host) |
 | I | End your turn (turn-based matches) |
+
+**The screen.** The command card sits bottom left and the minimap bottom right; what you have selected is described in
+plain text just left of the minimap, so nothing covers the middle of the map. The Menu (F10) also has **Zoom**
+sensitivity (how far one wheel notch or zoom key goes; trackpads zoom smoothly) and **Double-click selects all of a
+type** (untick it if double-clicking a cook keeps grabbing every cook); both are on the Controls screen too.
 
 **WASD camera (optional).** Tick "W A S D moves the camera" in Menu → Controls & hotkeys. The command card then moves to
 Q E R T Y / F G H J K / Z X C V B and the Kitchen HQ key becomes N. The same screen has the camera speed, the edge
