@@ -44,6 +44,7 @@ Capture the Flag
   buy          you bought an item                            [tech]
   sudden       sudden death begins                           [alert]
   level        the wild minions grow stronger                [tech]
+  levelup      your hero levels up                           [age]
 
 Selecting units                                              [select]
   sel_cook   Prep Cook            sel_inf      infantry

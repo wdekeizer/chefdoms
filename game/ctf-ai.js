@@ -106,10 +106,9 @@ export class CtfBot {
     const myPower = this.power(hero) * L.brave + c.allies.filter((a) => a[0] <= 8).reduce((s, a) => s + this.power(a[1]) * 0.7, 0);
     const theirPower = near.reduce((s, f) => s + this.power(f[1]), 0);
 
-    // 1. carrying a flag: home, unless our own flag is away (then hold at the base)
+    // 1. carrying a flag: straight to our own stand (it scores even while our own flag is away)
     if (c.held) {
       if (c.hpFrac < 0.35 && near.length && P.res.food >= CTF.energy.cost && g.tick >= P.energyReady) this.order({ c: 'eat' });
-      if (c.myFlag.state !== 0 && c.atHome) { if (near.length) this.attack(hero, near[0][1]); else this.moveTo(hero, c.myFlag.hx, c.myFlag.hy, 'home'); return; }
       this.moveTo(hero, c.myFlag.hx, c.myFlag.hy, 'home');
       return;
     }

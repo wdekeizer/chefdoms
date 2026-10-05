@@ -85,7 +85,7 @@ export function generateTacticsMap(size, nPlayers, seed) {
     return false;
   };
   for (const s of starts) {
-    for (const [type, dMin, dMax] of [['veg', 2, 3], ['wood', 2, 3], ['spice', 3, 4], ['wood', 3, 4], ['veg', 3, 5], ['salt', 4, 6], ['spice', 5, 7], ['wood', 5, 7]]) place(type, s, dMin, dMax);
+    for (const [type, dMin, dMax] of [['veg', 2, 3], ['wood', 2, 3], ['wood', 2, 3], ['spice', 3, 4], ['wood', 3, 4], ['wood', 3, 5], ['veg', 3, 5], ['salt', 4, 6], ['wood', 4, 6], ['spice', 5, 7], ['wood', 5, 7], ['wood', 5, 7]]) place(type, s, dMin, dMax);
     // a pond with a Fishing Spot a short walk from home
     for (let tries = 0; tries < 60; tries++) {
       const a = rng() * Math.PI * 2, d = 4 + rng() * 2;
@@ -98,8 +98,8 @@ export function generateTacticsMap(size, nPlayers, seed) {
     }
   }
   // contested spots between the bases, salt and spice first
-  const kinds = ['wood', 'spice', 'salt', 'wood', 'veg', 'salt', 'spice', 'wood'], neutral = [];
-  for (let k = 0, tries = 0, want = Math.round(nPlayers * 2.5 + N / 160); k < want && tries < 3000; tries++) {
+  const kinds = ['wood', 'spice', 'wood', 'salt', 'wood', 'veg', 'wood', 'salt', 'wood', 'spice'], neutral = [];
+  for (let k = 0, tries = 0, want = Math.round(nPlayers * 3.5 + N / 120); k < want && tries < 3000; tries++) {
     const x = 1 + ((rng() * (w - 2)) | 0), y = 1 + ((rng() * (h - 2)) | 0), i = y * w + x;
     if (fromStart(x, y) < 7 || taken[i] || tiles[i] === TILE.WATER || crowded(x, y) || landNear(x, y) < 3) continue;
     if (neutral.some((n) => cheb(n[0], n[1], x, y) < 3)) continue;

@@ -138,8 +138,8 @@ function onMessage(m) {
       if (!m.resync && G.tb && m.you >= 0) UI.note(`Turn-based match: move each unit once, then act. ${labelOf('endTurn')} ends your turn.`);
       G.follow = !!(G.ctf && m.you >= 0 && !m.resync); autoSelect = !!(G.ctf && m.you >= 0);
       if (!m.resync && G.ctf && m.you >= 0) {
-        UI.note(`Capture the Flag: steal the enemy flag and carry it home. First to ${G.ctf.capsToWin}, or the most when ${Math.round(G.ctf.timeLimit / 60)} minutes are up.`);
-        UI.note(`Fell wild minions for Tips and spend them at your kitchen. The camera follows your hero; ${labelOf('follow')} frees it.`);
+        UI.note(`Capture the Flag: carry the enemy flag to your own flag stand to score. First to ${G.ctf.capsToWin}, or the most when ${Math.round(G.ctf.timeLimit / 60)} minutes are up.`);
+        UI.note(`Right-click to move or attack · ${labelOf('ability')} ability · ${labelOf('ultimate')} ultimate. Your hero levels up as the match goes on; minions pay Tips and XP. ${labelOf('follow')} frees the camera.`);
       }
       break;
     }
@@ -336,7 +336,7 @@ G.hooks.event = (ev) => {
       G.fx.push({ kind: 'ring', x, y, t0: now, dur: 800, color: col, k: 0.8 });
       if (kind === 'take') {
         if (ours) { UI.note(`${who ? who.name : 'Someone'} has taken your flag! Hunt the carrier down.`, 'bad'); sfx('flag_lost'); G.lastAlert = { x, y }; G.lastAlertAt = now; G.pings.push({ x, y, t0: now }); }
-        else if (me) { UI.note('You have the flag! Run it home.', 'good'); sfx('flag_take'); }
+        else if (me) { UI.note('You have the flag! Run it to your own flag stand (it lights up).', 'good'); sfx('flag_take'); }
         else if (ally) { UI.note(`${who.name} has ${flagOwner(team)} flag: cover the run!`, 'good'); sfx('flag_take', 0.6); }
         else if (who) UI.note(`${who.name} took ${flagOwner(team)} flag`);
       } else if (kind === 'drop') {
@@ -389,6 +389,12 @@ G.hooks.event = (ev) => {
       if (!def || !who) break;
       if (mine) { UI.note(`You have the ${def.buffName}: ${def.buffDesc}`, 'good'); sfx('buy'); }
       else UI.note(`${who.name} took the ${def.buffName}`, isAlly(ev[1]) ? 'good' : 'warn');
+      break;
+    }
+    case 'lvl': {                        // ['lvl', player, level]: a hero levelled up
+      const p = G.ps[ev[1]], e = p && p.heroId ? G.ents.get(p.heroId) : null;
+      if (e && (mine || onScreen(e.rx, e.ry))) G.fx.push({ kind: 'num', x: e.rx, y: e.ry - 1.7, t0: now, dur: 1700, text: 'Level ' + ev[2] + '!', color: '#9fd3ff' });
+      if (mine) { UI.note(`Level ${ev[2]}! Your hero is tougher and hits harder.`, 'good'); sfx('levelup'); }
       break;
     }
     case 'minions':                      // ['minions', level]
@@ -518,7 +524,10 @@ function boot() {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     if (G.phase !== 'game') return;
-    if (autoSelect && G.ctf && G.me >= 0 && G.ps[G.me].heroId && G.ents.get(G.ps[G.me].heroId)) { autoSelect = false; if (!G.sel.size) IN.selectHero(false); }   // capture the flag: your hero starts selected
+    if (G.ctf && G.me >= 0) {                                   // capture the flag: your hero is all you command, so it always stays selected
+      const id = G.ps[G.me].heroId;
+      if (id && G.ents.get(id) && !(G.sel.size === 1 && G.sel.has(id))) { autoSelect = false; IN.selectHero(false); }
+    }
     IN.updateInput(dt);
     frameUpdate(now);
     // what is under the mouse decides the cursor: sword = attack, basket = gather, hammer = build, arrow = deliver

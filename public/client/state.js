@@ -79,7 +79,7 @@ export function beginMatch(m) {
   G.ps = m.players.map((p) => ({
     res: { food: 0, wood: 0, spice: 0, salt: 0 }, pop: 0, cap: 0, age: 1, techs: [], alive: true,
     heroId: 0, heroRespawn: 0, abilityReady: 0, lunchUntil: 0, pending: [], kills: 0, lost: 0, razed: 0, bell: false,
-    ultReady: 0, lockUntil: 0, income: [0, 0, 0, 0], items: {}, caps: 0, deaths: 0, energyReady: 0, minions: 0, heroKills: 0,
+    ultReady: 0, lockUntil: 0, income: [0, 0, 0, 0], items: {}, caps: 0, deaths: 0, energyReady: 0, minions: 0, heroKills: 0, level: 1, xp: 0,
     stats: computeStats(p.commander, 1, []), sig: '',
   }));
   G.tick = m.tick || 0; G.snapAt = 0; G.snapDt = 1000 / G.tickRate / (Number(G.opts.speed) || 1);
@@ -182,20 +182,20 @@ function updatePlayer(r) {
   p.res.food = r[1]; p.res.wood = r[2]; p.res.spice = r[3]; p.res.salt = r[4];
   p.pop = r[5]; p.cap = r[6];
   const sig = r[7] + '|' + r[8].join(',');
-  const items = G.ctf && r[21] ? r[21].join('') : '';
+  const items = G.ctf && r[21] ? r[21].join('') + ':' + (r[27] || 1) : '';
   if (sig + items !== p.sig) {
     p.sig = sig + items; p.age = r[7]; p.techs = r[8]; p.stats = computeStats(G.players[r[0]].commander, p.age, p.techs);
     if (G.tb) tbAdjust(p.stats, G.players[r[0]].commander);                // the grid's own tweaks, as on the server
-    if (G.ctf && r[21]) {                                      // capture the flag: the hero wears what it bought
-      const C = COMMANDERS[G.players[r[0]].commander], keys = Object.keys(CTF.items);
+    if (G.ctf && r[21]) {                                      // capture the flag: the hero wears what it bought, at its level
+      const cmdKey = G.players[r[0]].commander, C = COMMANDERS[cmdKey], keys = Object.keys(CTF.items);
       p.items = {}; keys.forEach((k, i) => { p.items[k] = r[21][i] | 0; });
-      if (C) p.stats.units[C.hero] = ctfHeroStats(p.stats.units[C.hero], p.items);
+      if (C) p.stats.units[C.hero] = ctfHeroStats(p.stats.units[C.hero], p.items, cmdKey, r[27] || 1);
     }
   }
   p.alive = !!r[9]; p.heroId = r[10]; p.heroRespawn = r[11]; p.abilityReady = r[12]; p.lunchUntil = r[13];
   p.pending = r[14]; p.kills = r[15]; p.lost = r[16]; p.razed = r[17]; p.bell = !!r[18];
   p.ultReady = r[19] || 0; p.lockUntil = r[20] || 0;
-  if (G.ctf) { p.caps = r[22] || 0; p.deaths = r[23] || 0; p.energyReady = r[24] || 0; p.minions = r[25] || 0; p.heroKills = r[26] || 0; }
+  if (G.ctf) { p.caps = r[22] || 0; p.deaths = r[23] || 0; p.energyReady = r[24] || 0; p.minions = r[25] || 0; p.heroKills = r[26] || 0; p.level = r[27] || 1; p.xp = r[28] || 0; }
   else if (r[21]) p.income = r[21];
 }
 

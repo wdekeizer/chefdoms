@@ -339,8 +339,14 @@ export function render(now) {
       if (bc && k.alive) { ctx.fillStyle = bc; ctx.globalAlpha = 0.12 + 0.05 * Math.sin(now / 400); ctx.fill(); ctx.globalAlpha = 1; }   // a buff camp glows
       ctx.setLineDash([s * 0.18, s * 0.22]); ctx.lineWidth = Math.max(1, s / (bc ? 16 : 26)); ctx.strokeStyle = k.alive ? (boss ? 'rgba(255,120,90,0.7)' : bc || 'rgba(255,240,200,0.5)') : 'rgba(255,255,255,0.3)'; ctx.stroke(); ctx.setLineDash([]);
     }
+    const myId = G.me >= 0 ? G.ps[G.me].heroId : 0, holding = myId && ctf.flags.some((f) => f.state === 1 && f.carrier === myId);
     for (const f of ctf.flags) {                               // the stand
       ctx.beginPath(); ctx.ellipse(ox + f.hx * s, oy + f.hy * s, s * 0.7, s * 0.4, 0, 0, Math.PI * 2); ctx.fillStyle = '#d8c8a8'; ctx.fill(); ctx.lineWidth = Math.max(1, s / 20); ctx.strokeStyle = teamColor(f.team); ctx.stroke();
+      if (holding && f.team === G.players[G.me].team) {          // carrying a flag: our stand lights up, it scores there
+        ctx.beginPath(); ctx.arc(ox + f.hx * s, oy + f.hy * s, CTF.flag.capture * s, 0, Math.PI * 2);
+        ctx.globalAlpha = 0.18 + 0.1 * Math.sin(now / 180); ctx.fillStyle = '#ffe36b'; ctx.fill(); ctx.globalAlpha = 0.9;
+        ctx.setLineDash([s * 0.25, s * 0.18]); ctx.lineWidth = Math.max(2, s / 12); ctx.strokeStyle = '#ffe36b'; ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+      }
     }
   }
 
@@ -419,7 +425,7 @@ export function render(now) {
   }
   if (ctf) for (const f of ctf.flags) { if (f.state === 1) continue; const vis = G.fogExp[(f.y | 0) * G.w + (f.x | 0)]; if (vis && f.x > x0 - 2 && f.x < x1 + 2 && f.y > y0 - 2 && f.y < y1 + 3) put(Math.floor(f.y), { flag: f, y: f.y, id: -f.team }); }
 
-  const bars = [], badges = [], stationBadges = [];
+  const bars = [], badges = [], stationBadges = [], levels = [];
   const tiles = G.tiles, exp = G.fogExp, w = G.w;
   for (let row = y0 - 1; row <= y1 + 1; row++) {
     // trees and stumps of this row
@@ -482,6 +488,7 @@ export function render(now) {
         }
         const mh = maxHp(e);
         if (sel.has(e.id) || e.hp < mh || hero) bars.push(sx, sy - (hero ? 1.45 : e.r > 0.45 ? 1.0 : 1.02) * s, (hero ? 1.0 : 0.62) * s, e.hp / mh, s / (hero ? 9 : 12));
+        if (ctf && hero && G.ps[e.owner]) levels.push(sx - 0.5 * s, sy - 1.45 * s + s / 18, G.ps[e.owner].level || 1);       // the hero's level, at the left end of its bar
         if (e.sn && e.owner === G.me && !tac) {        // stance marker: a small shield (hold the line) or a white flag (stand down)
           const px = sx + e.r * s * 1.05, py = sy - s * 0.12, k = Math.max(4, s * 0.13);
           ctx.beginPath();
@@ -553,6 +560,14 @@ export function render(now) {
 
   // ---- health bars on top of everything
   for (let i = 0; i < bars.length; i += 5) hpBar(bars[i], bars[i + 1], bars[i + 2], bars[i + 3], bars[i + 4]);
+  for (let i = 0; i < levels.length; i += 3) {                 // capture the flag: hero levels
+    const r = Math.max(7 * dpr, s * 0.2), x = levels[i] - r * 0.6, y = levels[i + 1];
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = '#2f5fb8'; ctx.fill();
+    ctx.lineWidth = Math.max(1.5, r / 4.5); ctx.strokeStyle = '#ffd96b'; ctx.stroke();
+    ctx.font = `800 ${Math.round(r * 1.25)}px "Trebuchet MS", "Segoe UI", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#ffffff';
+    ctx.fillText(String(levels[i + 2]), x, y + r * 0.06);
+  }
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   for (const e of badges) {                                    // "12 inside" on a sheltering Kitchen HQ
     const fs = Math.max(11 * dpr, s * 0.36), text = '\u{1F514} ' + e.inside;
     ctx.font = `800 ${Math.round(fs)}px "Trebuchet MS", "Segoe UI", sans-serif`;

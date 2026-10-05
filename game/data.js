@@ -7,7 +7,7 @@
 //  (Restart the server afterwards; everyone must reload the page.)
 // ============================================================================
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 export const TICK_RATE = 20;            // simulation ticks per second
 export const DT = 1 / TICK_RATE;
 export const MAX_PLAYERS = 10;
@@ -724,8 +724,8 @@ export const TB = {
   auraRange: 2,            // hero auras reach this many tiles (diagonals count)
   abilityRange: 3,
   cutsRange: 2,
-  hqIncome: { food: 25, wood: 25, spice: 15, salt: 0 },
-  income: { veg: 20, wood: 25, spice: 20, salt: 10, fish: 20, garden: 8 },   // per station per turn
+  hqIncome: { food: 25, wood: 40, spice: 15, salt: 0 },
+  income: { veg: 20, wood: 35, spice: 20, salt: 10, fish: 20, garden: 8 },   // per station per turn
   incomeMul: 1.25,         // everything above, times this
   sugarMul: 1.2,           // Odile's Sugar Rush: stations pay this much more the next turn
   rangedMul: 1.5,          // ranged units (not siege) hit this much harder than the raw numbers say...
@@ -852,6 +852,11 @@ export const CTF = {
   mapSize: (teams) => (teams <= 2 ? 72 : Math.min(124, 60 + 8 * teams)),
   heroAge: 2,              // heroes start with the stats they would have in the Diner Age
   heroAtkMul: 1.5,         // ...and hit harder than in the long game, so duels are decided in seconds, not minutes
+  // on top of that, every hero but Big Hank (who wins by outlasting) hits harder still in the arena
+  heroDps: { flint: 1.35, nonna: 1.1, ryo: 1.1, odile: 2.0, zara: 1.55, dolly: 1.05, kofi: 1.05, ingrid: 2.0, rafa: 1.3 },
+  // heroes level up as the match goes on: XP every second, more for minions, takedowns and captures
+  level: { max: 15, xpPerSec: 2, base: 90, step: 40, hp: 0.06, atk: 0.05, armorEvery: 4,
+    bountyXp: 1, killXp: 60, killXpPerLevel: 10, capXp: 100, bountyPerLevel: 6 },
   startTips: 120,
   passiveTips: 1,          // Tips per second for everyone, so nobody is ever stuck
   heroBounty: 90,          // Tips for felling a hero...
@@ -892,9 +897,12 @@ export const CTF = {
 };
 /** The ability / ultimate a commander uses in Capture the Flag (a few swap for ones that make sense without a kitchen). */
 export const ctfKit = (C) => ({ ability: C.ctfAbility || C.ability, ultimate: C.ctfUltimate || C.ultimate });
-/** The hero's stats with items applied (fresh object). */
-export function ctfHeroStats(base, items) {
-  const S = { ...base, bonus: { ...base.bonus }, regen: 0, atk: base.atk * CTF.heroAtkMul };
+/** XP it takes to go from level `lv` to the next. */
+export const ctfLevelNeed = (lv) => CTF.level.base + CTF.level.step * (lv - 1);
+/** The hero's stats at a level, with items applied (fresh object). `cmd` is the hero's commander key. */
+export function ctfHeroStats(base, items, cmd, level = 1) {
+  const L = CTF.level, lv = Math.max(1, Math.min(L.max, level | 0)), up = lv - 1, plate = Math.floor(lv / L.armorEvery);
+  const S = { ...base, bonus: { ...base.bonus }, regen: 0, hp: base.hp * (1 + L.hp * up), atk: base.atk * CTF.heroAtkMul * (CTF.heroDps[cmd] || 1) * (1 + L.atk * up), armor: base.armor + plate, parmor: base.parmor + plate };
   for (const key in CTF.items) {
     const it = CTF.items[key], lv = items[key] | 0;
     if (!lv) continue;

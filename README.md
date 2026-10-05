@@ -3,7 +3,7 @@
 A cooking-themed real-time strategy game in the spirit of Age of Empires, for 1 to 10 players (any mix of humans and bots).
 You host it from your own computer; everyone plays in a web browser. Nothing to install for your friends.
 It can also be played turn-based, on a grid, one kitchen at a time (see [Turn-based mode](#turn-based-mode)), or as a
-fast hero brawl: [Capture the Flag](#capture-the-flag), one hero each, wild minions to farm and items to buy, 15 minutes a match.
+fast hero brawl: [Capture the Flag](#capture-the-flag), one hero each, wild minions to farm, items to buy and levels to gain.
 
 Gather Produce, Firewood, Spice and Salt. Build stations. Advance from the Food Cart Age to the Five-Star Age.
 Lead your brigade with one of six commanders, each a hero on the battlefield with their own buffs, aura,
@@ -248,7 +248,8 @@ games: the same commanders, units, stations, upgrades and ages, on a small grid,
   Spice Mound, Salt Rock or Fishing Spot: right-click it with a Prep Cook) and it pays that ingredient at the start of
   each of your turns. The Kitchen HQ pays a basic income and Garden Plots a little Produce. Gathering upgrades and
   commander bonuses raise what stations pay. What your next turn brings is shown in green next to each ingredient.
-  Every base has three Timber Stands nearby and more lie between the bases. A **Farmers Market** trades ingredients
+  Firewood is plentiful: every base has about six Timber Stands nearby, about half the spots between the bases
+  are Timber Stands too, and the Kitchen HQ pays extra Firewood. A **Farmers Market** trades ingredients
   during your turn (prices drift back every round).
 - **Stations** take one tile and one job at a time. A unit takes a turn to train and walks out at the start of your
   next turn; upgrades and ages take one to three turns. Select a station and right-click a tile to choose the side
@@ -270,21 +271,26 @@ games: the same commanders, units, stations, upgrades and ages, on a small grid,
 
 Click **Capture the Flag** at the top of the lobby for a fast hero brawl in the style of a MOBA: no
 kitchen to run, one hero each, 5v5, 2v2, a ten-way free-for-all or anything in between, and a match that is over in
-about 15 minutes.
+10 to 20 minutes.
 
 - **The arena.** Teams start in kitchens spread round a ring (72 tiles across for two teams, bigger with more).
   Your team's flag stands in front of your kitchen; the kitchen itself cannot be destroyed, heals heroes quickly
   around it, and is where you shop. Wild minion camps sit between the kitchens, with **The Head Critic** in the middle,
   and a few copses and ponds to duck behind (it is mostly open ground).
-- **Scoring.** Walk over an enemy flag to pick it up, carry it to your own flag stand to score (your own flag has to be
-  home, so defending counts). The carrier is slower, and every 10 seconds shows up on everyone's minimap (otherwise
+- **Scoring.** Walk over an enemy flag to pick it up, carry it to your own flag stand to score (it counts even while
+  your own flag is away; your stand lights up while you carry one). The carrier is slower, and every 10 seconds shows up on everyone's minimap (otherwise
   you only see a carrier your team can see, and so do the bots). If the carrier falls the flag drops where
   they stood: a team-mate of its owner touches it to send it home, an enemy picks it straight up, and after 25 seconds
   it goes home by itself. First to 3, 5 or 7 captures wins (lobby option); when the clock (10, 15 or 20 minutes)
   runs out the most captures wins, a level score goes to **sudden death** (next capture wins), and after five more
   minutes hero kills, then fewest deaths, settle it.
 - **Tips** are the only currency. Every second pays one, felling wild minions pays their bounty, taking down an enemy
-  hero pays 90 (more if they are well equipped), a capture pays 50. Zara's Tip Jar pays Tips.
+  hero pays 90 (more if they are well equipped or a high level), a capture pays 50. Zara's Tip Jar pays Tips.
+- **Levels.** Every hero starts at level 1 and levels up as the match goes on, up to 15: XP comes in every second
+  (2 a second, so everyone climbs), plus XP for minions (as much as their bounty), takedowns (60, more for a
+  high-level victim) and captures (100). Each level gives +6% health and +5% attack, plus 1 armour every 4 levels,
+  and tops up your health by what it adds. Levels show in a badge next to every hero's health bar, on your hero
+  button (with an XP bar; hover it for the numbers) and in the player list. Expect level 10 or so by 15 minutes.
 - **Items** (the second and third row of the command card; shop within a few tiles of your kitchen, or while you wait
   to respawn): Cast-Iron Skillet (attack), Chef's Whites (armour), Hearty Stew (health), Running Clogs (speed),
   Double Espresso (attack speed) and Herb Garden (regeneration), two or three tiers each, dearer every tier.
@@ -299,7 +305,9 @@ about 15 minutes.
   **The Sugar Shack** gives Sugar High (15% faster, 1% health back every second). Worth splitting up for.
 - **Heroes.** All ten commanders fight here with their abilities on a short cooldown (about 15 to 20 seconds) and their
   ultimates (unlocked at 3:00, about 75 to 80 seconds). The slows and freezes keep longer ones: Brain Freeze 32s,
-  Deep Freeze 125s, Sugar Glass 130s, Sauce Flood 110s. Heroes hit 50% harder than in the classic game, and a fallen
+  Deep Freeze 125s, Sugar Glass 130s, Sauce Flood 110s. Heroes hit 50% harder than in the classic game, and on top of
+  that everyone but Big Hank (who wins by outlasting) hits harder still: Ingrid and Odile x2, Zara x1.55, Flint x1.35,
+  Rafa x1.3, Nonna and Ryo x1.1, Dolly and Kofi x1.05. A fallen
   hero returns at the kitchen after 6 seconds early on, growing to 22 late in the match. Hank's and Zara's kits are
   swapped for ones that work without stations (Thick Bark and Rush Hour), and four heroes are only playable here:
 
@@ -310,10 +318,12 @@ about 15 minutes.
 | Ingrid Halvorsen, "The Ice Queen" | Ranged control | Enemies near her move 10% slower | Brain Freeze: enemies within 6 tiles move 50% and attack 40% slower for 5s | Deep Freeze: enemies within 7 tiles are frozen for 3s (heroes 2s) and chilled after |
 | Rafael "Rafa" Santos, "The Saucier General" | Ranged sniper | Friendly heroes near him deal 12% more damage | Hot Shot: a scalding ladle at the most wounded enemy hero within 12 tiles, ignores armour | Sauce Flood: a 13-tile wave of sauce towards the nearest enemy; heavy damage and a chill to everything in its path |
 
-- **The screen.** Your hero starts selected and the camera is locked on it (`Y` frees it, or click the minimap).
-  The score bar under the top bar shows the captures, the target and the clock; the player list shows captures and
-  hero kills / deaths for everyone; a dropped flag shows how long until it goes home. The end-of-match table counts
-  captures, hero kills, deaths, minions, Tips earned and items.
+- **The screen.** There is no info panel here, to keep the arena clear: your hero is always selected (left-clicks
+  never deselect it; right-click moves and attacks) and the camera is locked on it (`Y` frees it, or click the
+  minimap). The score bar under the top bar shows the captures, the target, the clock and, while you are down, when
+  you are back; the player list shows levels, captures and hero kills / deaths for everyone; a dropped flag shows how
+  long until it goes home. The end-of-match table counts levels, captures, hero kills, deaths, minions, Tips earned
+  and items.
 - **Bots** play it at all four levels: they farm camps that suit their strength (buff camps included), shop, run flags
   one at a time per team, defend, and retreat to eat an Energy Bar when hurt. They play by the fog of war: an enemy they
   cannot see does not exist for them, and a flag carrier out of sight is only tracked through the minimap reveals

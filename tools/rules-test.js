@@ -858,7 +858,9 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     const g = mkT(['odile', 'hank']);
     const P = g.players[0];
     const woods = g.nodes.filter((n) => n.type === 'wood').length;
-    ok(woods >= 3 * g.players.length, 'tactics: Timber Stands are no longer scarce', `${woods} on the map`);
+    ok(woods >= 8 * g.players.length, 'tactics: Timber Stands are plentiful (about six by every base and more between)', `${woods} on the map`);
+    ok(g.players.every((Q) => g.nodes.filter((n) => n.type === 'wood' && Math.max(Math.abs(n.tx - Math.floor(Q.home.x)), Math.abs(n.ty - Math.floor(Q.home.y))) <= 7).length >= 5), 'tactics: at least five Timber Stands within reach of each base');
+    ok(TB.income.wood === 35 && TB.hqIncome.wood === 40, 'tactics: Timber Stands and the Kitchen HQ pay more Firewood');
     const plain = g.incomeOf(P);
     P.sugarNext = true; const sweet = g.incomeOf(P); P.sugarNext = false;
     ok(Math.abs(sweet.food / plain.food - TB.sugarMul) < 0.05 && TB.sugarMul === 1.2, 'tactics: Sugar Rush makes stations pay 20% more, not 40%', `${plain.food} -> ${sweet.food}`);
@@ -1085,14 +1087,16 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     const fx = fB.x; run(g, 0.5);
     place(g, hA, fA.hx + 0.5, fA.hy); g.step(); g.step();
     ok(fB.state === 0 && fB.x === fB.hx && g.caps[1] === 1 && A.caps === 1 && A.res.food > CTF.startTips, 'ctf: bringing it to your own stand scores and pays Tips', `caps ${JSON.stringify(g.caps)} tips ${A.res.food}`);
-    // our own flag away: no capture until it is back
+    // our own flag away: the capture still counts (v1.3.0)
     const hB = hero(g, 1);
     place(g, hB, fA.hx, fA.hy); place(g, hA, 40, 40); g.step();
     ok(fA.state === 1 && fA.carrier === hB.id, 'ctf: the other side can take our flag too');
     place(g, hA, fB.hx, fB.hy); g.step();
     ok(fB.state === 1 && fB.carrier === hA.id, 'ctf: both flags can be out at once');
-    place(g, hA, fA.hx, fA.hy); place(g, hB, 50, 50); g.step(); g.step();
-    ok(fB.state === 1 && g.caps[1] === 1, 'ctf: no capture while your own flag is away');
+    place(g, hB, 50, 50); g.step();
+    place(g, hA, fA.hx, fA.hy); g.step(); g.step();
+    ok(fB.state === 0 && g.caps[1] === 2 && fA.state === 1 && fA.carrier === hB.id, 'ctf: reaching your own stand scores even while your own flag is away', JSON.stringify(g.caps));
+    place(g, hA, 40, 40); g.step();
     // the carrier falls: the flag drops where they stood, a team-mate (or the owner) touching it returns it
     const tipsBefore = A.res.food;
     g.killEntity(hB, 0); g.step();
@@ -1100,8 +1104,6 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     ok(A.res.food >= tipsBefore + CTF.heroBounty - 2, 'ctf: a hero kill pays a bounty', `${tipsBefore} → ${A.res.food}`);
     place(g, hA, 50, 50); g.step();
     ok(fA.state === 0 && fA.x === fA.hx, 'ctf: touching your own dropped flag returns it');
-    place(g, hA, fA.hx, fA.hy); g.step(); g.step();
-    ok(fB.state === 0 && g.caps[1] === 2, 'ctf: and the capture goes through as soon as it is home', JSON.stringify(g.caps));
     // timer return
     const g2 = mkc([['dolly', 1], ['ingrid', 2]]);
     const h2 = hero(g2, 0), f2 = g2.flagOf(2);
@@ -1121,7 +1123,7 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     const g = mkc([['kofi', 1], ['ryo', 2]]);
     const A = g.players[0], h = hero(g, 0), base = g.baseOf.get(1);
     const atk0 = h.S.atk, hp0 = h.S.hp;
-    ok(Math.abs(atk0 - Math.round(computeStats('kofi', CTF.heroAge, []).units.hero_kofi.atk * CTF.heroAtkMul * 10) / 10) < 0.11, 'ctf: heroes hit harder in the arena', String(atk0));
+    ok(Math.abs(atk0 - Math.round(computeStats('kofi', CTF.heroAge, []).units.hero_kofi.atk * CTF.heroAtkMul * (CTF.heroDps.kofi || 1) * 10) / 10) < 0.11, 'ctf: heroes hit harder in the arena', String(atk0));
     g.command(0, { c: 'buy', item: 'herbs' });
     ok(A.items.herbs === 1 && A.res.food === CTF.startTips - 110 && h.S.regen === 3, 'ctf: buying Herb Garden I at the kitchen takes 110 Tips and adds regen');
     g.command(0, { c: 'buy', item: 'skillet' });
@@ -1335,6 +1337,84 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     let sane = g.units.filter((u) => u.owner === g.neutral.idx).length > 0 && !g.players[g.neutral.idx].items.skillet;
     for (const P of g.players) { for (const r in P.res) if (!Number.isFinite(P.res[r]) || P.res[r] < 0) sane = false; for (const k of ITEM_KEYS) if (!Number.isInteger(P.items[k]) || P.items[k] < 0 || P.items[k] > 3) sane = false; }
     ok(sane, 'ctf: and leave Tips, items and the wild kitchen intact');
+  }
+}
+
+// ------------------------------------------- v1.3.0: hero levels, arena balance
+{
+  const { CtfGame } = await import('../game/ctf.js');
+  const { CtfBot } = await import('../game/ctf-ai.js');
+  const { CTF, HERO_KEYS, COMMANDERS, ctfHeroStats, ctfLevelNeed } = await import('../game/data.js');
+  const mkc = (specs, seed = 11) => new CtfGame({ players: specs.map(([c, team], i) => ({ name: 'P' + i, commander: c, team, color: i, bot: null })), seed, ctfCaps: 5, ctfTime: 20 });
+  const put = (u, x, y) => { u.x = x; u.y = y; u.order = null; u.path = null; u.st = ST.IDLE; };
+  const totalXp = (P) => { let n = P.xp; for (let l = 1; l < P.level; l++) n += ctfLevelNeed(l); return n; };
+
+  // ---- balance: everyone but Big Hank hits harder in the arena, ranged heroes most of all
+  {
+    const others = HERO_KEYS.filter((k) => k !== 'hank');
+    ok(!CTF.heroDps.hank && others.every((k) => CTF.heroDps[k] > 1), 'ctf balance: every hero but Big Hank gets an attack boost in the arena', others.map((k) => k + ' ' + CTF.heroDps[k]).join(', '));
+    const ranged = others.filter((k) => COMMANDERS[k] && computeStats(k, CTF.heroAge, []).units[COMMANDERS[k].hero].range > 0);
+    const melee = others.filter((k) => !ranged.includes(k));
+    ok(Math.min(...ranged.map((k) => CTF.heroDps[k])) >= 1.3 && Math.min(...ranged.map((k) => CTF.heroDps[k])) > Math.max(...melee.filter((k) => k !== 'flint').map((k) => CTF.heroDps[k])), 'ctf balance: ranged heroes get the biggest boosts', ranged.join(','));
+    const base = computeStats('ingrid', CTF.heroAge, []).units.hero_ingrid, hb = computeStats('hank', CTF.heroAge, []).units.hero_hank;
+    ok(Math.abs(ctfHeroStats(base, {}, 'ingrid').atk - base.atk * CTF.heroAtkMul * CTF.heroDps.ingrid) < 0.1 && Math.abs(ctfHeroStats(hb, {}, 'hank').atk - hb.atk * CTF.heroAtkMul) < 0.1, 'ctf balance: the boost lands on the hero\'s attack (Hank unchanged)');
+  }
+
+  // ---- levels: XP every second, so everyone levels over time; each level raises the stats
+  {
+    const g = mkc([['ingrid', 1], ['hank', 2]]);
+    const [A, B] = g.players, hA = g.heroOf(A);
+    g.step();
+    ok(A.level === 1 && B.level === 1 && A.xp >= 0, 'ctf levels: heroes start at level 1');
+    const hp1 = hA.S.hp, atk1 = hA.S.atk, ev = [];
+    for (let i = 0; i < (Math.ceil(ctfLevelNeed(1) / CTF.level.xpPerSec) + 1) * TICK_RATE; i++) { g.step(); for (const e of g.events) if (e[0] === 'lvl') ev.push(e); }
+    ok(A.level === 2 && B.level === 2, 'ctf levels: XP trickles in every second, so everyone levels up as the match goes on', `A lv ${A.level} (${A.xp} xp)`);
+    ok(ev.some((e) => e[1] === A.idx && e[2] === 2), 'ctf levels: a level-up is announced');
+    ok(hA.S.hp > hp1 && hA.S.atk > atk1 && hA.hp === hA.S.hp, 'ctf levels: a level raises health and attack (and tops up the gain)', `hp ${hp1}→${hA.S.hp} atk ${atk1}→${hA.S.atk}`);
+    const base = computeStats('ingrid', CTF.heroAge, []).units.hero_ingrid;
+    const S1 = ctfHeroStats(base, {}, 'ingrid', 1), S10 = ctfHeroStats(base, {}, 'ingrid', 10), S99 = ctfHeroStats(base, {}, 'ingrid', 99);
+    ok(Math.abs(S10.hp / S1.hp - (1 + 9 * CTF.level.hp)) < 0.02 && Math.abs(S10.atk / S1.atk - (1 + 9 * CTF.level.atk)) < 0.02 && S10.armor === S1.armor + Math.floor(10 / CTF.level.armorEvery), 'ctf levels: level 10 means +54% health, +45% attack and more armour', `${S1.hp}/${S1.atk} → ${S10.hp}/${S10.atk}`);
+    ok(S99.hp === ctfHeroStats(base, {}, 'ingrid', CTF.level.max).hp, `ctf levels: they stop at level ${CTF.level.max}`);
+    // a wounded hero keeps its wounds but gains the new health
+    hA.hp = 100; const before = hA.S.hp; g.setLevel(A, 4);
+    ok(A.level === 4 && Math.abs(hA.hp - (100 + hA.S.hp - before)) < 1, 'ctf levels: levelling up while hurt adds the new health on top');
+    // minions, takedowns and captures pay XP on top
+    const minion = g.units.find((u) => u.camp && !u.dead && !u.camp.def.boss);
+    const x0 = totalXp(A); g.killEntity(minion, A.idx); g.step();
+    ok(totalXp(A) - x0 >= Math.round(minion.bounty * CTF.level.bountyXp), 'ctf levels: felling a minion pays XP', `${totalXp(A) - x0} xp`);
+    const x1 = totalXp(A); g.killEntity(g.heroOf(B), A.idx); g.step();
+    ok(totalXp(A) - x1 >= CTF.level.killXp + CTF.level.killXpPerLevel * B.level, 'ctf levels: a takedown pays more XP the higher the victim', `${totalXp(A) - x1} xp`);
+    const fB = g.flagOf(2), fA = g.flagOf(1);
+    put(hA, fB.hx, fB.hy); g.step(); g.step();
+    const x2 = totalXp(A); put(hA, fA.hx, fA.hy); g.step(); g.step();
+    ok(g.caps[1] === 1 && totalXp(A) - x2 >= CTF.level.capXp, 'ctf levels: a capture pays XP too', `${totalXp(A) - x2} xp`);
+    // the network carries it, and nothing goes past the top level
+    const r = g.playerRec(A);
+    ok(r[27] === A.level && r[28] === A.xp, 'ctf levels: clients are told each hero\'s level and XP');
+    g.gainXp(A, 1e9);
+    ok(A.level === CTF.level.max && A.xp === 0 && Number.isFinite(hA.S.hp), `ctf levels: a flood of XP stops cleanly at level ${CTF.level.max}`);
+    const sum = g.summary().find((s) => s.idx === A.idx);
+    ok(sum && sum.level === CTF.level.max, 'ctf levels: the end-of-match table shows the level reached');
+    run(g, 30);                                                       // B is back on its feet
+    const hB = g.heroOf(B), tips0 = B.res.food;
+    put(hB, 30, 30); put(hA, 31, 30); g.killEntity(hA, B.idx); g.step();
+    ok(hB && B.res.food - tips0 >= CTF.heroBounty + CTF.level.bountyPerLevel * (CTF.level.max - 1), 'ctf levels: a high-level hero is worth a bigger bounty', `${B.res.food - tips0} Tips`);
+  }
+
+  // ---- a bot carrying an enemy flag while its own flag is gone still runs to its stand and scores
+  {
+    const g = new CtfGame({ players: [{ name: 'Human', commander: 'kofi', team: 1, color: 0 }, { name: 'Bot', commander: 'dolly', team: 2, color: 1, bot: 'hard' }], seed: 6, ctfCaps: 3, ctfTime: 15 });
+    run(g, 1);
+    const H = g.players[0], Bt = g.players[1];
+    Bt.ai = new CtfBot(g, Bt, 'hard');
+    const hh = g.heroOf(H), bh = g.heroOf(Bt), fH = g.flagOf(1), fBt = g.flagOf(2);
+    put(hh, fBt.hx, fBt.hy); g.step(); g.step();                         // the human runs off with the bot's flag...
+    put(bh, fH.hx, fH.hy); g.step(); g.step();                           // ...and the bot grabs the human's
+    put(hh, 6, 6);
+    ok(fBt.state === 1 && fH.state === 1 && fH.carrier === bh.id, 'ctf bots: (setup) both flags are out, the bot carries one');
+    let capped = false;
+    for (let i = 0; i < 90 * TICK_RATE && !capped; i++) { hh.x = 6; hh.y = 6; hh.order = null; g.step(); g.delta(); if (g.caps[2] >= 1) capped = true; }
+    ok(capped, 'ctf bots: a carrier heads straight for its stand and scores, even with its own flag gone', JSON.stringify(g.caps));
   }
 }
 

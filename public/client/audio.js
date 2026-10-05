@@ -137,6 +137,7 @@ const SOUNDS = {
   coin: () => { metal(1047, 0.25, 0.07, 0); metal(1319, 0.3, 0.06, 0.05); },                                                                                                                            // tips in the jar
   buy: () => { tone(880, 0.07, { gain: 0.08, type: 'triangle' }); tone(1175, 0.1, { gain: 0.09, type: 'triangle', at: 0.07 }); metal(1760, 0.4, 0.06, 0.14); },                                        // ka-ching
   sudden: () => [0, 0.25, 0.5].forEach((at) => { tone(196, 0.22, { gain: 0.18, type: 'sawtooth', at, attack: 0.01 }); noise(0.12, { gain: 0.1, freq: 300, to: 120, at }); }),                           // the drums of sudden death
+  levelup: () => { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.12, { gain: 0.07, type: 'triangle', at: i * 0.06 })); metal(1568, 0.5, 0.05, 0.24); },   // a hero levels up
   level: () => [294, 370, 440].forEach((f, i) => tone(f, 0.2, { gain: 0.09, type: 'sawtooth', at: i * 0.1 })),                                                                                          // the wild grows restless
   ult_lastcall: () => { [196, 233, 294].forEach((f, i) => tone(f, 0.8, { gain: 0.09, type: 'sawtooth', at: i * 0.08, attack: 0.04 })); metal(1175, 1.0, 0.1, 0.3); metal(1568, 1.0, 0.08, 0.5); },     // a bell for last orders
   ult_storm: () => [0, 0.09, 0.18, 0.27, 0.36, 0.45].forEach((at) => { noise(0.08, { gain: 0.12, freq: 2500, to: 5000, q: 2, at }); tone(rnd(1000, 1400), 0.1, { gain: 0.05, type: 'triangle', at }); }),  // whirling steel
@@ -217,7 +218,7 @@ const FALLBACK = {
   cleaver: 'clang', veh_hit: 'clang', ram_hit: 'clang', smash: 'hit', death_veh: 'death', allclear: 'bell',
   ult: 'ability', ult_flambe: 'ult', ult_feast: 'ult', ult_lockdown: 'ult', ult_perfectcut: 'ult', ult_glass: 'ult', ult_swarm: 'ult',
   ult_lastcall: 'ult', ult_storm: 'ult', ult_bark: 'ult', ult_freeze: 'ult', ult_flood: 'ult',
-  flag_take: 'ability', flag_lost: 'alert', flag_return: 'built', flag_cap: 'age', flag_lostcap: 'herodown', coin: 'click', buy: 'tech', sudden: 'alert', level: 'tech',
+  flag_take: 'ability', flag_lost: 'alert', flag_return: 'built', flag_cap: 'age', flag_lostcap: 'herodown', coin: 'click', buy: 'tech', sudden: 'alert', level: 'tech', levelup: 'age',
   turn: 'built', turn_other: 'click', endturn: 'click', heal: 'click',
   shot_sauce: 'shot', shot_frosting: 'shot', shot_plate: 'shot', shot_pepper: 'shot', shot_meatball: 'shot', shot_macaron: 'shot', shot_flame: 'shot', shot_skewer: 'shot',
 };

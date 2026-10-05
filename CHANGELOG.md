@@ -3,6 +3,27 @@
 Everyone in a match needs the same version: after the host updates, friends run `git pull` in their copy
 (the lobby chat warns when a copy and the server differ).
 
+## v1.3.0
+
+**Capture the Flag**
+- Heroes level up as the match goes on (up to level 15): XP every second, plus XP for minions, takedowns and captures.
+  Each level gives +6% health and +5% attack, and +1 armour every 4 levels. Levels show next to every hero's health
+  bar, on your hero button (with an XP bar), in the player list and in the end-of-match table. A high-level hero is
+  worth a bigger bounty.
+- Captures no longer need your own flag at home: carry an enemy flag to your stand and it counts. Your stand lights up
+  while you carry one, and the bots run straight home too.
+- Big Hank is less dominant: every other hero hits harder in the arena, ranged heroes most (Ingrid and Odile x2,
+  Zara x1.55, Flint x1.35, Rafa x1.3, Nonna and Ryo x1.1, Dolly and Kofi x1.05).
+- No more character info panel in the top left. Your hero stays selected whatever you left-click (or drag, or Escape);
+  the respawn countdown moved to the score bar, and the controls are in the opening notes.
+
+## v1.2.1
+
+**Turn-based**
+- Far more Firewood: about six Timber Stands round every base (was three) and about half the spots between the bases
+  are Timber Stands, roughly twice as many on every map. Each Timber Stand pays 35 a turn before bonuses (was 25) and
+  the Kitchen HQ pays 40 (was 25).
+
 ## v1.2.0
 
 **The Farmers Market** (real-time and turn-based)

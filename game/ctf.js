@@ -4,15 +4,16 @@
 //  One hero per player and no kitchen to run. Every team has a base with an
 //  unbreakable Kitchen HQ and a flag in front of it. Camps of wild minions
 //  pay Tips when felled; Tips buy items at your own kitchen that raise your
-//  hero's stats. Carry an enemy flag home while yours is still there to
-//  capture it. First to the capture target wins, or whoever leads when the
-//  clock runs out (a level score goes to sudden death: the next capture wins).
+//  hero's stats, and heroes level up as the match goes on. Carry an enemy
+//  flag to your own stand to capture it. First to the capture target wins, or
+//  whoever leads when the clock runs out (a level score goes to sudden death:
+//  the next capture wins).
 //
 //  CtfGame extends the real-time Game: movement, combat, buffs, abilities,
 //  ultimates and the network snapshots are all the same code.
 // ============================================================================
 import { Game, K_UNIT, K_BLDG, POS_Q } from './sim.js';
-import { TICK_RATE, TILE, COMMANDERS, CTF, computeStats, ctfKit, ctfHeroStats, ctfItemCost, makeRng } from './data.js';
+import { TICK_RATE, TILE, COMMANDERS, CTF, computeStats, ctfKit, ctfHeroStats, ctfItemCost, ctfLevelNeed, makeRng } from './data.js';
 
 const DX = [1, -1, 0, 0], DY = [0, 0, 1, -1];
 const FLAG_HOME = 0, FLAG_CARRIED = 1, FLAG_DROPPED = 2;
@@ -151,6 +152,7 @@ export class CtfGame extends Game {
     P.res = { food: P.neutral ? 0 : CTF.startTips, wood: 0, spice: 0, salt: 0 };    // food = Tips
     P.items = {}; for (const k of ITEM_KEYS) P.items[k] = 0;
     P.caps = 0; P.deaths = 0; P.minions = 0; P.energyReady = 0; P.earned = 0;
+    P.level = 1; P.xp = 0;
     P.popCap = 1; P.maxPop = 1;
     return P;
   }
@@ -167,16 +169,28 @@ export class CtfGame extends Game {
     this.spawnUnit(P.idx, COMMANDERS[P.commander].hero, pt[0], pt[1]);
   }
 
-  /** The hero's stats with the items bought so far (also fixes up a living hero). */
+  /** The hero's stats at its level with the items bought so far (also fixes up a living hero). */
   refreshHero(P) {
     const type = COMMANDERS[P.commander].hero;
     const base = computeStats(P.commander, P.age, []).units[type];
-    const S = ctfHeroStats(base, P.items);
+    const S = ctfHeroStats(base, P.items, P.commander, P.level);
     const hero = P.heroId ? this.ents.get(P.heroId) : null;
     if (hero && !hero.dead) { const old = hero.S.hp; hero.S = S; hero.hp = Math.min(S.hp, hero.hp + Math.max(0, S.hp - old)); }
     P.stats.units[type] = S;
     return S;
   }
+
+  /** XP: level up as it comes in (each level makes the hero tougher and hit harder, and tops up its health by the gain). */
+  gainXp(P, n) {
+    if (P.neutral || !P.alive || !(n > 0) || P.level >= CTF.level.max) return;
+    P.xp += n;
+    let up = false;
+    while (P.level < CTF.level.max && P.xp >= ctfLevelNeed(P.level)) { P.xp -= ctfLevelNeed(P.level); P.level++; up = true; }
+    if (P.level >= CTF.level.max) P.xp = 0;
+    if (up) { this.refreshHero(P); this.events.push(['lvl', P.idx, P.level]); }
+  }
+  /** Set a hero's level outright (tests and tools). */
+  setLevel(P, lv) { P.level = Math.max(1, Math.min(CTF.level.max, lv | 0)); P.xp = 0; this.refreshHero(P); }
 
   // the commanders' kits, scaled for a 15-minute match
   kitOf(P) { return ctfKit(COMMANDERS[P.commander]); }
@@ -231,7 +245,7 @@ export class CtfGame extends Game {
     super.step();
     if (this.over) return;
     const tick = this.tick;
-    if (tick % TICK_RATE === 0) for (const P of this.players) if (P.alive && !P.neutral) this.earn(P, CTF.passiveTips);
+    if (tick % TICK_RATE === 0) for (const P of this.players) if (P.alive && !P.neutral) { this.earn(P, CTF.passiveTips); this.gainXp(P, CTF.level.xpPerSec); }
     if (tick % 5 === 0) this.fountains();
     this.updateCamps();
     this.updateFlags();
@@ -309,9 +323,9 @@ export class CtfGame extends Game {
           f.revealAt = tick + CTF.reveal * TICK_RATE; f.lastSeen = { x: u.x, y: u.y, tick };
           this.events.push(['reveal', f.team, Math.round(u.x * POS_Q), Math.round(u.y * POS_Q), P.idx]);
         }
-        // home with it, while our own flag is on its stand
+        // home with it: reaching your own flag stand scores, wherever your own flag is right now
         const own = this.flagOf(P.team);
-        if (own && own.state === FLAG_HOME && Math.hypot(u.x - own.hx, u.y - own.hy) <= CTF.flag.capture) this.capture(f, P);
+        if (own && Math.hypot(u.x - own.hx, u.y - own.hy) <= CTF.flag.capture) this.capture(f, P);
         continue;
       }
       if (f.state === FLAG_DROPPED && tick - f.dropAt >= CTF.flag.dropReturn * TICK_RATE) { this.returnFlag(f, -1); continue; }
@@ -334,6 +348,7 @@ export class CtfGame extends Game {
     this.caps[P.team] = (this.caps[P.team] || 0) + 1;
     P.caps++;
     this.earn(P, 50);
+    this.gainXp(P, CTF.level.capXp);
     f.x = f.hx; f.y = f.hy;
     this.flagEvent('cap', f, P.idx);
     f.state = FLAG_HOME; f.carrier = 0; f.revealAt = 0;
@@ -357,13 +372,13 @@ export class CtfGame extends Game {
           const def = e.camp.def, kh = K && !K.neutral ? this.heroOf(K) : null;
           if (def.buff && kh) { this.addBuff(kh, def.buff, def.buffDur); this.events.push(['buffcamp', K.idx, e.camp.type]); }   // the last hit takes the buff
         }
-        if (K && !K.neutral) { this.earn(K, Math.round(e.bounty * (K.gatherBonus || 1))); K.minions++; this.events.push(['bounty', K.idx, e.bounty, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]); }
+        if (K && !K.neutral) { this.earn(K, Math.round(e.bounty * (K.gatherBonus || 1))); this.gainXp(K, Math.round(e.bounty * CTF.level.bountyXp)); K.minions++; this.events.push(['bounty', K.idx, e.bounty, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]); }
       } else if (e.isHero && !P.neutral) {
         P.deaths++;
         if (K && K !== P && !K.neutral) {
           let tiers = 0; for (const k of ITEM_KEYS) tiers += P.items[k];
-          const b = CTF.heroBounty + CTF.heroBountyPerTier * tiers;
-          this.earn(K, b); this.events.push(['bounty', K.idx, b, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]);
+          const b = CTF.heroBounty + CTF.heroBountyPerTier * tiers + CTF.level.bountyPerLevel * (P.level - 1);
+          this.earn(K, b); this.gainXp(K, CTF.level.killXp + CTF.level.killXpPerLevel * P.level); this.events.push(['bounty', K.idx, b, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]);
         }
       }
     }
@@ -445,6 +460,7 @@ export class CtfGame extends Game {
     const r = super.playerRec(P);
     r[21] = ITEM_KEYS.map((k) => P.items[k]);
     r[22] = P.caps; r[23] = P.deaths; r[24] = P.energyReady; r[25] = P.minions; r[26] = P.score.heroKills;
+    r[27] = P.level; r[28] = P.xp;
     return r;
   }
   ctfRec() { return { caps: this.caps, sudden: this.sudden ? 1 : 0, lvl: this.minionLevel }; }
@@ -509,7 +525,7 @@ export class CtfGame extends Game {
   summary() {
     return super.summary().filter((s) => !this.players[s.idx].neutral).map((s) => {
       const P = this.players[s.idx];
-      return { ...s, caps: P.caps, deaths: P.deaths, minions: P.minions, earned: P.earned, items: { ...P.items }, kills: P.score.heroKills, ctf: true };
+      return { ...s, caps: P.caps, deaths: P.deaths, minions: P.minions, earned: P.earned, items: { ...P.items }, kills: P.score.heroKills, level: P.level, ctf: true };
     });
   }
 }

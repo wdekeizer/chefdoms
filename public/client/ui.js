@@ -9,7 +9,7 @@ import {
   BOT_LEVELS, BOT_NOTES, MAX_PLAYERS, MAP_SIZES, mapSizeFor, NODES, trainList, techCost, techTime, computeStats,
   STANCES, FORMATIONS, GARRISON_PER_SHOT, GARRISON_MAX_SHOTS, VERSION,
   ULT_AGE, TB, tbUnit, tbBldg, tbTurns, tbCooldown, tbDamage,
-  HERO_KEYS, CTF, NEUTRAL_COLOR, ctfKit, ctfHeroStats, ctfItemCost, MARKET, marketQuote,
+  HERO_KEYS, CTF, NEUTRAL_COLOR, ctfKit, ctfHeroStats, ctfItemCost, ctfLevelNeed, MARKET, marketQuote,
 } from '/game/data.js';
 import * as TAC from './tactics.js';
 import { ACTIONS, keyOf, keyLabel, labelOf, setKey, resetKeys, setWasd, isWasd, canBind, onKeysChanged } from './keys.js';
@@ -85,7 +85,7 @@ const amHost = () => G.lobby && G.lobby.host === G.cid;
 const MODES = [
   ['rt', ['building', 'hq'], 'Real-time', 'The classic: build a kitchen, raise a brigade, raze the enemy HQ.'],
   ['turn', ['ui', 'endturn'], 'Turn-based', 'The same game on a grid, one kitchen at a time. Every unit moves once.'],
-  ['ctf', ['ui', 'flag'], 'Capture the Flag', 'One hero each. Farm minions, buy items, steal the flag.'],
+  ['ctf', ['ui', 'flag'], 'Capture the Flag', 'One hero each. Level up, buy items, steal the flag.'],
 ];
 const mySlot = () => (G.lobby ? G.lobby.slots.findIndex((s) => s && s.cid === G.cid) : -1);
 
@@ -145,7 +145,7 @@ export function renderLobby() {
   const nSeats = L.slots.filter(Boolean).length, real = mapSizeFor(L.opts.mapSize, Math.max(1, nSeats));
   const nTeams = new Set(L.slots.filter(Boolean).map((s) => s.team)).size;
   $('lobby-mapnote').textContent = ctf
-    ? `Capture the Flag: one hero each, no kitchen to run. ${nTeams <= 1 ? 'Give the seats different team numbers: ' : nTeams + ' team' + (nTeams === 1 ? '' : 's') + ' on a ' + CTF.mapSize(Math.max(2, nTeams)) + '×' + CTF.mapSize(Math.max(2, nTeams)) + ' arena. '}Same team number = one shared base and flag; every seat its own number = free-for-all. Fell wild minions for Tips, buy items at your kitchen, first to ${L.opts.ctfCaps || 3} captures (or the most when ${L.opts.ctfTime || 15} minutes are up) wins.`
+    ? `Capture the Flag: one hero each, no kitchen to run. ${nTeams <= 1 ? 'Give the seats different team numbers: ' : nTeams + ' team' + (nTeams === 1 ? '' : 's') + ' on a ' + CTF.mapSize(Math.max(2, nTeams)) + '×' + CTF.mapSize(Math.max(2, nTeams)) + ' arena. '}Same team number = one shared base and flag; every seat its own number = free-for-all. Fell wild minions for Tips, buy items at your kitchen, level up as the match goes on; carry an enemy flag to your own stand to score. First to ${L.opts.ctfCaps || 3} captures (or the most when ${L.opts.ctfTime || 15} minutes are up) wins.`
     : turn
     ? `Turn-based: one kitchen plays at a time on a ${TB.mapSizes[real]}×${TB.mapSizes[real]} grid. Every unit moves once and then does one thing; stations built on resources pay every turn. Staff limit ${Math.max(10, Math.round((+L.opts.popCap || 100) * TB.popShare))}.`
     : `With ${nSeats} kitchen${nSeats === 1 ? '' : 's'} this match plays on the ${OPTIONS.mapSize.choices[real].replace(' (cozy)', '')} map (${MAP_SIZES[real]}×${MAP_SIZES[real]} tiles).`;
@@ -191,13 +191,14 @@ function commanderDetail(key) {
   const C = COMMANDERS[key];
   const U = statsFor(key).units, uq = U[C.unique], hero = U[C.hero];
   if (isCtf()) {
-    const kit = ctfKit(C), H = ctfHeroStats(computeStats(key, CTF.heroAge, []).units[C.hero], {});
+    const kit = ctfKit(C), H = ctfHeroStats(computeStats(key, CTF.heroAge, []).units[C.hero], {}, key, 1);
     return h('div', { class: 'cd' },
       h('div', { class: 'cd-head' }, img('commander', key, 'portrait big', null, 192),
         h('div', null, h('div', { class: 'cd-name' }, C.name), h('div', { class: 'cd-title' }, `${C.title}`), h('div', { class: 'cd-style' }, C.style))),
       h('p', { class: 'cd-blurb' }, C.blurb),
       h('div', { class: 'cd-sec' }, 'In the arena'),
       h('div', { class: 'tt-stats' }, `HP ${H.hp} · Attack ${H.atk} every ${H.reload}s · Armour ${H.armor}/${H.parmor} · Speed ${H.speed.toFixed(1)} · ${H.range ? 'Range ' + H.range : 'Melee'}`),
+      h('div', { class: 'muted' }, `Levels up during the match (up to ${CTF.level.max}): +${Math.round(CTF.level.hp * 100)}% health and +${Math.round(CTF.level.atk * 100)}% attack a level, +1 armour every ${CTF.level.armorEvery} levels.`),
       h('div', { class: 'cd-row' }, img('unit', C.hero, 'ico', '#e2403a'), h('div', null, h('b', null, 'Aura · ' + C.aura.name), h('br'), h('span', { class: 'muted' }, C.aura.desc))),
       h('div', { class: 'cd-row' }, img('ability', kit.ability.key, 'ico'), h('div', null, h('b', null, kit.ability.name), ` (${cdText(kit.ability)})`, h('br'), h('span', { class: 'muted' }, kit.ability.desc))),
       h('div', { class: 'cd-row' }, img('ability', kit.ultimate.key, 'ico ult'), h('div', null, h('b', null, kit.ultimate.name), ` · ultimate (${cdText(kit.ultimate, true)}, from minute ${CTF.ultUnlockMin})`, h('br'), h('span', { class: 'muted' }, kit.ultimate.desc))),
@@ -584,10 +585,14 @@ function refreshSelection(force) {
     : sel.length === 1 ? [sel[0].id, sel[0].hp, sel[0].prog, sel[0].qpct, (sel[0].q || []).join(), sel[0].amount, sel[0].carry, sel[0].sn, sel[0].inside, sel[0].owner >= 0 ? G.ps[sel[0].owner].sig : '', sel[0].left, sel[0].qleft, G.tb ? G.tb.cur + ':' + G.tb.ended : '', sel[0].trally,
       sel[0].type === 'market' && G.me >= 0 ? G.marketAt + ':' + RES.map((r) => Math.floor(G.ps[G.me].res[r] / MARKET.lot)).join() : ''].join('|')
       : sel.map((e) => e.id + ':' + Math.ceil(e.hp / 5)).join(',');
+  if (G.ctf) {                                                   // the arena keeps the screen clear: no info panel at all
+    if (selSig !== 'ctf') { selSig = 'ctf'; panel.classList.add('empty'); panel.replaceChildren(); }
+    return;
+  }
   if (sig === selSig && !force) return;
   selSig = sig;
-  // nothing selected: the panel tucks itself away (in the arena it comes back to count down a respawn)
-  panel.classList.toggle('empty', !sel.length && !(G.ctf && G.me >= 0 && !G.ps[G.me].heroId));
+  // nothing selected: the panel tucks itself away
+  panel.classList.toggle('empty', !sel.length);
 
   if (!sel.length) {
     if (G.me < 0) { panel.replaceChildren(h('div', { class: 'sel-empty' }, h('b', null, 'Spectating'), h('div', { class: 'muted' }, 'You can see the whole map. Click anything to inspect it.'))); return; }
@@ -729,7 +734,8 @@ function refreshHero() {
   const back = hero ? 0 : tb ? me.heroRespawn : Math.max(0, Math.ceil((me.heroRespawn - G.tick) / G.tickRate));
   const idle = tb ? TAC.readyUnits().length : G.units.reduce((n, e) => n + (e.owner === G.me && e.type === 'cook' && e.st === 0 ? 1 : 0), 0);
   const lunch = !tb && G.tick < me.lunchUntil, locked = ctf ? G.tick < G.ctf.ultUnlock * G.tickRate : me.age < ULT_AGE;
-  const sig = [hero ? Math.ceil(hero.hp / 4) : 'x', cd, ucd, locked, back, idle, lunch, me.alive, me.bell, G.mode && G.mode.type === 'ping', tb && G.tb.cur, ctf && G.follow].join('|');
+  const need = ctf && me.level < CTF.level.max ? ctfLevelNeed(me.level) : 0, xpFrac = need ? Math.min(1, me.xp / need) : 1;
+  const sig = [hero ? Math.ceil(hero.hp / 4) : 'x', cd, ucd, locked, back, idle, lunch, me.alive, me.bell, G.mode && G.mode.type === 'ping', tb && G.tb.cur, ctf && G.follow, ctf && me.level, ctf && Math.floor(xpFrac * 40)].join('|');
   if (sig === heroSig) return;
   heroSig = sig;
   if (!me.alive) { box.replaceChildren(); return; }
@@ -768,8 +774,13 @@ function refreshHero() {
       ...tip(() => h('div', null, h('div', { class: 'tt-title' }, A.name, h('span', { class: 'tt-key' }, labelOf('ability'))), h('div', { class: 'tt-sub' }, `Commander ability · ${cdText(A)}`), h('div', { class: 'tt-desc' }, abilText(A)), h('div', { class: 'tt-hint' }, `Aura · ${C.aura.name}: ${abilText(C.aura)}`))) },
       img('ability', A.key, 'q-ico'), !ready && hero ? h('span', { class: 'q-cd' }, cd + unit) : null),
     h('button', { class: 'qbtn hero' + (hero ? '' : ' down'), onmousedown: press((ev) => hooks.selectHero(ev.detail > 1)),
-      ...tip(() => simpleTip(C.name, labelOf('hero'), hero ? 'Click to select your commander; double-click to jump there.' : `Back at the Kitchen HQ ${wait(back)}.`)) },
-      img('commander', P.commander, 'q-ico', null, 96), hero ? bar(hero.hp / maxHp(hero), 'mini') : h('span', { class: 'q-cd' }, back || '…'))].filter(Boolean));
+      ...tip(() => ctf
+        ? simpleTip(`${C.name} · level ${me.level}`, labelOf('hero'), (hero ? `${Math.max(0, Math.round(hero.hp))} / ${maxHp(hero)} health. ` : `Back at your kitchen ${wait(back)}: a good moment to shop. `)
+          + (need ? `${Math.floor(me.xp)} / ${need} XP to level ${me.level + 1}. XP comes in every second, and faster for minions, takedowns and captures.` : 'Top level reached.'), 'Double-click to jump there.')
+        : simpleTip(C.name, labelOf('hero'), hero ? 'Click to select your commander; double-click to jump there.' : `Back at the Kitchen HQ ${wait(back)}.`)) },
+      img('commander', P.commander, 'q-ico', null, 96), hero ? bar(hero.hp / maxHp(hero), 'mini') : h('span', { class: 'q-cd' }, back || '…'),
+      ctf && h('span', { class: 'q-lvl', title: 'Hero level' }, me.level),
+      ctf && h('span', { class: 'q-xp' }, h('i', { style: `width:${Math.round(xpFrac * 100)}%` })))].filter(Boolean));
 }
 
 // -------------------------------------------------------------------- top bar
@@ -809,7 +820,7 @@ function refreshTop() {
 let plSig = '';
 function refreshPlayers() {
   const list = realPlayers();
-  const sig = list.map(([p, i]) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '') + (G.ctf ? G.ps[i].caps + ':' + G.ps[i].heroKills + ':' + G.ps[i].deaths + (G.ps[i].heroId ? '' : 'x') : '')).join('|') + (G.tb ? G.tb.cur + ':' + G.tb.team + ':' + G.tb.ended : '');
+  const sig = list.map(([p, i]) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '') + (G.ctf ? G.ps[i].caps + ':' + G.ps[i].heroKills + ':' + G.ps[i].deaths + ':' + G.ps[i].level + (G.ps[i].heroId ? '' : 'x') : '')).join('|') + (G.tb ? G.tb.cur + ':' + G.tb.team + ':' + G.tb.ended : '');
   if (sig === plSig) return;
   plSig = sig;
   const teams = new Set(list.map(([p]) => p.team)).size;
@@ -819,6 +830,7 @@ function refreshPlayers() {
       h('span', { class: 'dot', style: `background:${colorHex(p.color)}` }),
       h('span', { class: 'pl-name' }, p.name),
       h('span', { class: 'pl-team', title: COMMANDERS[p.commander].name }, COMMANDERS[p.commander].title),
+      h('span', { class: 'pl-lvl', title: 'Hero level' }, 'Lv ' + G.ps[i].level),
       h('span', { class: 'pl-age', title: 'captures · hero kills / deaths' }, `${G.ps[i].caps}⚑ ${G.ps[i].heroKills || 0}/${G.ps[i].deaths}`))));
     return;
   }
@@ -863,7 +875,8 @@ function refreshScore() {
   const capsOf = (t) => G.ctf.caps[t] || 0;
   const alive = (t) => list.some(([p, i]) => p.team === t && G.ps[i].alive);
   const left = Math.max(0, G.ctf.timeLimit - G.tick / G.tickRate);
-  const sig = teams.map((t) => t + ':' + capsOf(t) + (alive(t) ? '' : 'x')).join('|') + '|' + (G.ctf.sudden ? 'S' : Math.ceil(left)) + '|' + G.ctf.lvl + '|' + (G.over ? 1 : 0);
+  const me = G.me >= 0 ? G.ps[G.me] : null, back = me && me.alive && !me.heroId ? Math.max(0, Math.ceil((me.heroRespawn - G.tick) / G.tickRate)) : -1;
+  const sig = teams.map((t) => t + ':' + capsOf(t) + (alive(t) ? '' : 'x')).join('|') + '|' + (G.ctf.sudden ? 'S' : Math.ceil(left)) + '|' + G.ctf.lvl + '|' + (G.over ? 1 : 0) + '|' + back;
   if (sig === scoreSig) return;
   scoreSig = sig;
   const myT = G.me >= 0 ? G.players[G.me].team : -1;
@@ -881,6 +894,7 @@ function refreshScore() {
   } else kids.push(h('span', { class: 'tb-round' }, 'First to ' + G.ctf.capsToWin), ...order.map(chip));
   kids.push(h('span', { class: 'tb-time' + (G.ctf.sudden || left <= 60 ? ' low' : '') }, G.over ? 'Match over' : G.ctf.sudden ? 'SUDDEN DEATH · next capture wins' : fmtClock(left)));
   if (G.ctf.lvl) kids.push(h('span', { class: 'tb-left', title: 'Wild minions grow tougher (and richer) every few minutes' }, 'minions lv ' + (G.ctf.lvl + 1)));
+  if (back >= 0 && !G.over) kids.push(h('span', { class: 'tb-time low', title: 'Shop while you wait' }, back ? `You're down · back in ${back}s` : 'Back on your feet…'));
   box.classList.remove('hidden');
   box.replaceChildren(...kids);
 }
@@ -1213,8 +1227,8 @@ export function showOver(m) {
   const tabs = ctf ? [
     ['Scores', () => h('div', null,
       h('table', { class: 'score' },
-        h('tr', null, ['Chef', 'Hero', 'Captures', 'Hero kills', 'Deaths', 'Minions', 'Tips earned', 'Items', 'Total'].map((t) => h('th', null, t))),
-        rows.map((x) => tr(x, [COMMANDERS[x.commander].name, x.caps, x.kills, x.deaths, x.minions, fmtNum(x.earned), itemCells(x), h('b', { class: 'total' }, fmtNum(sc(x).total))]))),
+        h('tr', null, ['Chef', 'Hero', 'Level', 'Captures', 'Hero kills', 'Deaths', 'Minions', 'Tips earned', 'Items', 'Total'].map((t) => h('th', null, t))),
+        rows.map((x) => tr(x, [COMMANDERS[x.commander].name, x.level || 1, x.caps, x.kills, x.deaths, x.minions, fmtNum(x.earned), itemCells(x), h('b', { class: 'total' }, fmtNum(sc(x).total))]))),
       h('p', { class: 'muted' }, 'Captures count 400 each · hero kills 60 · minions 4 · every item tier 40 · a quarter of the Tips earned'))],
   ] : [
 

@@ -213,6 +213,10 @@ table.score tr.won td { background: rgba(240,180,28,.08); }
 .qbtn.hero { width: 46px; height: 46px; }
 .qbtn.hero .bar { position: absolute; left: 3px; right: 3px; bottom: 2px; width: auto; }
 .qbtn.hero.down .q-ico { filter: grayscale(1) brightness(.55); }
+/* capture the flag: the hero's level and how far it is to the next */
+.q-lvl { position: absolute; top: -8px; left: -7px; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 99px; background: #2f5fb8; border: 2px solid #ffd96b; color: #fff; font: 800 11px/16px var(--ui); text-align: center; box-shadow: 0 1px 3px #000; }
+.q-xp { position: absolute; left: 3px; right: 3px; bottom: 8px; height: 4px; background: rgba(8,5,4,.85); border-radius: 2px; overflow: hidden; }
+.q-xp i { display: block; height: 100%; background: linear-gradient(90deg, #7fc8ff, #c9ecff); }
 .qbtn.abil { width: 46px; height: 46px; }
 .qbtn.abil .q-ico { filter: grayscale(.9) brightness(.6); }
 .qbtn.abil.ready { border-color: var(--accent-2); box-shadow: 0 0 10px rgba(240,180,28,.55); animation: pulse 1.6s infinite; }
@@ -244,6 +248,7 @@ table.score tr.won td { background: rgba(240,180,28,.08); }
 .pl.out .pl-name { text-decoration: line-through; }
 .pl-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-team { color: var(--muted); font-size: 11px; }
+.pl-lvl { color: #9fd3ff; font-size: 11px; font-weight: 800; white-space: nowrap; }
 .pl-age { margin-left: auto; padding-left: 6px; color: var(--accent-2); font-family: var(--display); font-style: italic; pointer-events: auto; }
 
 #msgs { position: absolute; top: 54px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 5px; pointer-events: none; width: 60vw; }

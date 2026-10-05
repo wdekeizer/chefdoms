@@ -221,7 +221,16 @@ function inView(e) {
   return e.rx >= x0 && e.rx <= x1 && e.ry >= y0 && e.ry <= y1;
 }
 
+/** Capture the flag: a left-click never takes your hero out of the selection (it is the only thing you command). */
+function heroLock() {
+  if (!G.ctf || G.me < 0) return false;
+  const id = G.ps[G.me] && G.ps[G.me].heroId;
+  if (id && !(G.sel.size === 1 && G.sel.has(id))) selectHero(false);
+  return true;
+}
+
 function clickSelect(wx, wy, ev) {
+  if (heroLock()) return;
   const e = pickEntity(wx, wy);
   const now = performance.now();
   if (!e) { if (!ev.shiftKey) G.sel.clear(); return; }
@@ -243,6 +252,7 @@ function clickSelect(wx, wy, ev) {
 }
 
 function boxSelect(d, shift) {
+  if (heroLock()) return;
   const [ax, ay] = screenToWorld(Math.min(d.x0, d.x1), Math.min(d.y0, d.y1));
   const [bx, by] = screenToWorld(Math.max(d.x0, d.x1), Math.max(d.y0, d.y1));
   let list = G.units.filter((e) => e.owner === G.me && canSee(e) && e.rx >= ax && e.rx <= bx && e.ry - 0.35 >= ay - 0.4 && e.ry - 0.35 <= by + 0.1);
@@ -327,7 +337,7 @@ function onKeyDown(ev) {
   }
   switch (ev.code) {
     case 'Escape':
-      if (G.mode) G.mode = null; else if (!hooks.toggleMenu(false)) { G.sel.clear(); hooks.selection(); }
+      if (G.mode) G.mode = null; else if (!hooks.toggleMenu(false) && !(G.ctf && G.me >= 0)) { G.sel.clear(); hooks.selection(); }
       return;
     case 'Delete': case 'Backspace': deleteSelected(ev.shiftKey); return;
     case 'Enter': case 'NumpadEnter': hooks.openChat(ev.shiftKey); ev.preventDefault(); return;
@@ -405,6 +415,7 @@ function onMouseDown(ev) {
     if (!ev.shiftKey) G.mode = null;
     return;
   }
+  if (heroLock()) return;                                            // capture the flag: no selection box, the hero stays selected
   G.drag = { x0: ev.clientX, y0: ev.clientY, x1: ev.clientX, y1: ev.clientY };
 }
 
