@@ -1220,7 +1220,7 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     const cd = g.players[0].abilityReady - g.tick;
     ok(Math.abs(cd - Math.round(COMMANDERS.kofi.ability.cd * CTF.abilityCdMul * TICK_RATE)) <= TICK_RATE, 'ctf: ability cooldowns are scaled down', `${cd / TICK_RATE}s`);
     // Hot Shot: a long-range snipe at the most wounded enemy hero
-    place(g, rafa, 30, 40); place(g, dolly, 30, 48); settle(g); dolly.hp = 100; const dhp = dolly.hp;
+    place(g, rafa, 30, 40); place(g, dolly, 30, 48); settle(g); dolly.hp = 200; const dhp = dolly.hp;
     g.command(3, { c: 'ab' }); run(g, 2);
     ok(dolly.hp < dhp, 'ctf: Hot Shot wounds the weakest enemy hero in range', `${dhp}→${dolly.hp}`);
     // Brain Freeze: chills enemies
@@ -1352,12 +1352,13 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
   // ---- balance: everyone but Big Hank hits harder in the arena, ranged heroes most of all
   {
     const others = HERO_KEYS.filter((k) => k !== 'hank');
-    ok(!CTF.heroDps.hank && others.every((k) => CTF.heroDps[k] > 1), 'ctf balance: every hero but Big Hank gets an attack boost in the arena', others.map((k) => k + ' ' + CTF.heroDps[k]).join(', '));
+    ok(HERO_KEYS.every((k) => CTF.heroDps[k] > 0.5 && CTF.heroHp[k] > 0.5 && Math.abs(CTF.heroSpeed[k]) < 1), 'ctf balance: every hero has its own arena attack, health and speed', HERO_KEYS.map((k) => k + ' ' + CTF.heroDps[k] + '/' + CTF.heroHp[k] + '/' + CTF.heroSpeed[k]).join(', '));
     const ranged = others.filter((k) => COMMANDERS[k] && computeStats(k, CTF.heroAge, []).units[COMMANDERS[k].hero].range > 0);
     const melee = others.filter((k) => !ranged.includes(k));
-    ok(Math.min(...ranged.map((k) => CTF.heroDps[k])) >= 1.3 && Math.min(...ranged.map((k) => CTF.heroDps[k])) > Math.max(...melee.filter((k) => k !== 'flint').map((k) => CTF.heroDps[k])), 'ctf balance: ranged heroes get the biggest boosts', ranged.join(','));
+    ok(Math.min(...ranged.map((k) => CTF.heroDps[k])) > Math.max(...melee.filter((k) => k !== 'flint').map((k) => CTF.heroDps[k])), 'ctf balance: ranged heroes get the biggest attack boosts', ranged.join(','));
+    ok(['hank', 'dolly', 'nonna'].every((k) => CTF.heroSpeed[k] > 0.3) && ranged.every((k) => CTF.heroSpeed[k] <= 0), 'ctf balance: the sturdy heroes are quick in the arena, the ranged ones a little slower');
     const base = computeStats('ingrid', CTF.heroAge, []).units.hero_ingrid, hb = computeStats('hank', CTF.heroAge, []).units.hero_hank;
-    ok(Math.abs(ctfHeroStats(base, {}, 'ingrid').atk - base.atk * CTF.heroAtkMul * CTF.heroDps.ingrid) < 0.1 && Math.abs(ctfHeroStats(hb, {}, 'hank').atk - hb.atk * CTF.heroAtkMul) < 0.1, 'ctf balance: the boost lands on the hero\'s attack (Hank unchanged)');
+    ok(Math.abs(ctfHeroStats(base, {}, 'ingrid').atk - base.atk * CTF.heroAtkMul * CTF.heroDps.ingrid) < 0.1 && Math.abs(ctfHeroStats(hb, {}, 'hank').speed - hb.speed - CTF.heroSpeed.hank) < 1e-9 && ctfHeroStats(hb, {}, 'hank').hp === Math.round(hb.hp * CTF.heroHpMul * CTF.heroHp.hank), 'ctf balance: the multipliers land on the hero\'s attack, health and speed');
   }
 
   // ---- levels: XP every second, so everyone levels over time; each level raises the stats
@@ -1373,7 +1374,8 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     ok(hA.S.hp > hp1 && hA.S.atk > atk1 && hA.hp === hA.S.hp, 'ctf levels: a level raises health and attack (and tops up the gain)', `hp ${hp1}→${hA.S.hp} atk ${atk1}→${hA.S.atk}`);
     const base = computeStats('ingrid', CTF.heroAge, []).units.hero_ingrid;
     const S1 = ctfHeroStats(base, {}, 'ingrid', 1), S10 = ctfHeroStats(base, {}, 'ingrid', 10), S99 = ctfHeroStats(base, {}, 'ingrid', 99);
-    ok(Math.abs(S10.hp / S1.hp - (1 + 9 * CTF.level.hp)) < 0.02 && Math.abs(S10.atk / S1.atk - (1 + 9 * CTF.level.atk)) < 0.02 && S10.armor === S1.armor + Math.floor(10 / CTF.level.armorEvery), 'ctf levels: level 10 means +54% health, +45% attack and more armour', `${S1.hp}/${S1.atk} → ${S10.hp}/${S10.atk}`);
+    const gr = CTF.heroGrowth.ingrid || 1;
+    ok(Math.abs(S10.hp / S1.hp - (1 + 9 * CTF.level.hp * gr)) < 0.02 && Math.abs(S10.atk / S1.atk - (1 + 9 * CTF.level.atk * gr)) < 0.02 && S10.armor === S1.armor + Math.floor(10 / CTF.level.armorEvery), 'ctf levels: level 10 means about +54% health, +45% attack (times the hero\'s growth) and more armour', `${S1.hp}/${S1.atk} → ${S10.hp}/${S10.atk}, growth ${gr}`);
     ok(S99.hp === ctfHeroStats(base, {}, 'ingrid', CTF.level.max).hp, `ctf levels: they stop at level ${CTF.level.max}`);
     // a wounded hero keeps its wounds but gains the new health
     hA.hp = 100; const before = hA.S.hp; g.setLevel(A, 4);
@@ -1721,7 +1723,7 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     g.step();
     const A = g.players[0], B = g.players[1], hA = g.heroOf(A);
     const base = D.computeStats('kofi', D.CTF.heroAge, []).units.hero_kofi;
-    ok(hA.S.hp === Math.round(base.hp * D.CTF.heroHpMul) && D.CTF.heroHpMul < 1 && D.CTF.heroAtkMul >= 1.8, 'ctf: heroes have less health and hit harder', `${hA.S.hp} hp`);
+    ok(hA.S.hp === Math.round(base.hp * D.CTF.heroHpMul * D.CTF.heroHp.kofi) && D.CTF.heroHpMul < 1 && D.CTF.heroAtkMul >= 1.8, 'ctf: heroes have less health and hit harder', `${hA.S.hp} hp`);
     ok(D.CTF.items.skillet.tiers[0][0] >= 7 && D.CTF.items.whites.tiers[2][0] >= 12 && D.CTF.items.espresso.tiers[2][0] <= 0.6, 'ctf: items are stronger for the same price');
     const t0 = A.res.food, tB = B.res.food;
     run(g, 10);
@@ -1733,6 +1735,52 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     for (let i = 0; i < 40 * TICK_RATE && !g.heroOf(A); i++) g.step();
     const back = g.heroOf(A);
     ok(back && back.buffs && back.buffs.b_pepper > g.tick && g.playerRec(A)[30][0] > g.tick, 'ctf: the Ghost Pepper buff is still there after the hero respawns', back ? `ends ${back.buffs && back.buffs.b_pepper} now ${g.tick}` : 'no hero');
+  }
+}
+
+// ----------------------- v1.6.1: Capture the Flag balance pass (assists, shared minions, level-scaled abilities, pursuit)
+{
+  const D = await import('../game/data.js');
+  const { CtfGame } = await import('../game/ctf.js');
+  const mk3 = (specs) => new CtfGame({ players: specs.map(([c, team], i) => ({ name: 'P' + i, commander: c, team, color: i })), seed: 11, ctfCaps: 3, ctfTime: 15 });
+  const put = (u, x, y) => { u.x = x; u.y = y; u.order = null; u.path = null; u.st = ST.IDLE; };
+  // assists: a team-mate who hit the hero (or stood close) gets half the bounty
+  {
+    const g = mk3([['kofi', 1], ['dolly', 1], ['nonna', 1], ['ryo', 2]]);
+    g.step();
+    const [K, A, F, V] = g.players, hk = g.heroOf(K), ha = g.heroOf(A), hf = g.heroOf(F), hv = g.heroOf(V);
+    put(hv, 36, 36); put(hk, 37, 36); put(ha, 50, 50); put(hf, 37.5, 37); g.step();
+    g.applyDamage(A.idx, ha.id, hv, 30, {}, false);                       // Dolly chips in from afar
+    const t = [K, A, F].map((P) => P.res.food);
+    hv.hp = 1; g.applyDamage(K.idx, hk.id, hv, 50, {}, false); g.step();
+    const got = [K, A, F].map((P, i) => P.res.food - t[i]);
+    ok(hv.dead && got[0] >= D.CTF.heroBounty && Math.abs(got[1] - Math.round(got[0] * D.CTF.assist.share)) <= 4 && Math.abs(got[2] - Math.round(got[0] * D.CTF.assist.share)) <= 4 && A.assists === 1 && F.assists === 1,
+      'ctf: a hero kill pays the killer, and half as much to the team-mate who hit it and the one standing close', JSON.stringify(got));
+    ok(g.summary().find((s) => s.idx === A.idx).assists === 1 && g.playerRec(A)[31] === 1, 'ctf: assists show in the scores and reach the clients');
+  }
+  // team-mates near a fallen minion share its bounty
+  {
+    const g = mk3([['kofi', 1], ['hank', 1], ['ryo', 2]]);
+    g.step(); for (let i = 0; i < 3; i++) g.step();
+    const camp = g.camps.find((k) => k.units.size), m = g.ents.get([...camp.units][0]);
+    const [K, A] = g.players, hk = g.heroOf(K), ha = g.heroOf(A);
+    put(hk, m.x + 1, m.y); put(ha, m.x - 1, m.y); g.step();
+    const t0 = [K.res.food, A.res.food];
+    m.hp = 1; g.applyDamage(K.idx, hk.id, m, 50, {}, false); g.step();
+    const dk = K.res.food - t0[0], da = A.res.food - t0[1];
+    ok(m.dead && dk > 0 && da > 0 && da < dk, 'ctf: a team-mate close to a fallen minion gets a share of its bounty', `${dk} / ${da}`);
+  }
+  // Rush Hour speeds up every hero on the team; damaging abilities grow with the hero's level; melee heroes run enemy heroes down
+  {
+    const g = mk3([['zara', 1], ['hank', 1], ['ryo', 2]]);
+    g.step();
+    const [Z, Hk, R] = g.players, hz = g.heroOf(Z), hh = g.heroOf(Hk), hr = g.heroOf(R);
+    put(hh, 10, 10); put(hz, 60, 60); g.step();
+    g.command(Z.idx, { c: 'ab' }); g.step();
+    ok(hz.buffs && hz.buffs.sugar && hh.buffs && hh.buffs.sugar && !(hr.buffs && hr.buffs.sugar), 'ctf: Rush Hour speeds up every hero on Zara\'s team, wherever they are');
+    const m1 = g.abilityMul(R); g.setLevel(R, 11); const m11 = g.abilityMul(R);
+    ok(Math.abs(m11 / m1 - (1 + D.CTF.level.atk * 10 * (D.CTF.heroGrowth.ryo || 1))) < 1e-9, 'ctf: damaging abilities grow with the hero\'s level, like its attack', `${m1} → ${m11}`);
+    ok(g.chaseMul(hh, hr) === D.CTF.meleeChase && D.CTF.meleeChase > 1 && g.chaseMul(hz, hr) === 1 && new Game({ players: [{ name: 'a', commander: 'flint', team: 0, color: 0 }, { name: 'b', commander: 'nonna', team: 1, color: 1 }], seed: 1 }).chaseMul(hh, hr) === 1, 'ctf: melee heroes close in faster on enemy heroes (ranged ones and the real-time game do not)');
   }
 }
 

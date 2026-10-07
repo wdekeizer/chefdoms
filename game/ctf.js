@@ -199,6 +199,9 @@ export class CtfGame extends Game {
   cdOf(A, ult) { return A.ctfCd || A.cd * (ult ? CTF.ultCdMul : CTF.abilityCdMul); }      // the slows keep longer cooldowns of their own
   ultLocked() { return this.tick < this.ultUnlock; }
   ultLevel() { return Math.floor(this.tick / (6 * 60 * TICK_RATE)); }      // ultimates grow a step every six minutes
+  swarmCount(P, U, up) { return U.count + up + Math.floor(((P.level || 1) - 1) / 3); }   // one more rider every three levels
+  chaseMul(u, tg) { return u.isHero && !(u.S.range > 0) && tg.isHero ? CTF.meleeChase : 1; }      // melee heroes run down enemy heroes
+  abilityMul(P) { return (1 + CTF.level.atk * ((P.level || 1) - 1) * (CTF.heroGrowth[P.commander] || 1)) * CTF.abilityDmgMul; }   // ...and every damaging ability grows with the hero's level, like its attack
   heroRespawnTicks() { return Math.round(Math.min(CTF.respawn.max, CTF.respawn.base + CTF.respawn.perMin * this.tick / (60 * TICK_RATE)) * TICK_RATE); }
   tipJar(K, amount) { this.earn(K, amount); }
   earn(P, amount) { if (P.neutral) return; P.res.food += amount; P.earned += amount; P.score.gathered += amount; }
@@ -262,6 +265,17 @@ export class CtfGame extends Game {
       P.heroRespawn = 0;
       this.events.push(['heroup', P.idx]);
     }
+  }
+
+  /** The killer's team-mates who helped bring `e` down: hit it in the last few seconds (`hitBy`), or were close by. */
+  helpers(K, e, hitBy) {
+    const out = [], A = CTF.assist, since = this.tick - A.window * TICK_RATE;
+    for (const Q of this.players) {
+      if (Q === K || Q.neutral || !Q.alive || Q.team !== K.team) continue;
+      const h = this.heroOf(Q);
+      if ((hitBy && hitBy[Q.idx] >= since) || (h && Math.hypot(h.x - e.x, h.y - e.y) <= A.radius)) out.push(Q);
+    }
+    return out;
   }
 
   /** Resigning takes your hero off the field; the team's kitchen stays for the others. */
@@ -376,13 +390,19 @@ export class CtfGame extends Game {
             this.addBuff(kh, def.buff, def.buffDur); this.events.push(['buffcamp', K.idx, e.camp.type]);
           }
         }
-        if (K && !K.neutral) { this.earn(K, Math.round(e.bounty * CTF.bountyMul * (K.gatherBonus || 1))); this.gainXp(K, Math.round(e.bounty * CTF.level.bountyXp)); K.minions++; this.events.push(['bounty', K.idx, e.bounty, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]); }
+        if (K && !K.neutral) {
+          const b = Math.round(e.bounty * CTF.bountyMul * (K.gatherBonus || 1));
+          this.earn(K, b); this.gainXp(K, Math.round(e.bounty * CTF.level.bountyXp)); K.minions++; this.events.push(['bounty', K.idx, e.bounty, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]);
+          for (const Q of this.helpers(K, e, null)) { this.earn(Q, Math.round(b * CTF.assist.share)); this.gainXp(Q, Math.round(e.bounty * CTF.level.bountyXp * CTF.assist.share)); }   // team-mates close by get a share
+        }
       } else if (e.isHero && !P.neutral) {
         P.deaths++;
         if (K && K !== P && !K.neutral) {
           let tiers = 0; for (const k of ITEM_KEYS) tiers += P.items[k];
           const b = CTF.heroBounty + CTF.heroBountyPerTier * tiers + CTF.level.bountyPerLevel * (P.level - 1);
           this.earn(K, b); this.gainXp(K, CTF.level.killXp + CTF.level.killXpPerLevel * P.level); this.events.push(['bounty', K.idx, b, Math.round(e.x * POS_Q), Math.round(e.y * POS_Q)]);
+          // assists: everyone on the killer's team who hit this hero lately, or stood close by, gets a share
+          for (const Q of this.helpers(K, e, e.hitBy)) { Q.assists = (Q.assists || 0) + 1; this.earn(Q, Math.round(b * CTF.assist.share)); this.gainXp(Q, Math.round((CTF.level.killXp + CTF.level.killXpPerLevel * P.level) * CTF.assist.share)); this.events.push(['assist', Q.idx, Math.round(b * CTF.assist.share)]); }
         }
       }
     }
@@ -466,6 +486,7 @@ export class CtfGame extends Game {
     r[22] = P.caps; r[23] = P.deaths; r[24] = P.energyReady; r[25] = P.minions; r[26] = P.score.heroKills;
     r[27] = P.level; r[28] = P.xp;
     r[30] = ['b_pepper', 'b_sugar'].map((k) => ((P.campBuffs[k] || 0) > this.tick ? P.campBuffs[k] : 0));   // the tick each camp buff runs out (0 = none)
+    r[31] = P.assists || 0;
     return r;
   }
   ctfRec() { return { caps: this.caps, sudden: this.sudden ? 1 : 0, lvl: this.minionLevel }; }
@@ -501,7 +522,7 @@ export class CtfGame extends Game {
 
   scoreOf(P) {
     const s = P.score;
-    const military = s.heroKills * 60 + P.minions * 4, economy = Math.round(P.earned / 4), technology = ITEM_KEYS.reduce((n, k) => n + P.items[k] * 40, 0), society = P.caps * 400;
+    const military = s.heroKills * 60 + (P.assists || 0) * 25 + P.minions * 4, economy = Math.round(P.earned / 4), technology = ITEM_KEYS.reduce((n, k) => n + P.items[k] * 40, 0), society = P.caps * 400;
     return { military, economy, technology, society, total: military + economy + technology + society };
   }
   sample(force) {
@@ -530,7 +551,7 @@ export class CtfGame extends Game {
   summary() {
     return super.summary().filter((s) => !this.players[s.idx].neutral).map((s) => {
       const P = this.players[s.idx];
-      return { ...s, caps: P.caps, deaths: P.deaths, minions: P.minions, earned: P.earned, items: { ...P.items }, kills: P.score.heroKills, level: P.level, ctf: true };
+      return { ...s, caps: P.caps, deaths: P.deaths, minions: P.minions, earned: P.earned, items: { ...P.items }, kills: P.score.heroKills, assists: P.assists || 0, level: P.level, ctf: true };
     });
   }
 }

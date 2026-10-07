@@ -379,6 +379,9 @@ G.hooks.event = (ev) => {
       else if (onScreen(x, y)) G.fx.push({ kind: 'coin', x, y: y - 0.6, t0: now, dur: 900 });
       break;
     }
+    case 'assist':                       // ['assist', player, tips]: helped bring down an enemy hero
+      if (mine) { UI.note(`Assist! +${ev[2]} Tips`, 'good'); sfx('coin'); }
+      break;
     case 'item': {                       // ['item', player, key, tier]
       if (!mine) break;
       const it = CTF.items[ev[2]];

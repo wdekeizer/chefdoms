@@ -443,7 +443,7 @@ export class Game {
           if (!isB && o.pathed && Math.hypot(tg.x - o.px, tg.y - o.py) > 0.8) o.pathed = false;   // target moved
           if (!o.pathed) { o.px = tg.x; o.py = tg.y; }
           u.tgt = tg.id;
-          if (!this.approach(u, o, isB ? rectGoal(tg) : { x: tg.x, y: tg.y }, speed)) {
+          if (!this.approach(u, o, isB ? rectGoal(tg) : { x: tg.x, y: tg.y }, speed * this.chaseMul(u, tg))) {
             u.ignoreId = tg.id; u.ignoreUntil = tick + 100;
             this.endAttack(u, o, false);
           }
@@ -738,6 +738,7 @@ export class Game {
     else if (this.players[tg.owner].lockUntil > this.tick) dmg *= 0.25;         // Lockdown
     if (dmg > tg.hp) dmg = tg.hp;
     tg.hp -= dmg; tg.lastHit = this.tick;
+    if (tg.isHero && owner >= 0) (tg.hitBy || (tg.hitBy = {}))[owner] = this.tick;     // who has had a go at this hero lately (Capture the Flag pays assists)
     if (srcId) {                                                                   // Last Call: the blow feeds the one who struck it
       const src = this.ents.get(srcId);
       if (src && !src.dead && src.kind === K_UNIT && src.buffs && src.buffs.lastcall > this.tick) src.hp = Math.min(src.S.hp, src.hp + dmg * BUFFS.lastcall.lifesteal);
@@ -1254,6 +1255,12 @@ export class Game {
   /** Seconds of cooldown for an ability (ult = it is the ultimate). */
   cdOf(A, ult) { return A.cd * (ult ? this.ultCdMul() : this.cdMul()); }
   ultLocked(P) { return P.age < ULT_AGE; }
+  /** How many riders Zara's Delivery Swarm brings (Capture the Flag: more as she levels up). */
+  swarmCount(P, U, up) { return U.count + up; }
+  /** Speed multiplier while running after a target (Capture the Flag: melee heroes close in on enemy heroes faster). */
+  chaseMul() { return 1; }
+  /** How hard a commander's damaging abilities hit (Capture the Flag scales them with the hero's level). */
+  abilityMul() { return 1; }
   ultLevel(P) { return P.age - ULT_AGE; }
   heroRespawnTicks(P) { return HERO_RESPAWN[P.age] * TICK_RATE; }
   /** The enemy heroes (then any enemy units) within R of a hero, nearest first. */
@@ -1285,14 +1292,14 @@ export class Game {
     const A = this.kitOf(P).ability;
     const hero = P.heroId ? this.ents.get(P.heroId) : null;
     if (!hero || hero.dead || this.tick < P.abilityReady) return false;
-    const lvl = Math.max(0, this.ultLevel(P) + ULT_AGE - 1), scale = (d, per) => d + per * lvl;
+    const lvl = Math.max(0, this.ultLevel(P) + ULT_AGE - 1), am = this.abilityMul(P), scale = (d, per) => (d + per * lvl) * am;
     let fxX = hero.x, fxY = hero.y;
     switch (A.key) {
       case 'brace': {                                           // Hold the Pass!: a quick bite and a wall of pans
         for (const v of this.near(hero.x, hero.y, A.radius)) if (v.owner === P.idx && !v.dead && Math.hypot(v.x - hero.x, v.y - hero.y) <= A.radius) { v.hp = Math.min(v.S.hp, v.hp + v.S.hp * 0.15); this.addBuff(v, 'brace', A.dur); }
         break;
       }
-      case 'rush': for (const u of this.units) if (u.owner === P.idx && !u.dead) this.addBuff(u, 'sugar', A.dur); break;
+      case 'rush': for (const u of this.units) if (!u.dead && (u.owner === P.idx || (u.isHero && this.players[u.owner].team === P.team))) this.addBuff(u, 'sugar', A.dur); break;   // every hero on the team
       case 'chill': for (const v of this.near(hero.x, hero.y, A.radius).slice()) if (!v.dead && this.hostile(P.idx, v.owner) && Math.hypot(v.x - hero.x, v.y - hero.y) <= A.radius) this.addBuff(v, 'chill', A.dur); break;
       case 'dash': {                                            // Flash Fry: straight onto the nearest enemy hero
         const tg = this.foesNear(P, hero, A.radius)[0];
@@ -1323,7 +1330,7 @@ export class Game {
         break;
       }
       case 'cuts': {
-        const dmg = A.dmg + A.dmgPerAge * (P.age - 1);
+        const dmg = scale(A.dmg, A.dmgPerAge);
         const list = this.near(hero.x, hero.y, A.radius).slice();
         for (const v of list) {
           if (v.dead || !this.hostile(P.idx, v.owner)) continue;
@@ -1351,12 +1358,12 @@ export class Game {
     if (!U) return false;
     if (this.ultLocked(P)) { this.events.push(['note', P.idx, 'ultage']); return false; }
     if (!hero || hero.dead || this.tick < P.ultReady) return false;
-    const up = Math.max(0, this.ultLevel(P)), R = U.radius;
+    const up = Math.max(0, this.ultLevel(P)), R = U.radius, am = this.abilityMul(P);
     const foes = () => this.near(hero.x, hero.y, R).filter((v) => !v.dead && this.hostile(P.idx, v.owner) && Math.hypot(v.x - hero.x, v.y - hero.y) - v.r <= R);
     let fxX = hero.x, fxY = hero.y;
     switch (U.key) {
       case 'flambe': {
-        const dmg = U.dmg + U.dmgPerAge * up, bd = U.bldg + U.bldgPerAge * up;
+        const dmg = (U.dmg + U.dmgPerAge * up) * am, bd = U.bldg + U.bldgPerAge * up;
         for (const v of foes()) this.applyDamage(P.idx, hero.id, v, dmg + v.S.armor, {}, false);
         for (const b of this.bldgs.slice()) {
           if (b.dead || !this.hostile(P.idx, b.owner) || rectDist(hero.x, hero.y, b) > R) continue;
@@ -1380,7 +1387,7 @@ export class Game {
         }
         if (!best) { this.events.push(['note', P.idx, 'ulttarget']); return false; }
         fxX = best.x; fxY = best.y;
-        this.applyDamage(P.idx, hero.id, best, (U.dmg + U.dmgPerAge * up) * (best.isHero ? 0.5 : 1) + best.S.armor, {}, false);
+        this.applyDamage(P.idx, hero.id, best, (U.dmg + U.dmgPerAge * up) * am * (best.isHero ? 0.5 : 1) + best.S.armor, {}, false);
         if (best.dead) P.abilityReady = this.tick;
         break;
       }
@@ -1388,13 +1395,13 @@ export class Game {
         for (const v of foes()) this.addBuff(v, 'stun', v.isHero ? U.dur / 2 : U.dur);
         break;
       case 'lastcall': this.addBuff(hero, 'lastcall', U.dur); break;
-      case 'storm': hero.storm = { r: U.radius, dmg: U.dmg + U.dmgPerAge * up }; this.addBuff(hero, 'storm', U.dur); break;
+      case 'storm': hero.storm = { r: U.radius, dmg: (U.dmg + U.dmgPerAge * up) * am }; this.addBuff(hero, 'storm', U.dur); break;
       case 'bark': for (const v of this.near(hero.x, hero.y, R)) if (v.owner === P.idx && !v.dead && Math.hypot(v.x - hero.x, v.y - hero.y) <= R) this.addBuff(v, 'bark', U.dur); break;
       case 'freeze': for (const v of foes()) { this.addBuff(v, 'stun', v.isHero ? U.dur * 2 / 3 : U.dur); this.addBuff(v, 'chill', U.dur + 6); } break;
       case 'flood': {                                           // Sauce Flood: a wave along the line to the nearest enemy
         const aim = this.foesNear(P, hero, R)[0];
         const ang = aim ? Math.atan2(aim.y - hero.y, aim.x - hero.x) : (hero.face < 0 ? Math.PI : 0), ux = Math.cos(ang), uy = Math.sin(ang);
-        const dmg = U.dmg + U.dmgPerAge * up;
+        const dmg = (U.dmg + U.dmgPerAge * up) * am;
         for (const v of this.near(hero.x + ux * R / 2, hero.y + uy * R / 2, R / 2 + U.width + 1).slice()) {
           if (v.dead || !this.hostile(P.idx, v.owner)) continue;
           const dx = v.x - hero.x, dy = v.y - hero.y, along = dx * ux + dy * uy, side = Math.abs(dx * uy - dy * ux);
@@ -1408,7 +1415,7 @@ export class Game {
         break;
       }
       case 'swarm': {
-        const n = U.count + up;
+        const n = this.swarmCount(P, U, up);
         for (let i = 0; i < n; i++) {
           const a = (i / n) * Math.PI * 2;
           const f = this.pf.nearestFree(Math.floor(hero.x + Math.cos(a) * 1.6), Math.floor(hero.y + Math.sin(a) * 1.6), 6);

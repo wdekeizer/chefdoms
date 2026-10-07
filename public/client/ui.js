@@ -929,7 +929,7 @@ export function showTribute(pre) {
 let plSig = '';
 function refreshPlayers() {
   const list = realPlayers();
-  const sig = list.map(([p, i]) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '') + (G.ctf ? G.ps[i].caps + ':' + G.ps[i].heroKills + ':' + G.ps[i].deaths + ':' + G.ps[i].level + (G.ps[i].heroId ? '' : 'x') : ':' + (G.ps[i].score || 0))).join('|') + (G.tb ? G.tb.cur + ':' + G.tb.team + ':' + G.tb.ended : '') + (G.best ? G.best.score : '') + ':' + matesAlive().length;
+  const sig = list.map(([p, i]) => p.name + G.ps[i].age + G.ps[i].alive + (G.ps[i].pending.some((k) => k.startsWith('age')) ? '+' : '') + (G.ctf ? G.ps[i].caps + ':' + G.ps[i].heroKills + ':' + G.ps[i].deaths + ':' + G.ps[i].assists + ':' + G.ps[i].level + (G.ps[i].heroId ? '' : 'x') : ':' + (G.ps[i].score || 0))).join('|') + (G.tb ? G.tb.cur + ':' + G.tb.team + ':' + G.tb.ended : '') + (G.best ? G.best.score : '') + ':' + matesAlive().length;
   if (sig === plSig) return;
   plSig = sig;
   const teams = new Set(list.map(([p]) => p.team)).size;
@@ -940,7 +940,7 @@ function refreshPlayers() {
       h('span', { class: 'pl-name' }, p.name),
       h('span', { class: 'pl-team', title: COMMANDERS[p.commander].name }, COMMANDERS[p.commander].title),
       h('span', { class: 'pl-lvl', title: 'Hero level' }, 'Lv ' + G.ps[i].level),
-      h('span', { class: 'pl-age', title: 'captures · hero kills / deaths' }, `${G.ps[i].caps}⚑ ${G.ps[i].heroKills || 0}/${G.ps[i].deaths}`))));
+      h('span', { class: 'pl-age', title: 'captures · hero kills / deaths / assists' }, `${G.ps[i].caps}⚑ ${G.ps[i].heroKills || 0}/${G.ps[i].deaths}/${G.ps[i].assists || 0}`))));
     return;
   }
   // the live score: the leader gets a star; your team-mates can be clicked to send them ingredients
@@ -1377,9 +1377,9 @@ export function showOver(m) {
   const tabs = ctf ? [
     ['Scores', () => h('div', null,
       h('table', { class: 'score' },
-        h('tr', null, ['Chef', 'Hero', 'Level', 'Captures', 'Hero kills', 'Deaths', 'Minions', 'Tips earned', 'Items', 'Total'].map((t) => h('th', null, t))),
-        rows.map((x) => tr(x, [COMMANDERS[x.commander].name, x.level || 1, x.caps, x.kills, x.deaths, x.minions, fmtNum(x.earned), itemCells(x), h('b', { class: 'total' }, fmtNum(sc(x).total))]))),
-      h('p', { class: 'muted' }, 'Captures count 400 each · hero kills 60 · minions 4 · every item tier 40 · a quarter of the Tips earned'))],
+        h('tr', null, ['Chef', 'Hero', 'Level', 'Captures', 'Hero kills', 'Assists', 'Deaths', 'Minions', 'Tips earned', 'Items', 'Total'].map((t) => h('th', null, t))),
+        rows.map((x) => tr(x, [COMMANDERS[x.commander].name, x.level || 1, x.caps, x.kills, x.assists || 0, x.deaths, x.minions, fmtNum(x.earned), itemCells(x), h('b', { class: 'total' }, fmtNum(sc(x).total))]))),
+      h('p', { class: 'muted' }, 'Captures count 400 each · hero kills 60 · assists 25 · minions 4 · every item tier 40 · a quarter of the Tips earned'))],
   ] : [
 
     ['Scores', () => h('div', null,

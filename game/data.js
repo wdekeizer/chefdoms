@@ -7,7 +7,7 @@
 //  (Restart the server afterwards; everyone must reload the page.)
 // ============================================================================
 
-export const VERSION = '1.6.0';
+export const VERSION = '1.6.1';
 export const TICK_RATE = 20;            // simulation ticks per second
 export const DT = 1 / TICK_RATE;
 export const MAX_PLAYERS = 10;
@@ -599,6 +599,8 @@ export const COMMANDERS = {
     ],
     mods: [{ sel: 'cook', stat: 'g_spice', mul: 1.25 }, { misc: 'techCostMul', mul: 0.67 }, { misc: 'buildMul', mul: 1.3 }],
     aura: { key: 'a_odile', name: 'Sweet Tooth', desc: 'Units near Odile move 12% faster.', tb: 'Units within 2 tiles of Odile at the start of your turn get +1 movement.' },
+    ctfAbility: { key: 'sugar', name: 'Sugar Rush', cd: 90, ctfCd: 28, dur: 7, radius: 0,
+      desc: 'Dessert first: Odile moves 40% faster for 7s. (Capture the Flag: there are no Prep Cooks to hurry.)' },
     ability: { key: 'sugar', name: 'Sugar Rush', cd: 90, dur: 15, radius: 0,
       desc: 'Everyone gets dessert first. ALL your units move 40% faster and Prep Cooks gather 40% faster for 15s.',
       tb: 'ALL your units that have not moved yet get +2 movement this turn, and your stations pay 20% more at the start of your next turn.' },
@@ -619,11 +621,13 @@ export const COMMANDERS = {
     ],
     mods: [{ misc: 'trainMul', mul: 0.75 }, { sel: 'veh', stat: 'cost', mul: 0.8 }, { sel: 'pantry', stat: 'cost', mul: 0.5 }, { sel: 'cook', stat: 'speed', mul: 1.1 }],
     aura: { key: 'a_zara', name: 'Tip Jar', desc: `Every enemy unit defeated near Zara pays you ${ZARA_TIP} Spice.`, tb: `Every enemy unit defeated within 2 tiles of Zara pays you ${ZARA_TIP} Spice.` },
-    ctfAbility: { key: 'rush', name: 'Rush Hour', cd: 60, dur: 6, radius: 0,
-      desc: 'Every hero on your team moves 40% faster for 6s, wherever they are. (Capture the Flag: there are no stations to hurry.)' },
+    ctfAbility: { key: 'rush', name: 'Rush Hour', cd: 60, ctfCd: 28, dur: 5, radius: 0,
+      desc: 'Every hero on your team moves 40% faster for 5s, wherever they are. (Capture the Flag: there are no stations to hurry.)' },
     ability: { key: 'lunch', name: 'Lunch Rush', cd: 90, dur: 15, radius: 0,
       desc: 'The queue is around the block. ALL your stations train and research 3x faster for 15s.',
       tb: 'Everything your stations are training or researching is finished right now.' },
+    ctfUltimate: { key: 'swarm', name: 'Delivery Swarm', cd: 180, dur: 45, radius: 0, count: 4,
+      desc: 'Zara calls in every rider she knows: four Delivery Scooters roar in around her and fight for 45s, one more every six minutes and every three levels she gains.' },
     ultimate: { key: 'swarm', name: 'Delivery Swarm', cd: 180, dur: 45, radius: 0, count: 4,
       desc: 'Zara calls in every rider she knows. Four Delivery Scooters (one more each age) roar in around her and fight for 45s before heading home. They cost nothing and need no staff room.',
       tb: 'Four Delivery Scooters (one more each age) arrive next to Zara, ready to act, and stay for 3 of your turns. They cost nothing and need no staff room.' },
@@ -657,7 +661,7 @@ export const COMMANDERS = {
     aura: { key: 'a_kofi', name: 'Backdraft', desc: 'Enemies near Kofi take 10% more damage.' },
     ability: { key: 'dash', name: 'Flash Fry', cd: 50, dur: 3, radius: 7, dmg: 45, dmgPerAge: 15,
       desc: 'Kofi dashes to the nearest enemy hero within 7 tiles (any enemy if none), hits it hard, and attacks 40% faster for 3s.', tb: '' },
-    ultimate: { key: 'storm', name: 'Cleaver Storm', cd: 150, dur: 5, radius: 2.5, dmg: 22, dmgPerAge: 6,
+    ultimate: { key: 'storm', name: 'Cleaver Storm', cd: 150, dur: 5, radius: 2.5, dmg: 17, dmgPerAge: 5,
       desc: 'For 5s Kofi becomes a whirlwind: every quarter second, every enemy within 2.5 tiles takes damage that ignores armour.', tb: '' },
     quotes: ['Behind!', 'Hot pan coming through.', 'You blinked.'],
   },
@@ -912,8 +916,16 @@ export const CTF = {
   heroAge: 2,              // heroes start with the stats they would have in the Diner Age
   heroAtkMul: 1.85,        // ...and hit harder than in the long game, so duels are decided in seconds, not minutes
   heroHpMul: 0.8,          // ...with less health to lose (v1.6.0: fights end about a third sooner)
-  // on top of that, every hero but Big Hank (who wins by outlasting) hits harder still in the arena
-  heroDps: { flint: 1.35, nonna: 1.1, ryo: 1.1, odile: 2.0, zara: 1.55, dolly: 1.05, kofi: 1.05, ingrid: 2.0, rafa: 1.3 },
+  // v1.6.1 balance pass, measured with tools/ctf-balance.mjs (duels and 3v3 fights at three stages, plus whole bot matches):
+  heroHp: { flint: 1.14, nonna: 1.03, hank: 0.98, ryo: 1.11, odile: 0.97, zara: 1.15, dolly: 0.88, kofi: 0.86, ingrid: 0.91, rafa: 1 },   // per-hero health multiplier
+  // per-hero speed bonus (tiles per second): matches are won by whoever can get away to heal and run a flag home,
+  // so the slow, sturdy heroes needed speed far more than health or damage, and the quick ranged ones a little less
+  heroSpeed: { flint: -0.1, nonna: 0.45, hank: 0.75, ryo: -0.15, odile: -0.35, zara: -0.4, dolly: 0.6, kofi: -0.4, ingrid: -0.05, rafa: -0.1 },
+  heroGrowth: { flint: 1.25, nonna: 0.8, hank: 1.25, ryo: 1.25, odile: 1.25, zara: 1.25, dolly: 0.8, kofi: 0.8, ingrid: 0.8, rafa: 1.25 },          // per-hero growth per level (1 = +6% health and +5% attack a level)
+  meleeChase: 1.25,        // melee heroes move this much faster while running after an enemy hero (so they can catch the ranged ones)
+  abilityDmgMul: 1,        // damaging abilities: this, times +5% per hero level (the same growth as attack)
+  // per-hero attack multiplier on top of that (v1.6.1: tuned with tools/ctf-balance.mjs and ctf-tune.mjs, together with heroHp, heroSpeed and heroGrowth)
+  heroDps: { flint: 1.54, nonna: 1.13, hank: 0.98, ryo: 1.22, odile: 1.95, zara: 1.79, dolly: 0.92, kofi: 0.9, ingrid: 1.82, rafa: 1.29 },
   // heroes level up as the match goes on: XP every second, more for minions, takedowns and captures
   level: { max: 15, xpPerSec: 2, base: 90, step: 40, hp: 0.06, atk: 0.05, armorEvery: 4,
     bountyXp: 1, killXp: 60, killXpPerLevel: 10, capXp: 100, bountyPerLevel: 6 },
@@ -922,6 +934,7 @@ export const CTF = {
   passiveTips: 3,          // Tips per second for everyone, so nobody is ever stuck
   bountyMul: 1.3,          // minion bounties pay this much more than the camp lists below
   capTips: 120,            // for carrying a flag home
+  assist: { share: 0.5, radius: 8, window: 10 },   // team-mates who hit a fallen hero in the last 10s, or stood within 8 tiles, get half its bounty and XP; minions likewise
   heroBounty: 130,         // Tips for felling a hero...
   heroBountyPerTier: 12,   // ...plus this for every item tier the victim had bought
   respawn: { base: 6, perMin: 1.1, max: 22 },     // seconds, growing with the match clock
@@ -965,8 +978,8 @@ export const ctfKit = (C) => ({ ability: C.ctfAbility || C.ability, ultimate: C.
 export const ctfLevelNeed = (lv) => CTF.level.base + CTF.level.step * (lv - 1);
 /** The hero's stats at a level, with items applied (fresh object). `cmd` is the hero's commander key. */
 export function ctfHeroStats(base, items, cmd, level = 1) {
-  const L = CTF.level, lv = Math.max(1, Math.min(L.max, level | 0)), up = lv - 1, plate = Math.floor(lv / L.armorEvery);
-  const S = { ...base, bonus: { ...base.bonus }, regen: 0, hp: base.hp * CTF.heroHpMul * (1 + L.hp * up), atk: base.atk * CTF.heroAtkMul * (CTF.heroDps[cmd] || 1) * (1 + L.atk * up), armor: base.armor + plate, parmor: base.parmor + plate };
+  const L = CTF.level, lv = Math.max(1, Math.min(L.max, level | 0)), up = (lv - 1) * (CTF.heroGrowth[cmd] || 1), plate = Math.floor(lv / L.armorEvery);
+  const S = { ...base, bonus: { ...base.bonus }, regen: 0, speed: base.speed + (CTF.heroSpeed[cmd] || 0), hp: base.hp * CTF.heroHpMul * (CTF.heroHp[cmd] || 1) * (1 + L.hp * up), atk: base.atk * CTF.heroAtkMul * (CTF.heroDps[cmd] || 1) * (1 + L.atk * up), armor: base.armor + plate, parmor: base.parmor + plate };
   for (const key in CTF.items) {
     const it = CTF.items[key], lv = items[key] | 0;
     if (!lv) continue;

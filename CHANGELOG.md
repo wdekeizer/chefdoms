@@ -3,6 +3,35 @@
 Everyone in a match needs the same version: after the host updates, friends run `git pull` in their copy
 (the lobby chat warns when a copy and the server differ).
 
+## v1.6.1: Capture the Flag balance pass
+
+Measured with a new test bench (`tools/ctf-balance.mjs`): every hero against every other in duels and random 3v3
+fights at three points of a match (the levels and items bots really have by then), plus hundreds of whole bot
+matches, 3v3 and 2v2. Before, win rates ran from 30% (Ryo) to 69% (Ingrid), and in whole matches from about a third
+(Hank, Nonna, Dolly) to 80-90% (Odile). Now every hero averages 47-53% over the same tests on fresh maps and line-ups.
+
+- **Speed decides matches** (getting away to heal, running a flag home): the slow, sturdy heroes kept losing whatever
+  damage or health they had, until they got quicker. Arena speeds now: Hank 2.95, Dolly 2.9, Nonna 2.75, Ryo 2.65,
+  Kofi 2.6, Zara 2.5, Ingrid 2.45, Flint 2.4, Rafa 2.3, Odile 2.15 (Sugar Rush takes her to 3).
+- **Melee heroes run enemy heroes down** 25% faster, so they can catch the ranged ones.
+- **Attack and health re-tuned per hero** (`CTF.heroDps` / `heroHp`): Flint, Ryo and Zara hit harder and last longer;
+  Kofi, Dolly and Ingrid are lighter; the others moved a little. Growth per level (`heroGrowth`) is a little higher
+  for the heroes who used to fade late (Flint, Hank, Ryo, Odile, Zara, Rafa) and a little lower for the late-game
+  ones (Nonna, Dolly, Kofi, Ingrid).
+- **Assists:** when an enemy hero falls, every team-mate of the killer who hit it in the last 10 seconds, or stood
+  within 8 tiles, gets half its bounty and XP (shown in the player list and the end-of-match table, worth 25 points).
+  Team-mates near a fallen minion share its bounty too.
+- **Damaging abilities grow with your level**, like your attack (Flash Fry, Hot Shot, Thousand Cuts, Cleaver Storm,
+  Sauce Flood, Full Flambé, The Perfect Cut); they used to fall behind as health grew.
+- **Rush Hour** now really speeds up every hero on Zara's team (it only sped up Zara), for 5s every 28s.
+- **Sugar Rush** in the arena: Odile alone, 7s every 28s (was 15s every 27s).
+- **Cleaver Storm** hits a little softer (Kofi was strongest late). **Delivery Swarm** brings one more rider every three
+  levels Zara gains.
+- Known shapes that remain: Zara is strongest early; Kofi and Ingrid are strongest late; Ingrid is a team-fight
+  hero (weak alone, very strong in a group).
+- For tinkering: `node tools/ctf-balance.mjs` prints the table, `node tools/ctf-tune.mjs` re-tunes automatically
+  (see the README).
+
 ## v1.6.0
 
 **Fixes**

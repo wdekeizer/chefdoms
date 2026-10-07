@@ -201,7 +201,7 @@ function updatePlayer(r) {
   p.alive = !!r[9]; p.heroId = r[10]; p.heroRespawn = r[11]; p.abilityReady = r[12]; p.lunchUntil = r[13];
   p.pending = r[14]; p.kills = r[15]; p.lost = r[16]; p.razed = r[17]; p.bell = !!r[18];
   p.ultReady = r[19] || 0; p.lockUntil = r[20] || 0; p.score = r[29] || 0;
-  if (G.ctf) { p.caps = r[22] || 0; p.deaths = r[23] || 0; p.energyReady = r[24] || 0; p.minions = r[25] || 0; p.heroKills = r[26] || 0; p.level = r[27] || 1; p.xp = r[28] || 0; p.campBuffs = r[30] || [0, 0]; }
+  if (G.ctf) { p.caps = r[22] || 0; p.deaths = r[23] || 0; p.energyReady = r[24] || 0; p.minions = r[25] || 0; p.heroKills = r[26] || 0; p.level = r[27] || 1; p.xp = r[28] || 0; p.campBuffs = r[30] || [0, 0]; p.assists = r[31] || 0; }
   else if (r[21]) p.income = r[21];
 }
 

@@ -345,11 +345,14 @@ kitchen to run, one hero each, 5v5, 2v2, a ten-way free-for-all or anything in b
   minutes hero kills, then fewest deaths, settle it.
 - **Tips** are the only currency, and each hero's purse is their own (never shared with the team). Every second pays
   three, felling wild minions pays their bounty (and a bit more), taking down an enemy hero pays 130 (more if they are
-  well equipped or a high level), a capture pays 120. Zara's Tip Jar pays Tips.
+  well equipped or a high level), a capture pays 120. Zara's Tip Jar pays Tips. **Assists:** when an enemy hero
+  falls, every team-mate of the killer who hit it in the last 10 seconds, or stood within 8 tiles, gets half the bounty
+  and XP; team-mates close to a fallen minion share its bounty the same way.
 - **Levels.** Every hero starts at level 1 and levels up as the match goes on, up to 15: XP comes in every second
   (2 a second, so everyone climbs), plus XP for minions (as much as their bounty), takedowns (60, more for a
-  high-level victim) and captures (100). Each level gives +6% health and +5% attack, plus 1 armour every 4 levels,
-  and tops up your health by what it adds. Levels show in a badge next to every hero's health bar, on your hero
+  high-level victim) and captures (100). Each level gives about +6% health and +5% attack (a little more for the heroes
+  who would otherwise fade late, a little less for the ones who come on strong late), plus 1 armour every 4 levels,
+  and tops up your health by what it adds; damaging abilities grow with your level too. Levels show in a badge next to every hero's health bar, on your hero
   button (with an XP bar; hover it for the numbers) and in the player list. Expect level 10 or so by 15 minutes.
 - **Items** (the second and third row of the command card; shop within a few tiles of your kitchen, or while you wait
   to respawn): Cast-Iron Skillet (attack), Chef's Whites (armour), Hearty Stew (health), Running Clogs (speed),
@@ -367,9 +370,11 @@ kitchen to run, one hero each, 5v5, 2v2, a ten-way free-for-all or anything in b
   hero buttons and, for everyone, in the score bar. Worth splitting up for.
 - **Heroes.** All ten commanders fight here with their abilities on a short cooldown (about 15 to 20 seconds) and their
   ultimates (unlocked at 3:00, about 75 to 80 seconds). The slows and freezes keep longer ones: Brain Freeze 32s,
-  Deep Freeze 125s, Sugar Glass 130s, Sauce Flood 110s. Heroes hit 50% harder than in the classic game, and on top of
-  that everyone but Big Hank (who wins by outlasting) hits harder still: Ingrid and Odile x2, Zara x1.55, Flint x1.35,
-  Rafa x1.3, Nonna and Ryo x1.1, Dolly and Kofi x1.05. A fallen
+  Deep Freeze 125s, Sugar Glass 130s, Sauce Flood 110s, Rush Hour and Sugar Rush 28s. Every hero has its own attack,
+  health and speed in the arena (`CTF.heroDps`, `heroHp`, `heroSpeed` and `heroGrowth` in `game/data.js`), balanced
+  with thousands of simulated duels, team fights and bot matches so every hero wins about half of them. Matches are
+  won by whoever can get away to heal and run a flag home, so the sturdy heroes are quick here (Hank, Dolly, Nonna)
+  and the long-range ones a little slower. Melee heroes move 25% faster while running after an enemy hero. A fallen
   hero returns at the kitchen after 6 seconds early on, growing to 22 late in the match. Hank's and Zara's kits are
   swapped for ones that work without stations (Thick Bark and Rush Hour), and four heroes are only playable here:
 
@@ -383,10 +388,10 @@ kitchen to run, one hero each, 5v5, 2v2, a ten-way free-for-all or anything in b
 - **The screen.** There is no info panel here, to keep the arena clear: your hero is always selected (left-clicks
   never deselect it; right-click moves and attacks) and the camera is locked on it (`Y` frees it, or click the
   minimap). The score bar under the top bar shows the captures, the target, the clock and, while you are down, when
-  you are back; the player list shows levels, captures and hero kills / deaths for everyone; a dropped flag shows how
-  long until it goes home. The end-of-match table counts levels, captures, hero kills, deaths, minions, Tips earned
-  and items.
-- **Bots** play it at all four levels: they farm camps that suit their strength (buff camps included), shop, run flags
+  you are back; the player list shows levels, captures and hero kills / deaths / assists for everyone; a dropped flag
+  shows how long until it goes home. The end-of-match table counts levels, captures, hero kills, assists, deaths,
+  minions, Tips earned and items.
+- **Bots** play it at every level: they farm camps that suit their strength (buff camps included), shop, run flags
   one at a time per team, defend, and retreat to eat an Energy Bar when hurt. They play by the fog of war: an enemy they
   cannot see does not exist for them, and a flag carrier out of sight is only tracked through the minimap reveals
   (the nearest bot goes to look; it takes them a moment to react when the carrier comes into view).
@@ -435,7 +440,13 @@ node tools/sim-test.js --mode turn --rounds 60   a turn-based bot match (add --s
 node tools/sim-test.js --mode ctf --n 10 --teams 2 --level hard   a 5v5 Capture the Flag between bots (--teams 0: free for all)
 node tools/rules-test.js                    rule checks (economy, combat, heroes, ultimates, turn-based mode, capture the flag, victory, ...)
 node tools/net-test.js                      end-to-end server test (Node 22+)
+node tools/ctf-balance.mjs                  Capture the Flag hero balance: every hero's win rate in duels, 3v3 fights and bot matches (a few minutes)
+node tools/ctf-tune.mjs 8                   let the computer re-tune the CTF heroes (about an hour; prints the numbers for game/data.js)
 ```
+
+The CTF heroes' arena numbers are `CTF.heroDps`, `heroHp`, `heroSpeed` and `heroGrowth` in `game/data.js`. To try a change
+without editing the file: `BAL='{"heroSpeed":{"hank":0.5}}' node tools/ctf-balance.mjs` (on Windows PowerShell:
+`$env:BAL='{"heroSpeed":{"hank":0.5}}'; node tools/ctf-balance.mjs`).
 
 ## What is where
 
