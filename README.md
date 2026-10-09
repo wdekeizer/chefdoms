@@ -127,7 +127,7 @@ A friend's copy uses its own `public/music` and `public/sfx` folders, so each pl
 
 | | |
 |---|---|
-| **Produce** | Pick it from Veggie Patches, fish it from the Fishing Spots on a pond's shore, then build Garden Plots (endless, one Prep Cook each). The quickest thing to gather, so it pays to start there. Pays for most units. |
+| **Produce** | Pick it from Veggie Patches, fish it from the Fishing Spots on a pond's shore, then build Garden Plots (endless, one Prep Cook each) once you have a Farmers Market. The quickest thing to gather, so it pays to start there. Pays for most units. |
 | **Firewood** | Chop trees. Pays for stations. |
 | **Spice** | Dig Spice Mounds. Pays for the good stuff: advanced units, upgrades, new ages. |
 | **Salt** | Chip Salt Rocks (every base starts with two deposits, and the map holds plenty more). Pays for towers, your Signature Restaurant (500) and extra Kitchen HQs. |
@@ -136,7 +136,9 @@ A friend's copy uses its own `public/music` and `public/sfx` folders, so each pl
 Gathering is brisk: Prep Cooks pick Produce (Veggie Patches, gardens, fishing) fastest, about a third quicker than
 chopping, digging or chipping.
 
-**The Farmers Market** (Diner Age, 175 Firewood) trades ingredients for each other. Select it and its trading table
+**The Farmers Market** (Diner Age, 175 Firewood) is where the seeds come from: **Garden Plots need a finished Farmers
+Market** (the card says so until you have one), so the first age is lived on Veggie Patches and fishing. The market
+also trades ingredients for each other. Select it and its trading table
 appears beside the minimap: each row is what you hand over (100 of it), each column what you get back. Click a cell to trade
 once, Shift-click for five. Spice and Salt are worth more than Produce and Firewood. Prices are shared by everyone in
 the match: whatever gets sold becomes cheaper, whatever gets bought dearer, and they drift back to normal over time.
@@ -160,9 +162,9 @@ Inside they are safe, heal quickly, and every 2 soldiers add a shot to the stati
 Aggressive / Hold the Line / Stand Down (the stance its units start with; click to cycle), and **Keep recruits inside**:
 new units wait safely inside the station (up to 10, healing) instead of walking out, until you press **Let everyone out**.
 
-**Sending ingredients.** In a team game, press **Send** on the top bar (or click a team-mate in the players list, or
-Menu → Send ingredients to a team-mate): pick who, then send 100, 500 or all of any ingredient. It arrives at once,
-free of charge.
+**Trading with team-mates.** In a team game, press **Trade** on the top bar (or click a team-mate in the players list,
+or Menu → Trade with a team-mate): pick who, then give 100, 500 or all of any ingredient. It arrives at once, free of
+charge. (Swapping one ingredient for another is the Farmers Market's job.)
 
 **The live score.** The players list (top right) shows everyone's score as the match goes on (the leader has a star),
 and below it the best score in the server's Hall of Fame for this kind of match.
@@ -180,7 +182,10 @@ way round and break through it when there is not (Battering Baguettes and catapu
 barely scratch it). Workers never break walls. Walls do not count as stations for Conquest or the scores.
 
 **Ages:** Food Cart → Diner → Bistro → Five-Star. Advance at the Kitchen HQ. Each age unlocks units, stations and upgrades,
-and makes your commander stronger.
+and makes your commander stronger. Your stations change their look with every age, so you can tell at a glance how
+far a kitchen has come: timber and plaster in the Food Cart Age; painted shutters, window boxes and a lantern in the
+Diner Age; dressed stone, arched windows, slate roofs and lamp posts in the Bistro Age; marble, gold trim, roof finials
+and pennants in the Five-Star Age.
 
 **Units and what they beat**
 
@@ -400,11 +405,31 @@ kitchen to run, one hero each, 5v5, 2v2, a ten-way free-for-all or anything in b
 
 Everything you hear is generated in the browser: the effects are synthesised, and the soundtrack is a set of
 original pieces (`public/client/tracks.js`) played by a small software synth in the style of a late-90s
-General MIDI module: lute, harp, recorder, strings, choir pads, timpani. There are twelve pieces, about
-33 minutes in all, each well over two minutes before it repeats: a lobby theme, five calm tunes and three ambient
-ones that rotate while you build, and three battle pieces that take turns while you are fighting. The harp and lute
-accompaniments each have their own rhythm (dotted, rolled, strummed, galloping, jigs...) rather than one shared pulse. Volumes and a "Next track" button are under Menu (in a match)
-or "Sound & music" (in the lobby).
+General MIDI module. There are twelve pieces, about 33 minutes in all, each between two and three and a half
+minutes long: a lobby theme, five calm tunes and three ambient ones that rotate while you build, and three battle
+pieces that take turns while you are fighting. The harp and lute accompaniments each have their own rhythm (dotted,
+rolled, strummed, galloping, jigs...) rather than one shared pulse. Volumes and a "Next track" button are under Menu
+(in a match) or "Sound & music" (in the lobby).
+
+**Pieces play through.** The battle music only comes in after a few seconds of real fighting and stays for a while
+after the last blow, and the calm piece it interrupted picks up where it left off once the fight is over, so pieces
+are not forever being cut short by skirmishes.
+
+**Soundfonts.** The same pieces can be played on different sets of instruments: pick one under Menu → Soundfont (it
+is remembered in your browser, and the piece carries on in the new voices at once).
+
+| Soundfont | Instruments |
+|---|---|
+| Kitchen (classic) | Lute, harp, recorder, strings, choir and timpani: the original |
+| Old School | Harpsichord, pizzicato strings, oboe, church organ, xylophone and trumpet, the way a 2004 MIDI card played them |
+| Tavern | Nylon guitar, music box, pan flute, accordion and fiddle |
+| Cathedral | Church organ, choir, tubular bells and ocarina, with a long echo |
+| Brass Band | Trumpets, clarinets, horns and an orchestra hit on the big beats |
+| Chip | Square and triangle waves, the sound of a grey handheld |
+
+To add a soundfont, add an entry to `SOUNDFONTS` in `public/client/music.js`: it maps the twelve part roles the
+pieces are written for (lute, harp, flute, strings, stac, choir, bell, horn, timp, drum, snare, tamb) onto any of the
+32 synth voices in the same file (or a new one you write).
 
 Every kind of unit has its own voice: Prep Cooks, infantry, ranged units, vehicles, siege, Baristas and your commander
 each answer a click differently, each ingredient sounds different when gathered, each projectile has its own launch

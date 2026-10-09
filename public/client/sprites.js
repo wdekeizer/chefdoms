@@ -1086,15 +1086,29 @@ export function drawEffect(ctx, kind, x, y, scale, p, color) {
 // ================================================================== BUILDINGS
 // Origin = top-left of the footprint (N x N tiles). The front wall sits on the bottom edge of the
 // footprint and the roof rises up to ~0.7 tile above its top edge: classic top-down "3/4" RTS view.
+// Stations look grander as their owner ages up (v1.7.0). AGE and TC are set by bArt for the station being drawn;
+// the helpers below (walls, roofs, windows, doors, chimneys) pick their materials from the age, and ageExtras adds
+// a few trimmings: 1 Food Cart = timber and plaster · 2 Diner = painted shutters, window boxes, a lantern ·
+// 3 Bistro = dressed stone, arched windows, slate tiles, lamp posts · 4 Five-Star = marble, gold trim, finials, pennants.
+let AGE = 1, TC = '#999';
+const ASHLAR = '#d6cdb9', MARBLE = '#f5efe3', SLATE_LINE = 'rgba(40,30,50,0.22)', LAMP = '#ffe9a6';
 function pad(c, N) { if (L !== 0) return; c.fillStyle = 'rgba(104,78,46,0.28)'; c.beginPath(); rr(c, 0.05, 0.12, N - 0.1, N - 0.16, 0.3); c.fill(); }
 function bshadow(c, x0, y0, x1, y1) { if (L !== 0) return; c.fillStyle = 'rgba(28,38,18,0.27)'; c.beginPath(); rr(c, x0 + 0.16, y0 + 0.14, x1 - x0, y1 - y0, 0.14); c.fill(); }
 function wall(c, x0, y0, x1, y1, col, tex) {
+  // the Bistro Age rebuilds timber and plaster in dressed stone, the Five-Star Age in marble (brick and the modern
+  // 'plain' fronts keep their own material and only gain the trim)
+  if (AGE >= 4 && tex !== 'brick') { col = MARBLE; tex = 'marble'; } else if (AGE === 3 && tex !== 'brick' && tex !== 'plain') { col = ASHLAR; tex = 'ashlar'; }
   box(c, x0, y0, x1 - x0, y1 - y0, 0.03, col);
   const d = dk(col, 0.15);
   if (tex === 'plank') for (let x = x0 + 0.2; x < x1 - 0.05; x += 0.2) pen(c, d, LW, [x, y0 + 0.03, x, y1 - 0.03]);
   if (tex === 'brick') for (let y = y0 + 0.13, r = 0; y < y1 - 0.03; y += 0.13, r++) { pen(c, d, LW, [x0 + 0.03, y, x1 - 0.03, y]);
     for (let x = x0 + (r % 2 ? 0.14 : 0.28); x < x1 - 0.05; x += 0.28) pen(c, d, LW, [x, y - 0.13, x, y]); }
-  if (tex !== 'plain') box(c, x0 - 0.02, y1 - 0.13, x1 - x0 + 0.04, 0.13, 0.02, tex === 'brick' ? dk(col, 0.2) : STONE);
+  if (tex === 'ashlar') for (let y = y0 + 0.22, r = 0; y < y1 - 0.06; y += 0.22, r++) { pen(c, d, LW, [x0 + 0.03, y, x1 - 0.03, y]);
+    for (let x = x0 + (r % 2 ? 0.24 : 0.48); x < x1 - 0.05; x += 0.48) pen(c, d, LW, [x, y - 0.22, x, y]); }
+  if (tex === 'marble' && L === 1) { c.strokeStyle = 'rgba(150,140,160,0.35)'; c.lineWidth = LW; for (let x = x0 + 0.3; x < x1 + (y1 - y0); x += 0.5) { c.beginPath(); c.moveTo(Math.max(x0 + 0.02, x - (y1 - y0) * 0.6), y1 - 0.04); c.lineTo(Math.min(x1 - 0.02, x), y0 + 0.04); c.stroke(); } }
+  if (tex !== 'plain') box(c, x0 - 0.02, y1 - 0.13, x1 - x0 + 0.04, 0.13, 0.02, tex === 'brick' ? dk(col, 0.2) : tex === 'marble' ? '#d9cfbd' : STONE);
+  if (AGE >= 4) pen(c, GOLD, Math.max(LW * 1.6, 0.03), [x0 - 0.02, y1 - 0.13, x1 + 0.02, y1 - 0.13]);                  // gold string course
+  else if (AGE === 2 && tex !== 'brick' && tex !== 'plain') box(c, x0 - 0.02, y0 + 0.02, x1 - x0 + 0.04, 0.07, 0.02, TC);   // a painted band under the eaves
 }
 /** Hip roof seen from the front-top: back slope, two hips and the big front slope (the team colour). */
 function roof(c, x0, x1, yT, yR, yE, hip, col) {
@@ -1104,21 +1118,66 @@ function roof(c, x0, x1, yT, yR, yE, hip, col) {
   poly(c, [x0, yE, x1, yE, b, yR, a, yR], col);
   const n = Math.max(2, Math.round((yE - yR) / 0.3));
   for (let i = 1; i < n; i++) { const u = i / n; pen(c, dk(col, 0.17), LW * 1.2, [lerp(a, x0, u) + 0.04, lerp(yR, yE, u), lerp(b, x1, u) - 0.04, lerp(yR, yE, u)]); }
-  pen(c, lt(col, 0.5), Math.max(LW * 1.6, 0.03), [a, yR, b, yR]);
-  box(c, x0 - 0.02, yE - 0.03, x1 - x0 + 0.04, 0.085, 0.03, dk(col, 0.24));
+  if (AGE === 3 && L === 1) {                                                                                      // slate: scalloped tile rows
+    c.strokeStyle = SLATE_LINE; c.lineWidth = LW;
+    for (let i = 1; i < n; i++) { const u = i / n, y = lerp(yR, yE, u), xa = lerp(a, x0, u) + 0.04, xb = lerp(b, x1, u) - 0.04, w = (xb - xa) / Math.max(2, Math.round((xb - xa) / 0.22));
+      c.beginPath(); for (let x = xa; x < xb - 0.01; x += w) c.arc(x + w / 2, y, w / 2, PI, 0, true); c.stroke(); }
+  }
+  if (AGE === 2 && L === 1) {                                                                                      // shingles: staggered joints
+    c.strokeStyle = dk(col, 0.17); c.lineWidth = LW;
+    for (let i = 0; i < n; i++) { const u0 = i / n, u1 = (i + 1) / n, y0 = lerp(yR, yE, u0), y1 = lerp(yR, yE, u1), xa = lerp(a, x0, u1), xb = lerp(b, x1, u1);
+      for (let x = xa + 0.12 + (i % 2) * 0.13; x < xb - 0.06; x += 0.26) { c.beginPath(); c.moveTo(x, y0 + 0.02); c.lineTo(x, y1 - 0.02); c.stroke(); } }
+  }
+  pen(c, AGE >= 4 ? GOLD : lt(col, 0.5), Math.max(LW * 1.6, AGE >= 4 ? 0.05 : 0.03), [a, yR, b, yR]);
+  if (AGE >= 4) { for (const x of [a, b]) ball(c, x, yR - 0.02, 0.07, GOLD); poly(c, [(a + b) / 2 - 0.05, yR, (a + b) / 2 + 0.05, yR, (a + b) / 2, yR - 0.3], GOLD, LW * 0.8); }   // finials
+  box(c, x0 - 0.02, yE - 0.03, x1 - x0 + 0.04, 0.085, 0.03, AGE >= 4 ? '#b89a4a' : dk(col, 0.24));
 }
 function door(c, x, yb, w, h, col = WOOD_D) {
+  if (AGE >= 3) {                                                                                                  // a stone (then gold) surround
+    const k = 0.07, sc = AGE >= 4 ? GOLD : STONE;
+    c.beginPath(); c.moveTo(x - k, yb); c.lineTo(x - k, yb - h + w / 2); c.arc(x + w / 2, yb - h + w / 2, w / 2 + k, PI, 0); c.lineTo(x + w + k, yb); c.closePath(); ink(c, sc, LW * 1.2);
+  }
   c.beginPath(); c.moveTo(x, yb); c.lineTo(x, yb - h + w / 2); c.arc(x + w / 2, yb - h + w / 2, w / 2, PI, 0); c.lineTo(x + w, yb); c.closePath(); ink(c, col, LW * 1.6);
   pen(c, dk(col, 0.25), LW, [x + w / 2, yb - h + 0.03, x + w / 2, yb]); dot(c, x + w * 0.62, yb - h * 0.42, 0.025, GOLD);
+  if (AGE >= 4) box(c, x - 0.04, yb - 0.01, w + 0.08, 0.07, 0.02, '#a32c3e', LW * 0.7);                              // the red carpet
 }
 function win(c, x, y, w, h, glass = GLOW) {
-  box(c, x - 0.035, y - 0.035, w + 0.07, h + 0.07, 0.03, '#fff8ea'); box(c, x, y, w, h, 0.02, glass, LW * 0.8);
-  pen(c, '#fff8ea', Math.max(LW, 0.025), [x + w / 2, y, x + w / 2, y + h]); pen(c, '#fff8ea', Math.max(LW, 0.025), [x, y + h / 2, x + w, y + h / 2]);
+  const frame = AGE >= 4 ? GOLD : '#fff8ea';
+  if (AGE === 2) { box(c, x - 0.035 - 0.1, y - 0.035, 0.1, h + 0.07, 0.02, TC, LW * 0.8); box(c, x + w + 0.035, y - 0.035, 0.1, h + 0.07, 0.02, TC, LW * 0.8); }   // painted shutters
+  if (AGE >= 3) { c.beginPath(); c.arc(x + w / 2, y, w / 2 + 0.035, PI, 0); c.closePath(); ink(c, frame, LW * 0.8); c.beginPath(); c.arc(x + w / 2, y, w / 2, PI, 0); c.closePath(); ink(c, glass, LW * 0.6); }   // an arched top
+  box(c, x - 0.035, y - 0.035, w + 0.07, h + 0.07, 0.03, frame); box(c, x, y, w, h, 0.02, glass, LW * 0.8);
+  pen(c, frame, Math.max(LW, 0.025), [x + w / 2, y, x + w / 2, y + h]); pen(c, frame, Math.max(LW, 0.025), [x, y + h / 2, x + w, y + h / 2]);
   if (L === 1) { c.fillStyle = 'rgba(255,255,255,0.45)'; c.beginPath(); c.moveTo(x + w * 0.1, y + h * 0.4); c.lineTo(x + w * 0.4, y + h * 0.08); c.lineTo(x + w * 0.1, y + h * 0.08); c.fill(); }
+  if (AGE === 2) { box(c, x - 0.05, y + h + 0.035, w + 0.1, 0.09, 0.02, WOOD_D, LW * 0.7); for (let i = 0; i < 3; i++) dot(c, x + w * (0.2 + i * 0.3), y + h + 0.04, 0.03, ['#e5402e', '#f2c230', '#f07aa0'][i]); }   // a window box
 }
 function chimney(c, x, yt, yb, w) {
-  box(c, x, yt, w, yb - yt, 0.02, BRICK); for (let y = yt + 0.15; y < yb - 0.04; y += 0.13) pen(c, dk(BRICK, 0.2), LW, [x + 0.02, y, x + w - 0.02, y]);
-  box(c, x - 0.05, yt - 0.03, w + 0.1, 0.11, 0.03, STONE);
+  const col = AGE >= 4 ? MARBLE : AGE === 3 ? ASHLAR : BRICK;
+  box(c, x, yt, w, yb - yt, 0.02, col); for (let y = yt + 0.15; y < yb - 0.04; y += 0.13) pen(c, dk(col, 0.2), LW, [x + 0.02, y, x + w - 0.02, y]);
+  box(c, x - 0.05, yt - 0.03, w + 0.1, 0.11, 0.03, AGE >= 4 ? GOLD : STONE);
+}
+/** A few trimmings in front of every station, by age (drawn after the station itself). */
+function ageExtras(c, type, tc, N) {
+  if (AGE < 2 || type === 'garden' || type === 'tower' || (BLD[type] && BLD[type].wall)) return;
+  if (AGE === 2) {                                                                                                 // a hanging lantern and a potted plant
+    const lx = N - 0.12, ly = N - 0.72;
+    pen(c, IRON, Math.max(LW * 1.5, 0.035), [lx - 0.22, ly, lx, ly, lx, ly + 0.1]);
+    box(c, lx - 0.08, ly + 0.1, 0.16, 0.22, 0.03, IRON); box(c, lx - 0.055, ly + 0.13, 0.11, 0.15, 0.02, GLOW, LW * 0.7); dot(c, lx, ly + 0.08, 0.035, IRON);
+    box(c, 0.08, N - 0.1, 0.22, 0.2, 0.03, '#b9693f'); ball(c, 0.19, N - 0.2, 0.15, LEAF_D); dot(c, 0.14, N - 0.26, 0.035, '#e5402e'); dot(c, 0.24, N - 0.22, 0.035, '#f2c230');
+  } else if (AGE === 3) {                                                                                          // a lamp post, a stone planter
+    const px = -0.18, top = N - 0.95;
+    limb(c, px, N + 0.08, px, top, 0.05, IRON); box(c, px - 0.09, N + 0.06, 0.18, 0.08, 0.02, IRON);
+    box(c, px - 0.1, top - 0.26, 0.2, 0.28, 0.03, IRON); box(c, px - 0.07, top - 0.23, 0.14, 0.2, 0.02, LAMP, LW * 0.7); poly(c, [px - 0.13, top - 0.26, px + 0.13, top - 0.26, px, top - 0.4], IRON);
+    if (L === 1) { c.fillStyle = 'rgba(255,233,166,0.28)'; c.beginPath(); c.ellipse(px, top - 0.13, 0.3, 0.3, 0, 0, TAU); c.fill(); }
+    box(c, N - 0.44, N - 0.14, 0.4, 0.22, 0.03, STONE); ball(c, N - 0.24, N - 0.26, 0.17, LEAF_D); ball(c, N - 0.33, N - 0.18, 0.1, LEAF);
+  } else {                                                                                                         // Five-Star: pennants on gilded poles, a carpet to the street
+    for (const x of [0.1, N - 0.1]) {
+      limb(c, x, N + 0.1, x, N - 1.15, 0.045, '#d9c48a'); ball(c, x, N - 1.18, 0.05, GOLD);
+      const d = x < N / 2 ? 1 : -1;
+      poly(c, [x, N - 1.1, x + d * 0.42, N - 0.95, x, N - 0.8], tc, LW * 0.8); poly(c, [x, N - 1.03, x + d * 0.22, N - 0.95, x, N - 0.87], lt(tc, 0.45), 0);
+    }
+    box(c, N / 2 - 0.34, N - 0.02, 0.68, 0.24, 0.02, '#a32c3e'); pen(c, GOLD, Math.max(LW * 1.2, 0.025), [N / 2 - 0.3, N + 0.19, N / 2 + 0.3, N + 0.19]);
+    star(c, N / 2, N - 1.42 - (N - 2) * 0.1, 0.1, GOLD, LW * 0.8);
+  }
 }
 function awning(c, x0, x1, y0, y1, col, n = 5) {     // striped, scalloped awning (team colour + white)
   const d = 0.07;
@@ -1143,7 +1202,7 @@ const B_ART = dict({
     pad(c, 4); bshadow(c, 0.3, 0.9, 3.72, 3.72);
     limb(c, 0.75, 0.7, 0.75, -0.58, 0.05, WOOD_D); dot(c, 0.75, -0.6, 0.045, GOLD);
     wall(c, 0.3, 2.42, 3.7, 3.72, CREAM);
-    for (const x of [0.36, 1.5, 2.5, 3.64]) pen(c, WOOD_D, 0.07, [x, 2.55, x, 3.58]);
+    for (const x of [0.36, 1.5, 2.5, 3.64]) pen(c, AGE >= 4 ? GOLD : AGE === 3 ? dk(ASHLAR, 0.3) : WOOD_D, 0.07, [x, 2.55, x, 3.58]);   // timber posts, then stone pilasters, then gilt
     roof(c, 0.12, 3.88, -0.3, 0.75, 2.6, 1.05, tc);
     chimney(c, 2.78, -0.45, 0.7, 0.44);
     for (const x of [0.56, 1.02, 2.62, 3.08]) win(c, x, 2.92, 0.34, 0.44);
@@ -1174,7 +1233,8 @@ const B_ART = dict({
     sack(c, 0.3, 1.97, 0.85); sack(c, 0.68, 1.99, 0.7, '#dcc9a0');
   },
   garden(c, tc) {
-    box(c, 0.07, 0.09, 1.86, 1.84, 0.07, WOOD_L); box(c, 0.15, 0.17, 1.7, 1.68, 0.05, tc, LW * 0.8); box(c, 0.215, 0.235, 1.57, 1.55, 0.04, SOIL);
+    const rim = AGE >= 4 ? MARBLE : AGE === 3 ? STONE : AGE === 2 ? WHITE : WOOD_L;
+    box(c, 0.07, 0.09, 1.86, 1.84, 0.07, rim); box(c, 0.15, 0.17, 1.7, 1.68, 0.05, AGE >= 4 ? GOLD : tc, LW * 0.8); box(c, 0.215, 0.235, 1.57, 1.55, 0.04, SOIL);
     for (let r = 0; r < 4; r++) {
       const y = 0.48 + r * 0.4;
       if (L === 1) { c.fillStyle = dk(SOIL, 0.16); c.beginPath(); rr(c, 0.27, y - 0.02, 1.46, 0.11, 0.05); c.fill(); }
@@ -1184,7 +1244,8 @@ const B_ART = dict({
         else { ell(c, x, y + 0.02, 0.04, 0.03, '#f08a24', 0, LW * 0.7); sprout(c, x, y, 1.1, LEAF); }
       }
     }
-    for (const [x, y] of [[0.01, 0.03], [1.82, 0.03], [0.01, 1.78], [1.82, 1.78]]) box(c, x, y, 0.17, 0.17, 0.05, tc);
+    for (const [x, y] of [[0.01, 0.03], [1.82, 0.03], [0.01, 1.78], [1.82, 1.78]]) { box(c, x, y, 0.17, 0.17, 0.05, AGE >= 3 ? rim : tc); if (AGE >= 4) ball(c, x + 0.085, y + 0.02, 0.06, GOLD); }
+    if (AGE >= 3) { ell(c, 1.0, 1.0, 0.2, 0.2, STONE); ell(c, 1.0, 1.0, 0.14, 0.14, '#9fd8ea', 0, LW * 0.7); ball(c, 1.0, 0.92, 0.05, AGE >= 4 ? GOLD : STONE); }   // a little fountain
   },
   grill(c, tc) {
     pad(c, 3); bshadow(c, 0.34, 0.5, 2.68, 2.84);
@@ -1253,8 +1314,11 @@ const B_ART = dict({
     for (const u of [0.35, 0.68]) { pen(c, dk(tc, 0.12), LW * 1.2, [lerp(xm, x0 - 0.12, u), lerp(0.72, 1.6, u), lerp(xm, x0 - 0.12, u), lerp(-0.48, 0.3, u)]);
       pen(c, dk(tc, 0.3), LW * 1.2, [lerp(xm, x1 + 0.12, u), lerp(0.72, 1.6, u), lerp(xm, x1 + 0.12, u), lerp(-0.48, 0.3, u)]); }
     pen(c, lt(tc, 0.5), Math.max(LW * 1.6, 0.03), [xm, 0.72, xm, -0.46]);
-    poly(c, [x0, 2.78, x0, 1.52, xm, 0.84, x1, 1.52, x1, 2.78], WOOD_L);
-    for (let x = x0 + 0.2; x < x1 - 0.05; x += 0.2) pen(c, dk(WOOD_L, 0.15), LW, [x, 2.76, x, 1.52 - (1 - Math.abs(x - xm) / (xm - x0)) * 0.66 + 0.04]);
+    const fc = AGE >= 4 ? MARBLE : AGE === 3 ? ASHLAR : WOOD_L;
+    poly(c, [x0, 2.78, x0, 1.52, xm, 0.84, x1, 1.52, x1, 2.78], fc);
+    if (AGE === 3) for (let y = 1.74; y < 2.7; y += 0.22) pen(c, dk(fc, 0.15), LW, [x0 + 0.03, y, x1 - 0.03, y]);
+    else if (AGE < 3) for (let x = x0 + 0.2; x < x1 - 0.05; x += 0.2) pen(c, dk(WOOD_L, 0.15), LW, [x, 2.76, x, 1.52 - (1 - Math.abs(x - xm) / (xm - x0)) * 0.66 + 0.04]);
+    if (AGE >= 4) pen(c, GOLD, Math.max(LW * 1.6, 0.03), [x0, 2.65, x1, 2.65]);
     limb(c, x0 - 0.12, 1.6, xm, 0.72, 0.1, dk(tc, 0.05)); limb(c, x1 + 0.12, 1.6, xm, 0.72, 0.1, dk(tc, 0.05));
     box(c, x0 - 0.02, 2.65, x1 - x0 + 0.04, 0.13, 0.02, STONE);
     box(c, xm - 0.52, 1.82, 1.04, 0.96, 0.04, '#4a3530'); box(c, xm - 0.72, 1.86, 0.22, 0.92, 0.02, WOOD); box(c, xm + 0.5, 1.86, 0.22, 0.92, 0.02, WOOD);
@@ -1291,14 +1355,17 @@ const B_ART = dict({
     const body = () => { c.beginPath(); c.moveTo(0.44, 1.66); c.bezierCurveTo(0.44, 1.2, 0.74, 1.15, 0.72, 0.86); c.bezierCurveTo(0.7, 0.62, 0.5, 0.56, 0.5, 0.3);
       c.bezierCurveTo(0.5, 0.04, 0.76, -0.02, 0.78, -0.12); c.lineTo(1.22, -0.12); c.bezierCurveTo(1.24, -0.02, 1.5, 0.04, 1.5, 0.3); c.bezierCurveTo(1.5, 0.56, 1.3, 0.62, 1.28, 0.86);
       c.bezierCurveTo(1.26, 1.15, 1.56, 1.2, 1.56, 1.66); c.quadraticCurveTo(1, 1.84, 0.44, 1.66); c.closePath(); };
-    body(); ink(c, WOOD);
+    const tb = AGE >= 4 ? MARBLE : AGE === 3 ? ASHLAR : WOOD;
+    body(); ink(c, tb);
     if (L === 1) {
       c.save(); body(); c.clip();
+      if (AGE === 3) { c.strokeStyle = dk(ASHLAR, 0.15); c.lineWidth = LW; for (let y = 0.9; y < 1.7; y += 0.2) { c.beginPath(); c.moveTo(0.3, y); c.lineTo(1.7, y); c.stroke(); } }
       c.fillStyle = tc; c.fillRect(0, -0.12, 2, 0.74); c.fillStyle = dk(tc, 0.2); c.fillRect(0, 0.52, 2, 0.1); c.fillStyle = STEEL; c.fillRect(0, 0.78, 2, 0.15);
       c.fillStyle = 'rgba(255,250,235,0.3)'; c.beginPath(); c.ellipse(0.72, 0.8, 0.09, 1.0, 0.03, 0, TAU); c.fill();
       c.fillStyle = 'rgba(46,26,44,0.2)'; c.beginPath(); c.ellipse(1.5, 0.8, 0.22, 1.1, 0, 0, TAU); c.fill();
-      c.restore(); body(); pen(c, dk(WOOD, 0.36), LW);
+      c.restore(); body(); pen(c, dk(tb, 0.36), LW);
     }
+    if (AGE >= 4) { pen(c, GOLD, Math.max(LW * 1.6, 0.04), [0.5, 0.78, 1.5, 0.78]); pen(c, GOLD, Math.max(LW * 1.6, 0.04), [0.72, 0.56, 1.28, 0.56]); }
     box(c, 0.93, 0.16, 0.14, 0.22, 0.07, '#3a2c28'); box(c, 0.93, 1.02, 0.14, 0.22, 0.07, '#3a2c28'); door(c, 0.86, 1.74, 0.28, 0.36, '#5a3a26');
     ell(c, 1, -0.13, 0.25, 0.08, STEEL); ball(c, 1, -0.34, 0.2, WOOD_L); ell(c, 1, -0.55, 0.07, 0.04, STEEL);
   },
@@ -1422,13 +1489,13 @@ export function drawWall(ctx, type, color, x, y, scale, o = {}) {
   ctx.globalAlpha = ga;
 }
 const bSize = (type) => (BLD[type] ? BLD[type].size : 2);
-const bArt = (c, type, tc) => (B_ART[type] || B_ART._)(c, tc, bSize(type));
+const bArt = (c, type, tc, age = 1) => { AGE = Math.max(1, Math.min(4, age | 0)); TC = tc; (B_ART[type] || B_ART._)(c, tc, bSize(type)); ageExtras(c, type, tc, bSize(type)); AGE = 1; };
 
 /** Construction site: foundation + timber frame, with the real building rising from the ground as q goes 0..1. */
-function siteArt(c, type, tc, q) {
+function siteArt(c, type, tc, q, age) {
   const N = bSize(type);
   if (BLD[type] && BLD[type].walkable) {                 // flat plots: staked out, filled in left to right
-    c.save(); c.beginPath(); c.rect(-1, -1, 1 + N * (0.12 + 0.88 * q), N + 2); c.clip(); bArt(c, type, tc); c.restore();
+    c.save(); c.beginPath(); c.rect(-1, -1, 1 + N * (0.12 + 0.88 * q), N + 2); c.clip(); bArt(c, type, tc, age); c.restore();
     pen(c, '#efe4cb', Math.max(LW * 1.2, 0.02), [0.1, 0.12, N - 0.1, 0.12, N - 0.1, N - 0.1, 0.1, N - 0.1, 0.1, 0.12]);
     for (const [x, y] of [[0.1, 0.12], [N - 0.1, 0.12], [0.1, N - 0.1], [N - 0.1, N - 0.1]]) limb(c, x, y, x, y - 0.2, 0.05, WOOD_L);
     return;
@@ -1442,7 +1509,7 @@ function siteArt(c, type, tc, q) {
   limb(c, xs[0], N * 0.62, xs[1], N * 0.36, 0.045, WOOD); limb(c, xs[2], N * 0.62, xs[1], N * 0.36, 0.045, WOOD);
   limb(c, xs[0], N * 0.36, xs[1], 0.16, 0.045, WOOD); limb(c, xs[2], N * 0.36, xs[1], 0.16, 0.045, WOOD);
   const cut = lerp(N - 0.12, -0.85, q);
-  c.save(); c.beginPath(); c.rect(-1, cut, N + 2, N + 2 - cut); c.clip(); bArt(c, type, tc); c.restore();
+  c.save(); c.beginPath(); c.rect(-1, cut, N + 2, N + 2 - cut); c.clip(); bArt(c, type, tc, age); c.restore();
   const lx = N - 0.62, top = Math.max(0.3, cut - 0.15);                                                           // ladder + plank pile in front
   limb(c, lx, yb + 0.1, lx + 0.05, top, 0.04, WOOD_D); limb(c, lx + 0.24, yb + 0.1, lx + 0.29, top, 0.04, WOOD_D);
   for (let y = yb - 0.08; y > top + 0.05; y -= 0.2) pen(c, WOOD_D, Math.max(LW * 1.5, 0.03), [lx + 0.02, y, lx + 0.27, y]);
@@ -1500,15 +1567,15 @@ const DMG = [[0.3, 0.4], [0.72, 0.28], [0.52, 0.62], [0.22, 0.72]];
  * @param {string} type   a BUILDINGS key (anything else draws a neutral 2x2 placeholder hut)
  * @param {string} color  team colour (hex)
  * @param {number} scale  canvas pixels per tile
- * @param {{progress?:number, t?:number, hpFrac?:number, ghost?:false|'ok'|'bad'}} [o]
- *        progress < 1 = construction site (10 steps); hpFrac < 0.5 adds smoke, < 0.25 adds flames;
+ * @param {{progress?:number, t?:number, hpFrac?:number, ghost?:false|'ok'|'bad', age?:number}} [o]
+ *        progress < 1 = construction site (10 steps); hpFrac < 0.5 adds smoke, < 0.25 adds flames; age 1-4 = the owner's age (the look);
  *        ghost = translucent placement preview tinted green ('ok') or red ('bad').
  */
 export function drawBuilding(ctx, type, color, x, y, scale, o) {
-  const N = bSize(type), col = safeColor(color), ti = BLD_ID.get(type), bi = bucketIdx(scale);
-  const base = K_BLD + ((ti === undefined ? 31 : ti) * 64 + colorId(col)) * 512, ga = ctx.globalAlpha;      // + state * 32 + bucket
+  const N = bSize(type), col = safeColor(color), ti = BLD_ID.get(type), bi = bucketIdx(scale), age = Math.max(1, Math.min(4, (o && o.age) | 0 || 1));
+  const base = K_BLD + (((ti === undefined ? 31 : ti) * 64 + colorId(col)) * 4 + age - 1) * 512, ga = ctx.globalAlpha;      // + state * 32 + bucket
   const prog = o && o.progress != null ? o.progress : 1, t = (o && +o.t) || 0, box4 = [0.5, 1.2, N + 0.6, N + 0.5];
-  const art = (c) => bArt(c, type, col);
+  const art = (c) => bArt(c, type, col, age);
   if (o && o.ghost) {                                              // placement preview: tinted + translucent
     const bad = o.ghost === 'bad', key = base + (bad ? 12 : 11) * 32 + bi;
     const sp = cache.get(key) || miss(key, (s) => {
@@ -1521,7 +1588,7 @@ export function drawBuilding(ctx, type, color, x, y, scale, o) {
   }
   if (prog < 1) {                                                   // construction site, 10 visible steps
     const q = Math.max(0, Math.min(9, Math.floor(prog * 10))), key = base + q * 32 + bi;
-    blit(ctx, cache.get(key) || miss(key, (s) => bake(s, box4, (c) => siteArt(c, type, col, q / 10))), x, y, scale);
+    blit(ctx, cache.get(key) || miss(key, (s) => bake(s, box4, (c) => siteArt(c, type, col, q / 10, age))), x, y, scale);
     return;
   }
   blit(ctx, cache.get(base + 320 + bi) || miss(base + 320 + bi, (s) => bake(s, box4, art)), x, y, scale);

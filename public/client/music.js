@@ -82,6 +82,7 @@ function noiseSrc(ctx, t, end) {
   return s;
 }
 
+const HARPSI8 = pluck(0.92, 1.1, 0.42), HARPSI4 = pluck(0.92, 0.7, 0.16);
 const INST = {
   lute: pluck(0.55, 1.6, 0.5),
   harp: pluck(0.3, 2.6, 0.55),
@@ -199,7 +200,176 @@ const INST = {
       n.connect(nf); nf.connect(ng); ng.connect(dry); ng.connect(wet);
     }
   },
+
+  // ---- v1.7.0: more voices, in the spirit of a 2004 soundcard's General MIDI bank, used by the soundfonts below
+  // harpsichord: a bright, quick pluck with its octave string
+  harpsi(ctx, dry, wet, t, m, dur, vel) { HARPSI8(ctx, dry, wet, t, m, dur, vel); HARPSI4(ctx, dry, wet, t, m + 12, dur, vel); },
+  // pizzicato strings: a short, dull pluck
+  pizz: pluck(0.3, 0.45, 0.6),
+  // nylon guitar
+  nylon: pluck(0.45, 2.0, 0.5),
+  // oboe: a nasal double reed (sawtooth through a resonant band), with vibrato
+  oboe(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.2;
+    const g = env(ctx, t, dur * 0.95, vel * 0.17, 0.05, 0.1);
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = Math.min(3000, 1100 + f * 0.6); bp.Q.value = 1.6;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = Math.min(5000, 1800 + f * 2);
+    const o = osc(ctx, 'sawtooth', f, t, end), lfo = osc(ctx, 'sine', 5.6, t, end), lg = ctx.createGain();
+    lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(f * 0.007, t + Math.min(0.4, dur)); lfo.connect(lg); lg.connect(o.frequency);
+    o.connect(bp); o.connect(lp); bp.connect(g); lp.connect(g); g.connect(dry); g.connect(wet);
+  },
+  // clarinet: hollow (odd harmonics only), soft attack
+  clarinet(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.2;
+    const g = env(ctx, t, dur * 0.95, vel * 0.22, 0.07, 0.12);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = Math.min(3600, 900 + f * 2.5); lp.Q.value = 0.6;
+    const o = osc(ctx, 'square', f, t, end), lfo = osc(ctx, 'sine', 5, t, end), lg = ctx.createGain();
+    lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(f * 0.004, t + Math.min(0.5, dur)); lfo.connect(lg); lg.connect(o.frequency);
+    o.connect(lp); lp.connect(g); g.connect(dry); g.connect(wet);
+  },
+  // pan flute: breathy sine with a puff of air on every note
+  panflute(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.3;
+    const g = env(ctx, t, dur * 0.95, vel * 0.32, 0.04, 0.18);
+    const o = osc(ctx, 'sine', f, t, end), lfo = osc(ctx, 'sine', 4.6, t, end), lg = ctx.createGain();
+    lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(f * 0.009, t + Math.min(0.6, dur)); lfo.connect(lg); lg.connect(o.frequency);
+    const n = noiseSrc(ctx, t, end), nf = ctx.createBiquadFilter(), ng = ctx.createGain();
+    nf.type = 'bandpass'; nf.frequency.value = f * 1.5; nf.Q.value = 2.5;
+    ng.gain.setValueAtTime(0.5, t); ng.gain.exponentialRampToValueAtTime(0.12, t + 0.12);
+    n.connect(nf); nf.connect(ng); ng.connect(g); o.connect(g); g.connect(dry); g.connect(wet);
+  },
+  // ocarina: a pure, slightly wobbly whistle
+  ocarina(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.25;
+    const g = env(ctx, t, dur * 0.95, vel * 0.3, 0.03, 0.12);
+    const o = osc(ctx, 'sine', f, t, end), o2 = osc(ctx, 'sine', f * 2, t, end), g2 = ctx.createGain(); g2.gain.value = 0.08;
+    const lfo = osc(ctx, 'sine', 6.2, t, end), lg = ctx.createGain(); lg.gain.value = f * 0.008; lfo.connect(lg); lg.connect(o.frequency);
+    o.connect(g); o2.connect(g2); g2.connect(g); g.connect(dry); g.connect(wet);
+  },
+  // church organ: a stack of sines (8', 4', 2 2/3', 2'), no attack to speak of
+  organ(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.08;
+    const g = env(ctx, t, dur, vel * 0.13, 0.02, 0.06);
+    for (const [mul, amp] of [[1, 1], [2, 0.55], [3, 0.3], [4, 0.28], [0.5, 0.35]]) { const og = ctx.createGain(); og.gain.value = amp; osc(ctx, 'sine', f * mul, t, end).connect(og); og.connect(g); }
+    g.connect(dry); g.connect(wet);
+  },
+  // the same organ as a swelling pad
+  organpad(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 1.2;
+    const g = env(ctx, t, dur, vel * 0.12, Math.min(1.0, dur * 0.3), 1.0);
+    for (const [mul, amp] of [[1, 1], [2, 0.5], [3, 0.22], [0.5, 0.4]]) { const og = ctx.createGain(); og.gain.value = amp; osc(ctx, 'sine', f * mul, t, end, mul === 1 ? 0 : 3).connect(og); og.connect(g); }
+    g.connect(dry); g.connect(wet);
+  },
+  // accordion: two detuned reeds, a touch of tremolo
+  accordion(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.25;
+    const g = env(ctx, t, dur * 0.95, vel * 0.13, 0.05, 0.12);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = Math.min(4000, 1400 + f * 2);
+    for (const det of [-8, 9]) osc(ctx, 'sawtooth', f, t, end, det).connect(lp);
+    const sq = osc(ctx, 'square', f * 2, t, end), sg = ctx.createGain(); sg.gain.value = 0.18; sq.connect(sg); sg.connect(lp);
+    const trem = osc(ctx, 'sine', 5.5, t, end), tg = ctx.createGain(); tg.gain.value = 0.25; const mg = ctx.createGain(); mg.gain.value = 1; trem.connect(tg); tg.connect(mg.gain);
+    lp.connect(mg); mg.connect(g); g.connect(dry); g.connect(wet);
+  },
+  // fiddle: a solo bowed string, body resonance and slow vibrato
+  fiddle(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.3;
+    const g = env(ctx, t, dur * 0.95, vel * 0.2, 0.09, 0.15);
+    const bp = ctx.createBiquadFilter(); bp.type = 'peaking'; bp.frequency.value = 1900; bp.Q.value = 1.4; bp.gain.value = 7;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = Math.min(5200, 1500 + f * 3);
+    const o = osc(ctx, 'sawtooth', f, t, end), lfo = osc(ctx, 'sine', 5.8, t, end), lg = ctx.createGain();
+    lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(f * 0.01, t + Math.min(0.5, dur)); lfo.connect(lg); lg.connect(o.frequency);
+    o.connect(bp); bp.connect(lp); lp.connect(g); g.connect(dry); g.connect(wet);
+  },
+  // trumpet: brighter brass, a quick bend up into the note
+  trumpet(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.2;
+    const g = env(ctx, t, dur * 0.92, vel * 0.17, 0.03, 0.1);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 1.4;
+    lp.frequency.setValueAtTime(600, t); lp.frequency.linearRampToValueAtTime(Math.min(5000, 1500 + f * 4), t + 0.06);
+    const o = osc(ctx, 'sawtooth', f, t, end); o.frequency.setValueAtTime(f * 0.97, t); o.frequency.exponentialRampToValueAtTime(f, t + 0.05);
+    o.connect(lp); osc(ctx, 'sawtooth', f, t, end, 6).connect(lp); lp.connect(g); g.connect(dry); g.connect(wet);
+  },
+  // xylophone / marimba: a wooden tap with its inharmonic partial
+  xylo(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), len = 0.55;
+    for (const [mul, amp, dec] of [[1, 0.42, len], [3.93, 0.09, len * 0.35]]) {
+      const g = ctx.createGain(); g.gain.setValueAtTime(vel * amp, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
+      osc(ctx, 'sine', f * mul, t, t + len).connect(g); g.connect(dry); g.connect(wet);
+    }
+    const n = noiseSrc(ctx, t, t + 0.03), nf = ctx.createBiquadFilter(), ng = ctx.createGain();
+    nf.type = 'bandpass'; nf.frequency.value = Math.min(8000, f * 4); nf.Q.value = 2;
+    ng.gain.setValueAtTime(vel * 0.2, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.025); n.connect(nf); nf.connect(ng); ng.connect(dry);
+  },
+  // music box: a tiny bright tine
+  musicbox(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m + 12), len = 1.6;
+    for (const [mul, amp, dec] of [[1, 0.2, len], [4, 0.06, len * 0.4], [6.3, 0.03, len * 0.2]]) {
+      const g = ctx.createGain(); g.gain.setValueAtTime(vel * amp, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
+      osc(ctx, 'sine', f * mul, t, t + len).connect(g); g.connect(dry); g.connect(wet);
+    }
+  },
+  // tubular bells: a deep, long chime
+  tubular(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), len = 4.2;
+    for (const [mul, amp, dec] of [[1, 0.17, len], [1.5, 0.05, len * 0.7], [2.76, 0.07, len * 0.5], [5.4, 0.025, len * 0.25]]) {
+      const g = ctx.createGain(); g.gain.setValueAtTime(vel * amp, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
+      osc(ctx, 'sine', f * mul, t, t + len).connect(g); g.connect(dry); g.connect(wet);
+    }
+  },
+  // vibraphone: a soft metal bar with a slow shimmer
+  vibes(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), len = 2.2, end = t + len;
+    const g = ctx.createGain(); g.gain.setValueAtTime(vel * 0.24, t); g.gain.exponentialRampToValueAtTime(0.0001, end);
+    const trem = osc(ctx, 'sine', 4.5, t, end), tg = ctx.createGain(); tg.gain.value = 0.35; const mg = ctx.createGain(); mg.gain.value = 1; trem.connect(tg); tg.connect(mg.gain);
+    osc(ctx, 'sine', f, t, end).connect(mg); const o4 = osc(ctx, 'sine', f * 4, t, end), g4 = ctx.createGain(); g4.gain.setValueAtTime(0.1, t); g4.gain.exponentialRampToValueAtTime(0.0001, t + 0.5); o4.connect(g4); g4.connect(mg);
+    mg.connect(g); g.connect(dry); g.connect(wet);
+  },
+  // orchestra hit: the whole band on one stab
+  hit(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + 0.5;
+    const g = ctx.createGain(); g.gain.setValueAtTime(vel * 0.22, t); g.gain.exponentialRampToValueAtTime(0.0001, end);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(5000, t); lp.frequency.exponentialRampToValueAtTime(400, end);
+    for (const [mul, det] of [[1, -6], [1, 7], [2, 0], [0.5, 3], [1.5, -4]]) osc(ctx, 'sawtooth', f * mul, t, end, det).connect(lp);
+    lp.connect(g); g.connect(dry); g.connect(wet);
+  },
+  // chip: a square wave with a quick decay (a handheld in 1998), and a triangle for the softer parts
+  square(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.05;
+    const g = ctx.createGain(); g.gain.setValueAtTime(vel * 0.11, t); g.gain.setValueAtTime(vel * 0.11, t + Math.max(0.01, dur * 0.6)); g.gain.linearRampToValueAtTime(0.0001, end);
+    osc(ctx, 'square', f, t, end).connect(g); g.connect(dry);
+  },
+  tri(ctx, dry, wet, t, m, dur, vel) {
+    const f = hz(m), end = t + dur + 0.05;
+    const g = ctx.createGain(); g.gain.setValueAtTime(vel * 0.32, t); g.gain.setValueAtTime(vel * 0.32, t + Math.max(0.01, dur * 0.7)); g.gain.linearRampToValueAtTime(0.0001, end);
+    osc(ctx, 'triangle', f, t, end).connect(g); g.connect(dry);
+  },
+  chipnoise(ctx, dry, wet, t, m, dur, vel) {
+    const n = noiseSrc(ctx, t, t + 0.09), ng = ctx.createGain();
+    ng.gain.setValueAtTime(vel * 0.17, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.08); n.connect(ng); ng.connect(dry);
+  },
 };
+
+// ------------------------------------------------------------------ soundfonts
+// The pieces are written for twelve part roles (lute, harp, flute, strings, stac, choir, bell, horn, timp, drum,
+// snare, tamb). A soundfont says which voice above plays each role, so the whole soundtrack can change its sound
+// without a note changing. The choice is remembered in the browser (Menu → sound → Soundfont).
+export const SOUNDFONTS = {
+  kitchen: { name: 'Kitchen (classic)', desc: 'Lute, harp, recorder, strings, choir and timpani: the original.', map: {} },
+  oldschool: { name: 'Old School', desc: 'Harpsichord, pizzicato strings, oboe, church organ, xylophone and trumpet, the way a 2004 MIDI card played them.',
+    map: { lute: 'harpsi', harp: 'pizz', flute: 'oboe', strings: 'organpad', stac: 'pizz', choir: 'organpad', bell: 'xylo', horn: 'trumpet' } },
+  tavern: { name: 'Tavern', desc: 'Nylon guitar, music box, pan flute, accordion and fiddle: a back-room band.',
+    map: { lute: 'nylon', harp: 'musicbox', flute: 'panflute', strings: 'accordion', stac: 'nylon', choir: 'accordion', bell: 'musicbox', horn: 'fiddle' } },
+  cathedral: { name: 'Cathedral', desc: 'Church organ, choir, tubular bells and ocarina, with a long echo.',
+    map: { lute: 'organ', harp: 'vibes', flute: 'ocarina', strings: 'organpad', stac: 'organ', choir: 'choir', bell: 'tubular', horn: 'organ' }, reverb: 0.85 },
+  brass: { name: 'Brass Band', desc: 'Trumpets, clarinets, horns and an orchestra hit on every big beat.',
+    map: { lute: 'clarinet', harp: 'pizz', flute: 'clarinet', strings: 'horn', stac: 'trumpet', choir: 'horn', bell: 'vibes', horn: 'trumpet', timp: 'hit' } },
+  chip: { name: 'Chip', desc: 'Square and triangle waves, the sound of a grey handheld.',
+    map: { lute: 'square', harp: 'tri', flute: 'square', strings: 'tri', stac: 'square', choir: 'tri', bell: 'tri', horn: 'square', timp: 'chipnoise', drum: 'chipnoise', snare: 'chipnoise', tamb: 'chipnoise' }, reverb: 0.15 },
+};
+const fontStore = { get() { try { return localStorage.getItem('chefdoms.soundfont'); } catch { return null; } }, set(v) { try { localStorage.setItem('chefdoms.soundfont', v); } catch { /* private mode */ } } };
+let font = SOUNDFONTS[fontStore.get()] ? fontStore.get() : 'kitchen';
+/** The synth voice that plays a part role under the current soundfont. */
+const voiceFor = (role) => INST[SOUNDFONTS[font].map[role] || role] || INST[role] || INST.lute;
 
 // ------------------------------------------------------------------ sequencer
 function compile(def) {
@@ -246,11 +416,19 @@ class Voice {
     if (!g) { g = this.ctx.createGain(); g.gain.value = p.rev; g.connect(this.send); this.sends.set(p, g); }
     return g;
   }
-  start(t, fade) {
-    this.t0 = t;
+  /** Begin at context time t, fading in; `beat` picks up part-way through the piece (a piece interrupted by a fight resumes). */
+  start(t, fade, beat = 0) {
+    const { events, len, spb } = this.c;
+    beat = Math.max(0, Math.min(len - 0.001, beat));
+    this.t0 = t - beat * spb;
+    while (this.i < events.length && events[this.i].t < beat) this.i++;
     this.out.gain.setValueAtTime(0.0001, t);
     this.out.gain.linearRampToValueAtTime(1, t + Math.max(0.02, fade));
   }
+  /** Where the piece is now, in beats from the top of its current loop. */
+  beatAt(now) { const { len, spb } = this.c; return ((now - this.t0) / spb) % len; }
+  /** How much of the piece is still to come (0..1), counting the loops it is meant to play. */
+  left(now) { const { len } = this.c, loops = Math.max(1, this.def.loops || 1); return Math.max(0, 1 - (this.loopsPlayed + this.beatAt(now) / len) / loops); }
   /** Schedule every note that starts before `until` (context time). */
   schedule(until, maxLoops = Infinity) {
     const { events, len, spb } = this.c;
@@ -259,7 +437,7 @@ class Voice {
       const e = events[this.i];
       const t = this.t0 + (this.loop * len + e.t) * spb;
       if (t > until) return;
-      const fn = INST[e.p.inst] || INST.lute, wet = this.wetFor(e.p);
+      const fn = voiceFor(e.p.inst), wet = this.wetFor(e.p);
       for (const m of e.notes) fn(this.ctx, this.out, wet, Math.max(t, this.ctx.currentTime || 0), m, e.d * spb, e.p.vol);
       this.i++;
     }
@@ -296,18 +474,25 @@ function nextBattle() {
   return pick;
 }
 
-function playDef(def, fadeIn = 1.5, fadeOut = 1.5) {
+function playDef(def, fadeIn = 1.5, fadeOut = 1.5, beat = 0) {
   const a = audio();
   if (!a) return;
   const { ac, musicBus } = a;
-  if (!state.rev) { state.rev = makeReverb(ac); const rg = ac.createGain(); rg.gain.value = 0.55; state.rev.connect(rg); rg.connect(musicBus); }
+  if (!state.rev) { state.rev = makeReverb(ac); const rg = ac.createGain(); rg.gain.value = SOUNDFONTS[font].reverb || 0.55; state.rev.connect(rg); rg.connect(musicBus); state.revGain = rg; }
   const now = ac.currentTime;
   if (state.cur) state.cur.stop(now, fadeOut);
   state.cur = null; state.curDef = def;
   if (!def) return;
   const v = new Voice(ac, musicBus, state.rev, def);
-  v.start(now + 0.08, fadeIn);
+  v.start(now + 0.08, fadeIn, beat);
   state.cur = v;
+}
+
+/** A calm piece a fight interrupted: set aside so it can carry on where it left off once the fighting stops. */
+function shelve(now) {
+  const v = state.cur;
+  if (v && state.curDef && (state.curDef.mood === 'calm' || state.curDef.mood === 'ambient') && v.left(now) > 0.15 && !v.done) state.resume = { def: state.curDef, beat: Math.max(0, v.beatAt(now) - 2) };
+  else state.resume = null;
 }
 
 function categoryOf(want) { return want === 'battle' ? 'battle' : want === 'lobby' ? 'lobby' : 'game'; }
@@ -336,9 +521,12 @@ function tick() {
   // --- built-in soundtrack
   const mood = state.curDef ? state.curDef.mood : '';
   if (want === 'off') { if (state.cur) playDef(null, 0, 1.2); return; }
-  if (want === 'lobby' && mood !== 'lobby') playDef(byMood('lobby')[0], 2, 1.5);
-  else if (want === 'battle' && mood !== 'battle') playDef(nextBattle(), 0.6, 1.0);
-  else if (want === 'calm' && mood !== 'calm' && mood !== 'ambient') playDef(nextCalm(), 2.5, 2.5);
+  if (want === 'lobby' && mood !== 'lobby') { state.resume = null; playDef(byMood('lobby')[0], 2, 1.5); }
+  else if (want === 'battle' && mood !== 'battle') { shelve(a.ac.currentTime); playDef(nextBattle(), 0.6, 1.0); }
+  else if (want === 'calm' && mood !== 'calm' && mood !== 'ambient') {
+    const r = state.resume; state.resume = null;                                  // back from a fight: the piece it cut short carries on
+    if (r) playDef(r.def, 2.5, 2.5, r.beat); else playDef(nextCalm(), 2.5, 2.5);
+  }
   const v = state.cur;
   if (!v) return;
   v.schedule(a.ac.currentTime + 0.6);
@@ -372,7 +560,7 @@ export const music = {
   stinger(name) {
     const a = audio(), def = STINGERS[name];
     if (!a || !def || a.ac.state !== 'running') return;
-    if (!state.rev) { state.rev = makeReverb(a.ac); const rg = a.ac.createGain(); rg.gain.value = 0.55; state.rev.connect(rg); rg.connect(a.musicBus); }
+    if (!state.rev) { state.rev = makeReverb(a.ac); const rg = a.ac.createGain(); rg.gain.value = SOUNDFONTS[font].reverb || 0.55; state.rev.connect(rg); rg.connect(a.musicBus); state.revGain = rg; }
     const v = new Voice(a.ac, a.musicBus, state.rev, def);
     v.start(a.ac.currentTime + 0.05, 0.02);
     v.schedule(Infinity, 1);
@@ -383,22 +571,28 @@ export const music = {
     const a = audio();
     if (!a || a.ac.state !== 'running') return;
     if (state.elKind) { startFile(); return; }
+    state.resume = null;
     if (state.want === 'calm') playDef(nextCalm(), 1.2, 1.2);
     else if (state.want === 'battle') playDef(nextBattle(), 0.6, 1);
   },
   now: () => (state.elKind ? 'your files (' + state.elKind + ')' : state.curDef ? state.curDef.name : ''),
+  /** The soundfont: a SOUNDFONTS key. Takes effect on the next notes, so the piece carries on in the new voices. */
+  setFont(key) { if (!SOUNDFONTS[key]) return; font = key; fontStore.set(key); if (state.revGain) state.revGain.gain.value = SOUNDFONTS[key].reverb || 0.55; },
+  font: () => font,
+  /** For the development scripts: what is playing and where it is. */
+  debug() { const a = audio(), v = state.cur; return { want: state.want, piece: state.curDef ? state.curDef.id : '', beat: v && a ? Math.round(v.beatAt(a.ac.currentTime) * 10) / 10 : 0, left: v && a ? Math.round(v.left(a.ac.currentTime) * 100) / 100 : 0, resume: state.resume ? { id: state.resume.def.id, beat: Math.round(state.resume.beat * 10) / 10 } : null }; },
 };
 
-/** Render a piece offline (used by the tests to check levels). Returns an AudioBuffer. */
-export async function renderOffline(id, loops = 1) {
+/** Render a piece offline (used by the tests to check levels), or just its first `maxSeconds`. Returns an AudioBuffer. */
+export async function renderOffline(id, loops = 1, maxSeconds = Infinity) {
   const def = TRACKS.find((t) => t.id === id) || STINGERS[id];
   const c = compile(def);
-  const seconds = c.len * c.spb * loops + 3;
+  const seconds = Math.min(maxSeconds, c.len * c.spb * loops + 3);
   const ctx = new OfflineAudioContext(2, Math.ceil(44100 * seconds), 44100);
   const rev = makeReverb(ctx), rg = ctx.createGain();
   rg.gain.value = 0.55; rev.connect(rg); rg.connect(ctx.destination);
   const v = new Voice(ctx, ctx.destination, rev, def);
   v.start(0.05, 0.02);
-  v.schedule(Infinity, loops);
+  v.schedule(seconds, loops);
   return ctx.startRendering();
 }

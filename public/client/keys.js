@@ -43,7 +43,7 @@ export const ACTIONS = [
   ['bell', 'Ring / silence the HQ bell', 'KeyU', 'KeyU', 'Commands'],
   ['gatelock', 'Bar / open your gates (the selected ones, or all of them)', 'KeyK', 'Quote', 'Commands'],
   ['garrison', 'Selected soldiers go inside the nearest HQ, tower or Signature Restaurant', 'KeyJ', 'BracketLeft', 'Commands'],
-  ['tribute', 'Send ingredients to a team-mate', '', '', 'Commands'],
+  ['tribute', 'Trade: give ingredients to a team-mate', '', '', 'Commands'],
   ['formation', 'Next formation', 'KeyL', 'KeyL', 'Commands'],
   ['pause', 'Pause (host only)', 'KeyP', 'KeyP', 'Commands'],
   ...GRID_CLASSIC.map((code, i) => ['card' + i, `Command card: row ${((i / 5) | 0) + 1}, button ${(i % 5) + 1}`, code, GRID_WASD[i], 'Command card']),

@@ -157,6 +157,7 @@ export class Bot {
     const g = this.g, P = this.P;
     const S = P.stats.bldgs[type];
     if (!S || S.age > P.age || !this.canSpend(S.cost)) return false;
+    if (S.needs && !this.c.done(S.needs).length) return false;
     const spot = this.findSpot(type, near.x, near.y, minR, maxR);
     if (!spot) return false;
     const u = builder || this.pickBuilder(spot[0] + S.size / 2, spot[1] + S.size / 2);
@@ -223,7 +224,7 @@ export class Bot {
       const veh = P.commander === 'zara';
       wants.push(veh ? 'garage' : 'sauce', 'lab', veh ? 'sauce' : 'garage');
     }
-    if (a >= 2 && L.techs) wants.push('market');
+    if (a >= 2) wants.splice(1, 0, 'market');                                  // (Garden Plots need one, so every bot builds it early in the Diner Age)
     if (a >= 3) wants.push('restaurant', 'workshop');
     for (const t of wants) {
       if (c.n(t)) continue;
@@ -365,7 +366,7 @@ export class Bot {
       if (gd) { g.command(pi, { c: 'ga', ids: [u.id], tid: gd.id }); return !!u.order; }
       let gardenSites = 0;
       for (const b of this.c.sites) if (b.type === 'garden') gardenSites++;
-      if (gardenSites < 3) {
+      if (gardenSites < 3 && this.c.done('market').length) {
         const save = this.reserve; this.reserve = null;        // food is the engine; never starve it
         const ok = this.build('garden', home, 3, 13, u);
         this.reserve = save;

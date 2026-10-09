@@ -237,9 +237,10 @@ function stationBox(type, tx, ty, s) {
   const N = BUILDINGS[type] ? BUILDINGS[type].size : 2, wide = type === 'garden' ? 1 : 1 + 0.1 * (N - 1);
   return [ox + (tx + 0.5 - wide / 2) * s, oy + (ty + 1 - wide) * s, (s * wide) / N];
 }
+const ageOf = (owner) => (G.ps[owner] ? G.ps[owner].age : 1);
 const drawStation = (type, owner, tx, ty, s, o) => {
   if (BUILDINGS[type] && BUILDINGS[type].wall && !G.tb) { SPR.drawWall(ctx, type, colorOf(owner), ox + tx * s, oy + ty * s, s, { ...o, mask: wallMask(tx, ty, owner), open: o.open }); return; }
-  const b = stationBox(type, tx, ty, s); SPR.drawBuilding(ctx, type, colorOf(owner), b[0], b[1], b[2], o);
+  const b = stationBox(type, tx, ty, s); SPR.drawBuilding(ctx, type, colorOf(owner), b[0], b[1], b[2], { ...o, age: ageOf(owner) });   // (stations grow grander with their owner's age)
 };
 const teamOf = (owner) => (G.players[owner] ? G.players[owner].team : -99);
 /** Which neighbours of a wall tile are walls or gates of the same team (1 = N, 2 = E, 4 = S, 8 = W): they join up. */
@@ -368,7 +369,7 @@ function drawTacticsTop(now, s) {
   const fs = Math.max(12 * dpr, s * 0.3), cx = ox + (hov.tx + 0.5) * s, top = oy + (hov.ty - 0.18) * s;
   const placing = G.mode && G.mode.type === 'tplace' ? G.mode : null;
   if (placing) {
-    if (hov.kind === 'site') { const b = stationBox(placing.b, hov.tx, hov.ty, s); SPR.drawBuilding(ctx, placing.b, colorOf(G.me), b[0], b[1], b[2], { progress: 1, t: 0, hpFrac: 1, ghost: 'ok' }); }
+    if (hov.kind === 'site') { const b = stationBox(placing.b, hov.tx, hov.ty, s); SPR.drawBuilding(ctx, placing.b, colorOf(G.me), b[0], b[1], b[2], { progress: 1, t: 0, hpFrac: 1, ghost: 'ok', age: ageOf(G.me) }); }
     return;
   }
   if (P && hov.kind === 'attack' && hov.fc) {
@@ -758,7 +759,7 @@ export function render(now) {
     const ok = canPlaceLocal(mode.b, tx, ty);
     mode.tx = tx; mode.ty = ty; mode.ok = ok;
     if (B.wall) SPR.drawWall(ctx, mode.b, colorOf(G.me), ox + tx * s, oy + ty * s, s, { mask: wallMask(tx, ty, G.me), ghost: ok ? 'ok' : 'bad' });
-    else SPR.drawBuilding(ctx, mode.b, colorOf(G.me), ox + tx * s, oy + ty * s, s, { progress: 1, t, hpFrac: 1, ghost: ok ? 'ok' : 'bad' });
+    else SPR.drawBuilding(ctx, mode.b, colorOf(G.me), ox + tx * s, oy + ty * s, s, { progress: 1, t, hpFrac: 1, ghost: ok ? 'ok' : 'bad', age: ageOf(G.me) });
     ctx.strokeStyle = ok ? 'rgba(140,255,120,0.9)' : 'rgba(255,90,80,0.9)'; ctx.lineWidth = lw;
     ctx.strokeRect(ox + tx * s, oy + ty * s, B.size * s, B.size * s);
   }
@@ -801,6 +802,7 @@ export function render(now) {
 export function canPlaceLocal(type, tx, ty) {
   const n = BUILDINGS[type].size;
   if (tx < 0 || ty < 0 || tx + n > G.w || ty + n > G.h) return false;
+  if (BUILDINGS[type].needs && !G.bldgs.some((b) => b.owner === G.me && b.type === BUILDINGS[type].needs && b.prog >= 100)) return false;   // (Garden Plots need a Farmers Market)
   if (BUILDINGS[type].gate) {                                  // a gate may go on one of our own wall blocks (it takes that block's place)
     const there = G.ents.get(G.occ[ty * G.w + tx]);
     if (there && there.kind === K_BLDG && BUILDINGS[there.type] && BUILDINGS[there.type].wall && !BUILDINGS[there.type].gate && there.owner === G.me) return true;

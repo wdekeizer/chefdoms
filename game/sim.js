@@ -1545,6 +1545,8 @@ export class Game {
     }
     return out;
   }
+  /** Does player pi have a finished station of this type? (Garden Plots need a Farmers Market.) */
+  hasStation(pi, type) { for (const b of this.bldgs) if (b.owner === pi && b.type === type && b.done && !b.dead) return true; return false; }
   ownBldg(pi, id) {
     const e = this.ents.get(id);
     return e && e.kind === K_BLDG && e.owner === pi && !e.dead ? e : null;
@@ -1798,6 +1800,7 @@ export class Game {
         if (typeof c.b !== 'string' || !Object.hasOwn(BUILDINGS, c.b)) return;
         const S = P.stats.bldgs[c.b];
         if (!S || S.age > P.age) return;
+        if (S.needs && !this.hasStation(pi, S.needs)) { this.events.push(['note', pi, 'needs_' + S.needs]); return; }
         const tx = c.tx | 0, ty = c.ty | 0;
         if (S.gate && tx >= 0 && ty >= 0 && tx < this.w && ty < this.h) {     // a gate on one of our own wall blocks takes its place
           const old = this.ents.get(this.occ[ty * this.w + tx]);

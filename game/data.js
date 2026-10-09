@@ -7,7 +7,7 @@
 //  (Restart the server afterwards; everyone must reload the page.)
 // ============================================================================
 
-export const VERSION = '1.6.1';
+export const VERSION = '1.7.0';
 export const TICK_RATE = 20;            // simulation ticks per second
 export const DT = 1 / TICK_RATE;
 export const MAX_PLAYERS = 10;
@@ -295,8 +295,8 @@ export const BUILDINGS = {
     techs: ['peeler1', 'peeler2', 'hatchet1', 'hatchet2', 'sifter1', 'sifter2', 'basket', 'carts'],
   }),
   garden: B({
-    name: 'Garden Plot', desc: 'An endless supply of Produce. One Prep Cook per plot.',
-    size: 2, hp: 250, cost: { wood: 50 }, time: 10, walkable: true, sight: 2, tags: ['bldg', 'garden'],
+    name: 'Garden Plot', desc: 'An endless supply of Produce. One Prep Cook per plot. Needs a finished Farmers Market (the seeds come from there).',
+    size: 2, hp: 250, cost: { wood: 50 }, time: 10, walkable: true, sight: 2, tags: ['bldg', 'garden'], needs: 'market',
   }),
   grill: B({
     name: 'Grill Station', desc: 'Trains infantry: Line Cooks and Butchers.',

@@ -14,7 +14,7 @@ import {
 import * as TAC from './tactics.js';
 import { ACTIONS, keyOf, keyLabel, labelOf, setKey, resetKeys, setWasd, isWasd, canBind, onKeysChanged } from './keys.js';
 import { sfx, setMuted, isMuted, setSfxVolume, setMusicVolume, getSfxVolume, getMusicVolume } from './audio.js';
-import { music } from './music.js';
+import { music, SOUNDFONTS } from './music.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -260,7 +260,7 @@ function buildStatic() {
   resEls.clock = h('span', { class: 'clock' }, '0:00');
   resEls.ping = h('span', { class: 'ping' }, '');
   const menuBtn = h('button', { class: 'btn small ghost', onclick: () => toggleMenu() }, `Menu (${labelOf('menu') || '—'})`);
-  resEls.send = h('button', { class: 'btn small ghost hidden', title: 'Send ingredients to a team-mate', onclick: () => showTribute() }, 'Send');
+  resEls.send = h('button', { class: 'btn small ghost hidden', title: 'Trade: give ingredients to a team-mate', onclick: () => showTribute() }, 'Trade');
   onKeysChanged(() => { menuBtn.textContent = `Menu (${labelOf('menu') || '—'})`; });
   $('topbar').replaceChildren(
     h('div', { class: 'res-group' }, ...res, resEls.tips, (resEls.popBox.append(resEls.pop), resEls.popBox)),
@@ -377,6 +377,8 @@ function showCardTip() {
 
 // --------------------------------------------------------------- command card
 export const canAfford = (cost) => { const me = G.ps[G.me]; for (const r in cost) if (me.res[r] < cost[r]) return false; return true; };
+/** Do I have a finished station of this type? */
+const hasStation = (type) => G.bldgs.some((b) => b.owner === G.me && b.type === type && b.prog >= 100);
 const lacking = (cost) => { const me = G.ps[G.me]; return RES.filter((r) => cost[r] && me.res[r] < cost[r]).map((r) => RES_INFO[r].name); };
 
 function bellCard(me) {
@@ -417,10 +419,10 @@ function buildCard() {
         return;
       }
       BUILD_ORDER.forEach((b, i) => {
-        const S = st.bldgs[b];
+        const S = st.bldgs[b], missing = S.needs && !hasStation(S.needs);
         card[i] = {
-          icon: ['building', b], title: S.name, desc: S.desc, cost: S.cost, time: S.time / st.misc.buildMul, ok: me.age >= S.age,
-          why: `Requires the ${AGE_NAMES[S.age]}`, active: G.mode && G.mode.type === 'place' && G.mode.b === b,
+          icon: ['building', b], title: S.name, desc: S.desc, cost: S.cost, time: S.time / st.misc.buildMul, ok: me.age >= S.age && !missing,
+          why: me.age < S.age ? `Requires the ${AGE_NAMES[S.age]}` : missing ? `Build a ${st.bldgs[S.needs].name} first` : '', active: G.mode && G.mode.type === 'place' && G.mode.b === b,
           hint: 'Click to place. Hold Shift to place several.', stats: S.atk ? S : { hp: S.hp },
           run: () => { G.mode = { type: 'place', b }; },
         };
@@ -544,10 +546,10 @@ function buildCardTurn(me, e, st, cmdKey) {
     const why = (age) => (!my ? wait : done ? 'This unit is done for this turn' : `Requires the ${AGE_NAMES[age]}`);
     if (e.type === 'cook') {
       BUILD_ORDER.forEach((b, i) => {
-        const S = st.bldgs[b];
+        const S = st.bldgs[b], missing = S.needs && !hasStation(S.needs);
         card[i] = {
           icon: ['building', b], title: S.name, desc: TB.desc[b] || S.desc, cost: S.cost, turns: tbTurns(S.time / st.misc.buildMul),
-          ok: my && !done && me.age >= S.age, why: why(S.age), active: G.mode && G.mode.type === 'tplace' && G.mode.b === b, statText: tbBldgText(S),
+          ok: my && !done && me.age >= S.age && !missing, why: missing && my && !done && me.age >= S.age ? `Build a ${st.bldgs[S.needs].name} first` : why(S.age), active: G.mode && G.mode.type === 'tplace' && G.mode.b === b, statText: tbBldgText(S),
           hint: b === 'pantry' ? 'Then click a highlighted resource within reach. Right-clicking a resource does the same.' : 'Then click a highlighted tile: the Prep Cook walks next to it and starts building.',
           run: () => { G.mode = { type: 'tplace', b }; G.tbDirty = true; },
         };
@@ -897,7 +899,7 @@ function matesAlive() {
 /** The "send ingredients" window: pick a team-mate, then hand over 100, 500 or everything of any ingredient. */
 export function showTribute(pre) {
   const mates = matesAlive();
-  if (!mates.length) { note(G.tb || G.ctf ? 'Sending ingredients is a real-time feature' : 'You have no team-mates to send ingredients to', 'warn'); return; }
+  if (!mates.length) { note(G.tb || G.ctf ? 'Trading ingredients with team-mates is a real-time feature' : 'You have no team-mates to trade with', 'warn'); return; }
   const old = $('tribute'); if (old) { old.remove(); return; }
   let to = mates.some(([, i]) => i === pre) ? pre : mates[0][1], last = '';
   const body = h('div', { class: 'trib' });
@@ -914,11 +916,11 @@ export function showTribute(pre) {
         h('span', { class: 'dot', style: `background:${colorHex(p.color)}` }), p.name))),
       h('div', { class: 'trib-rows' }, ...RES.map((r) => h('div', { class: 'trib-row' },
         img('res', r, 'trib-ico', null, 64), h('span', { class: 'trib-name' }, RES_INFO[r].name), h('b', { class: 'trib-have', title: 'What you have' }, fmtNum(me.res[r])),
-        ...[100, 500].map((n) => h('button', { class: 'btn small', disabled: me.res[r] < n, onclick: () => give(r, n) }, 'Send ' + n)),
+        ...[100, 500].map((n) => h('button', { class: 'btn small', disabled: me.res[r] < n, onclick: () => give(r, n) }, 'Give ' + n)),
         h('button', { class: 'btn small ghost', disabled: me.res[r] < 1, onclick: () => give(r, Math.floor(me.res[r])) }, 'All')))));
   };
   const modal = h('div', { class: 'modal', id: 'tribute', onmousedown: (ev) => { if (ev.target === modal) modal.remove(); } },
-    h('div', { class: 'modal-box tribute' }, h('h2', null, 'Send ingredients'), h('p', { class: 'muted' }, 'Arrives straight away, free of charge. Your team-mate sees who sent it.'), body,
+    h('div', { class: 'modal-box tribute' }, h('h2', null, 'Trade with a team-mate'), h('p', { class: 'muted' }, 'Give a team-mate ingredients: they arrive straight away, free of charge, and your team-mate sees who sent them. (Swapping one ingredient for another is done at a Farmers Market.)'), body,
       h('button', { class: 'btn primary', onclick: () => modal.remove() }, 'Done')));
   document.body.append(modal);
   const iv = setInterval(draw, 250);
@@ -946,7 +948,7 @@ function refreshPlayers() {
   // the live score: the leader gets a star; your team-mates can be clicked to send them ingredients
   const top = Math.max(1, ...list.map(([, i]) => G.ps[i].score || 0)), mates = new Set(matesAlive().map(([, i]) => i));
   $('players').replaceChildren(...list.map(([p, i]) => h('div', { class: 'pl' + (G.ps[i].alive ? '' : ' out') + (i === G.me ? ' me' : '') + (G.tb && TAC.playing(i) && !TAC.ended(i) && !G.over ? ' turn' : '') + (mates.has(i) ? ' mate' : ''),
-    title: mates.has(i) ? `Click to send ${p.name} ingredients` : null, onclick: mates.has(i) ? () => showTribute(i) : null },
+    title: mates.has(i) ? `Click to trade: give ${p.name} ingredients` : null, onclick: mates.has(i) ? () => showTribute(i) : null },
     h('span', { class: 'dot', style: `background:${colorHex(p.color)}` }),
     h('span', { class: 'pl-name' }, p.name),
     teams < list.length && h('span', { class: 'pl-team' }, 'T' + p.team),
@@ -1083,7 +1085,7 @@ export function toggleMenu(force) {
       h('button', { class: 'btn', onclick: () => { toggleFullscreen(); toggleMenu(false); } }, document.fullscreenElement ? 'Leave full screen' : 'Full screen (best for edge scrolling)'),
       host && !G.over && h('button', { class: 'btn', onclick: () => { send({ t: 'pause' }); toggleMenu(false); } }, G.paused ? 'Resume match' : 'Pause match'),
       G.over && h('button', { class: 'btn', onclick: () => { toggleMenu(false); showOver(G.over); } }, 'Show the scores again'),
-      matesAlive().length > 0 && h('button', { class: 'btn', onclick: () => { toggleMenu(false); showTribute(); } }, 'Send ingredients to a team-mate'),
+      matesAlive().length > 0 && h('button', { class: 'btn', onclick: () => { toggleMenu(false); showTribute(); } }, 'Trade with a team-mate'),
       playing && h('button', { class: 'btn danger', onclick: () => { if (confirmTwice(modal.querySelector('.danger'), 'Really resign?')) { cmd({ c: 'rg' }); toggleMenu(false); } } }, 'Resign'),
       (host || G.over) && h('button', { class: 'btn danger', id: 'btn-end', onclick: (ev) => { if (G.over || confirmTwice(ev.target, 'End the match for everyone?')) { send({ t: 'end' }); toggleMenu(false); } } }, 'Return everyone to the lobby'),
       !host && !G.over && G.me >= 0 && h('button', { class: 'btn danger', id: 'btn-end', disabled: G.votes && G.votes.mine,
@@ -1129,9 +1131,14 @@ function soundControls() {
   const upd = () => { if (!nowPlaying.isConnected) { clearInterval(iv); return; } const n = music.now(); nowPlaying.textContent = isMuted() ? 'Muted' : n ? '♪ ' + n : ''; };
   const iv = setInterval(upd, 500);
   setTimeout(upd, 0);
+  // the soundfont: which instruments play the soundtrack (the piece carries on in the new voices at once)
+  const fontNote = h('div', { class: 'muted fontnote' }, SOUNDFONTS[music.font()].desc);
+  const fontSel = h('select', { id: 'soundfont', title: 'The instruments the soundtrack is played on', onchange: (ev) => { music.setFont(ev.target.value); fontNote.textContent = SOUNDFONTS[ev.target.value].desc; sfx('click'); } },
+    ...Object.keys(SOUNDFONTS).map((k) => h('option', { value: k, selected: k === music.font() }, SOUNDFONTS[k].name)));
   return h('div', { class: 'sound-box' },
     slider('Effects', getSfxVolume, setSfxVolume, true),
     slider('Music', getMusicVolume, setMusicVolume, false),
+    h('label', { class: 'font-row' }, h('span', null, 'Soundfont'), fontSel), fontNote,
     h('div', { class: 'row' },
       h('button', { class: 'btn small ghost', onclick: (ev) => { setMuted(!isMuted()); ev.target.textContent = isMuted() ? 'Unmute everything' : 'Mute everything'; } }, isMuted() ? 'Unmute everything' : 'Mute everything'),
       h('button', { class: 'btn small ghost', title: 'Skip to another piece', onclick: () => music.skip() }, 'Next track')),

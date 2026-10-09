@@ -816,6 +816,7 @@ export class TacticsGame extends Game {
         const u = this.ownUnit(pi, c.id), S = P.stats.bldgs[c.b];
         if (!u || !u.isCook || u.acted || !S || !Number.isFinite(c.x) || !Number.isFinite(c.y)) return;
         if (S.age > P.age) return;
+        if (S.needs && !this.hasStation(pi, S.needs)) { this.note(pi, 'needs_' + S.needs); return; }
         const x = c.x | 0, y = c.y | 0;
         const why = this.cantPlace(c.b, x, y);
         if (why) { this.note(pi, why); return; }

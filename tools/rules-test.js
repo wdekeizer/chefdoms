@@ -64,6 +64,16 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
   ok(moods('calm').length >= 5 && moods('ambient').length >= 3 && moods('battle').length >= 3 && moods('calm').every((t) => secs(t) >= 90) && moods('ambient').every((t) => secs(t) >= 150),
     'the soundtrack has five calm, three ambient and three battle pieces, each a full-length arrangement', TRACKS.map((t) => `${t.id} ${Math.round(secs(t))}s`).join(', '));
   ok(TRACKS.every((t) => secs(t) >= 135), 'every piece runs well over two minutes before it repeats', TRACKS.filter((t) => secs(t) < 135).map((t) => `${t.id} ${Math.round(secs(t))}s`).join(', '));
+  ok(TRACKS.every((t) => secs(t) >= 120 && secs(t) <= 215), 'v1.7.0: every piece is between two and three and a half minutes long', TRACKS.map((t) => `${t.id} ${Math.round(secs(t))}s`).join(', '));
+  // the soundfonts: every role every piece uses has a voice in every bank (the code only runs in a browser, so read it)
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../public/client/music.js', import.meta.url), 'utf8');
+  const roles = new Set(TRACKS.flatMap((t) => t.parts.map((p) => p.inst)));
+  const insts = new Set([...src.matchAll(/^  ([a-z0-9]+)(?:\(ctx, dry, wet, t, m, dur, vel\) \{|: pluck\()/gm)].map((m) => m[1]));
+  const fonts = [...src.matchAll(/^  ([a-z]+): \{ name: '([^']+)'[\s\S]*?map: \{([^}]*)\}/gm)].map((m) => ({ key: m[1], name: m[2], map: Object.fromEntries([...m[3].matchAll(/(\w+): '(\w+)'/g)].map((x) => [x[1], x[2]])) }));
+  const missing = [];
+  for (const f of fonts) for (const r of roles) { const v = f.map[r] || r; if (!insts.has(v)) missing.push(`${f.key}: ${r} -> ${v}`); }
+  ok(fonts.length >= 5 && fonts.some((f) => f.key === 'oldschool') && [...roles].every((r) => insts.has(r)) && missing.length === 0, 'v1.7.0: six soundfonts, and every part role has a voice in each', `${fonts.map((f) => f.key).join(', ')} · voices ${insts.size}` + (missing.length ? ' · missing ' + missing.join('; ') : ''));
   // the plucked accompaniment must not be the same even pulse everywhere: count distinct rhythms (onset patterns) in the harp/lute parts
   const rhythms = new Set();
   for (const t of TRACKS) for (const p of t.parts) {
@@ -98,8 +108,13 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
 {
   const g = mk();
   const P = g.players[0];
+  const early = build(g, 0, 'garden');
+  ok(!early && g.events.some((e) => e[0] === 'note' && e[2] === 'needs_market'), 'v1.7.0: no Garden Plot without a Farmers Market (and the player is told why)');
+  setAge(g, 0, 2);
+  const mk1 = build(g, 0, 'market');
+  ok(mk1 && mk1.done, 'a Farmers Market can be built in the Diner Age');
   const garden = build(g, 0, 'garden');
-  ok(garden && garden.done, 'a garden plot can be built');
+  ok(garden && garden.done, 'a garden plot can be built once the market stands');
   run(g, 3);
   const workers = mine(g, 0, (u) => u.isCook && u.order && u.order.t === 'gather' && u.order.gid === garden.id);
   ok(workers.length === 1, 'exactly one cook works a garden after building it', `(${workers.length})`);

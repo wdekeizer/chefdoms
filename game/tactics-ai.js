@@ -56,6 +56,7 @@ export class TacticsBot {
       else if (g.hostile(pi, b.owner)) c.foeB.push(b);
     }
     c.n = (t) => (c.B[t] ? c.B[t].length : 0);
+    c.done = (t) => (c.B[t] || []).filter((b) => b.done);
     c.home = c.hq || (Object.values(c.B)[0] || [])[0] || { tx: Math.floor(this.P.home.x), ty: Math.floor(this.P.home.y) };
     this.c = c;
     return c;
@@ -293,7 +294,7 @@ export class TacticsBot {
       if (best && (!saving || P.res.wood >= saving + (P.stats.bldgs.pantry.cost.wood || 0) || NODES[best.type].res === 'wood')) {
         claimed.set(best.id, u.id);
         if (goBuild('pantry', best.tx, best.ty)) return true;
-      } else if (!best && !saving && stations >= 3 && P.res.wood > 150 && c.n('garden') < 4 && this.spare(P.stats.bldgs.garden.cost)) {
+      } else if (!best && !saving && stations >= 3 && P.res.wood > 150 && c.n('garden') < 4 && c.done('market').length && this.spare(P.stats.bldgs.garden.cost)) {
         const t = this.plot(u, far, mv);
         if (t && goBuild('garden', t[0], t[1])) return true;
       }
@@ -309,7 +310,7 @@ export class TacticsBot {
     const P = this.P, L = this.L, c = this.c, a = P.age, want = [], zara = P.commander === 'zara';
     const need = (t, n = 1) => { if (c.n(t) < n && P.stats.bldgs[t].age <= a) want.push(t); };
     need('grill');
-    if (a >= 2) { need(zara ? 'garage' : 'sauce'); need('lab'); need(zara ? 'sauce' : 'garage'); if (L.towers) need('tower', L.towers * (a - 1)); if (L.techs) need('market'); }
+    if (a >= 2) { need(zara ? 'garage' : 'sauce'); need('lab'); need(zara ? 'sauce' : 'garage'); if (L.towers) need('tower', L.towers * (a - 1)); need('market'); }
     if (a >= 3) { need('workshop'); need('restaurant'); if (L.sharp) need('grill', 2); }
     return want;
   }

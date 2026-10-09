@@ -42,7 +42,9 @@ function soundscape(now) {
       let n = 0;
       for (const e of G.units) if (e.st === 2 && (G.me < 0 || e.owner === G.me)) { if (++n >= (G.me < 0 ? 6 : G.ctf ? 1 : 2)) { fighting = true; break; } }
     }
-    if (fighting) { if (!fightSince) fightSince = now; if (now - fightSince > 1200) battleUntil = now + 9000; } else fightSince = 0;
+    // a real fight (a few seconds of it) brings the battle music in; it stays for a good while after the last blow,
+    // so a skirmish does not keep cutting the calm pieces short (and the piece that was playing resumes afterwards)
+    if (fighting) { if (!fightSince) fightSince = now; if (now - fightSince > 3000) battleUntil = now + 25000; } else fightSince = 0;
     if (!G.over) music.setState(now < battleUntil ? 'battle' : 'calm');
   }
   if (now - lastAmbient > 130 && G.cam.scale >= 24) {
@@ -187,6 +189,7 @@ const NOTES = {
   nogarrison: 'No Kitchen HQ, tower or Signature Restaurant with room for them (towers take no vehicles or siege)',
   res: 'Not enough ingredients for that',
   place: "Can't build there",
+  needs_market: 'Garden Plots need a finished Farmers Market first',
   pop: 'Staff limit reached: build another Break Room',
   popmax: 'Staff limit reached',
   ultage: 'Ultimates unlock in the Bistro Age',

@@ -3,6 +3,27 @@
 Everyone in a match needs the same version: after the host updates, friends run `git pull` in their copy
 (the lobby chat warns when a copy and the server differ).
 
+## v1.7.0
+
+- **Garden Plots need a Farmers Market.** The seeds come from the market (Diner Age, 175 Firewood), so the first age is
+  lived on Veggie Patches and fishing. The Garden Plot button says "Build a Farmers Market first" until one stands, and a
+  plot sent to the server before that is refused with the same note. Bots build their market early in the Diner Age.
+  Turn-based mode too.
+- **Trade.** The "Send" button is now **Trade** (top bar, players list, menu), and the window is "Trade with a team-mate":
+  give 100, 500 or all of an ingredient. Swapping one ingredient for another is still the Farmers Market's job.
+- **Stations change with the age.** Every station is drawn differently in each of the four ages: timber and plaster
+  (Food Cart); painted shutters, window boxes and a lantern (Diner); dressed stone, arched windows, slate roofs and lamp
+  posts (Bistro); marble, gold trim, roof finials and pennants (Five-Star). Gardens get a fountain, towers turn to stone
+  and marble. Construction sites and placement previews use your current age.
+- **Music plays through.** Pieces were never cut short by length (each is 2:22 to 3:33); the fight music was cutting them
+  off. Now the battle music waits for a few seconds of real fighting (was one), stays 25 seconds after the last blow
+  (was 9), and when it fades the calm piece that was interrupted carries on where it left off instead of a new one
+  starting.
+- **Soundfonts.** Menu → Soundfont picks the instruments the soundtrack is played on: Kitchen (classic), Old School
+  (harpsichord, pizzicato strings, oboe, church organ, xylophone, trumpet), Tavern (nylon guitar, music box, pan flute,
+  accordion, fiddle), Cathedral (organ, choir, tubular bells, ocarina, long echo), Brass Band and Chip. Twenty new synth
+  voices in `public/client/music.js`; the choice is remembered in your browser and takes effect mid-piece.
+
 ## v1.6.1: Capture the Flag balance pass
 
 Measured with a new test bench (`tools/ctf-balance.mjs`): every hero against every other in duels and random 3v3

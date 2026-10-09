@@ -377,6 +377,9 @@ table.score tr.won td { background: rgba(240,180,28,.08); }
 .vol.wide { grid-template-columns: 130px minmax(0, 1fr) 42px; margin: 8px 0; }
 .vol .vol-val { font-size: 12px; line-height: 1; color: var(--accent-2); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sound-box .check { margin: 0; }
+.font-row { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 8px; font-weight: 700; }
+.font-row select { min-width: 0; width: 100%; }
+.fontnote { font-size: 11px; line-height: 1.3; margin-top: -4px; }
 .sound-box .row { display: flex; gap: 6px; }
 
 /* --------------------------------------------------- end of match: tabs, graph */
