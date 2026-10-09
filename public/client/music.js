@@ -5,7 +5,7 @@
 //  battle piece while you are fighting). If the host put files in
 //  public/music/, those are played instead for their category.
 // ============================================================================
-import { TRACKS, STINGERS, parseSeq } from './tracks.js';
+import { TRACKS, STINGERS, parseSeq, piecesFor } from './tracks.js';
 import { audio, whenAudioReady, effectiveMusicVolume } from './audio.js';
 
 const hz = (m) => 440 * 2 ** ((m - 69) / 12);
@@ -416,7 +416,7 @@ class Voice {
     if (!g) { g = this.ctx.createGain(); g.gain.value = p.rev; g.connect(this.send); this.sends.set(p, g); }
     return g;
   }
-  /** Begin at context time t, fading in; `beat` picks up part-way through the piece (a piece interrupted by a fight resumes). */
+  /** Begin at context time t, fading in; `beat` starts part-way through the piece. */
   start(t, fade, beat = 0) {
     const { events, len, spb } = this.c;
     beat = Math.max(0, Math.min(len - 0.001, beat));
@@ -442,57 +442,74 @@ class Voice {
       this.i++;
     }
   }
-  /** Seconds until the current loop ends. */
+  /** Context time at which the current loop ends. */
   loopEnd() { return this.t0 + (this.loop + 1) * this.c.len * this.c.spb; }
+  /** Context time at which the whole piece (all its loops) ends. */
+  end() { return this.t0 + Math.max(1, this.def.loops || 1) * this.c.len * this.c.spb; }
+  /** Move the piece so that it is `secs` from its end (for the development scripts). */
+  seek(now, secs) {
+    const { len, spb } = this.c, loops = Math.max(1, this.def.loops || 1);
+    const beat = Math.max(0, loops * len - secs / spb), lp = Math.min(loops - 1, Math.floor(beat / len)), inLoop = beat - lp * len;
+    this.loop = lp; this.loopsPlayed = lp; this.t0 = now - (lp * len + inLoop) * spb; this.i = 0;
+    while (this.i < this.c.events.length && this.c.events[this.i].t < inLoop) this.i++;
+  }
+  /** Fade out from context time t (which may lie ahead: a piece that is to end naturally keeps its level until then). */
   stop(t, fade) {
     this.done = true;
     this.out.gain.cancelScheduledValues(t);
     this.out.gain.setValueAtTime(Math.max(0.0001, this.out.gain.value), t);
     this.out.gain.linearRampToValueAtTime(0.0001, t + fade);
-    setTimeout(() => { try { this.out.disconnect(); this.send.disconnect(); } catch { /* already gone */ } }, (fade + 4) * 1000);
+    setTimeout(() => { try { this.out.disconnect(); this.send.disconnect(); } catch { /* already gone */ } }, (Math.max(0, t - this.ctx.currentTime) + fade + 4) * 1000);
   }
 }
 
 // ------------------------------------------------------------------- director
+// The director: `want` is what the game asks for (lobby, calm, battle, off) and `age` the player's age. A piece that is
+// playing is never cut short for a change of mood or age: when it ends, the next one is chosen for the situation at
+// that moment (fighting -> a battle piece, otherwise a calm or ambient one of the current age). Only leaving for the
+// lobby, coming from it, and the end of a match change the music at once.
 const byMood = (m) => TRACKS.filter((t) => t.mood === m);
-const state = { want: 'off', cur: null, curDef: null, rev: null, timer: null, queue: [], custom: { lobby: [], game: [], battle: [] }, el: null, elKind: '', elFade: 0, elTarget: 0, elList: [], elIdx: 0 };
+const state = { want: 'off', age: 1, cur: null, curDef: null, rev: null, timer: null, queue: [], queueAge: 0, custom: { lobby: [], game: [], battle: [] }, el: null, elKind: '', elNext: '', elFade: 0, elTarget: 0, elList: [], elIdx: 0 };
+const shuffled = (xs) => xs.slice().sort(() => Math.random() - 0.5);
 
+/** The next calm or ambient piece of the current age: the age's pieces take turns, calm and ambient alternating. */
 function nextCalm() {
+  if (state.queueAge !== state.age) { state.queue.length = 0; state.queueAge = state.age; }
   if (!state.queue.length) {
-    const calm = byMood('calm').sort(() => Math.random() - 0.5), amb = byMood('ambient').sort(() => Math.random() - 0.5);
+    const calm = shuffled(piecesFor('calm', state.age)), amb = shuffled(piecesFor('ambient', state.age));
     for (let i = 0; i < Math.max(calm.length, amb.length); i++) { if (calm[i]) state.queue.push(calm[i]); if (amb[i]) state.queue.push(amb[i]); }
     if (state.queue.length > 1 && state.queue[0] === state.curDef) state.queue.push(state.queue.shift());
   }
   return state.queue.shift();
 }
 
-/** Battle pieces take turns too, never the same one twice in a row. */
+/** Battle pieces of the current age take turns too, never the same one twice in a row. */
 function nextBattle() {
-  const all = byMood('battle'), others = all.filter((t) => t !== state.lastBattle);
+  const all = piecesFor('battle', state.age), others = all.filter((t) => t !== state.lastBattle);
   const pick = (others.length ? others : all)[(Math.random() * (others.length || all.length)) | 0];
   state.lastBattle = pick;
   return pick;
 }
 
-function playDef(def, fadeIn = 1.5, fadeOut = 1.5, beat = 0) {
+/** The piece the wanted mood calls for right now. */
+function nextFor(want) { return want === 'battle' ? nextBattle() : want === 'lobby' ? byMood('lobby')[0] : nextCalm(); }
+
+/**
+ * Play `def`, fading the current piece out. `at` (context time, default now) is when the change happens: the handover
+ * at the end of a piece passes its end, so it keeps its level to the last note and only its tail fades.
+ */
+function playDef(def, fadeIn = 1.5, fadeOut = 1.5, beat = 0, at = -1) {
   const a = audio();
   if (!a) return;
   const { ac, musicBus } = a;
   if (!state.rev) { state.rev = makeReverb(ac); const rg = ac.createGain(); rg.gain.value = SOUNDFONTS[font].reverb || 0.55; state.rev.connect(rg); rg.connect(musicBus); state.revGain = rg; }
-  const now = ac.currentTime;
-  if (state.cur) state.cur.stop(now, fadeOut);
+  const now = ac.currentTime, t = at > now ? at : now;
+  if (state.cur) state.cur.stop(t, fadeOut);
   state.cur = null; state.curDef = def;
   if (!def) return;
   const v = new Voice(ac, musicBus, state.rev, def);
-  v.start(now + 0.08, fadeIn, beat);
+  v.start(t + 0.08, fadeIn, beat);
   state.cur = v;
-}
-
-/** A calm piece a fight interrupted: set aside so it can carry on where it left off once the fighting stops. */
-function shelve(now) {
-  const v = state.cur;
-  if (v && state.curDef && (state.curDef.mood === 'calm' || state.curDef.mood === 'ambient') && v.left(now) > 0.15 && !v.done) state.resume = { def: state.curDef, beat: Math.max(0, v.beatAt(now) - 2) };
-  else state.resume = null;
 }
 
 function categoryOf(want) { return want === 'battle' ? 'battle' : want === 'lobby' ? 'lobby' : 'game'; }
@@ -507,10 +524,11 @@ function tick() {
   if (list && list.length) {
     if (state.cur) { state.cur.stop(a.ac.currentTime, 1.2); state.cur = null; state.curDef = null; }
     if (state.elKind !== kind) {
-      state.elKind = kind; state.elList = list.slice().sort(() => Math.random() - 0.5); state.elIdx = 0;
-      startFile();
-    }
-  } else if (state.elKind) { state.elKind = ''; state.elTarget = 0; }
+      const el = state.el, midFile = el && !el.paused && !el.ended && !el.loop && state.elKind !== 'lobby' && kind !== 'lobby';
+      if (midFile) state.elNext = kind;                                           // the file plays through; the next one is from the new category
+      else { state.elNext = ''; state.elKind = kind; state.elList = shuffled(list); state.elIdx = 0; startFile(); }
+    } else state.elNext = '';
+  } else if (state.elKind) { state.elKind = ''; state.elNext = ''; state.elTarget = 0; }
   if (state.el) {
     state.elFade += Math.sign(state.elTarget - state.elFade) * Math.min(0.12, Math.abs(state.elTarget - state.elFade));
     state.el.volume = Math.max(0, Math.min(1, state.elFade * effectiveMusicVolume()));
@@ -519,20 +537,20 @@ function tick() {
   if (list && list.length) return;
 
   // --- built-in soundtrack
-  const mood = state.curDef ? state.curDef.mood : '';
+  const now = a.ac.currentTime, mood = state.curDef ? state.curDef.mood : '';
   if (want === 'off') { if (state.cur) playDef(null, 0, 1.2); return; }
-  if (want === 'lobby' && mood !== 'lobby') { state.resume = null; playDef(byMood('lobby')[0], 2, 1.5); }
-  else if (want === 'battle' && mood !== 'battle') { shelve(a.ac.currentTime); playDef(nextBattle(), 0.6, 1.0); }
-  else if (want === 'calm' && mood !== 'calm' && mood !== 'ambient') {
-    const r = state.resume; state.resume = null;                                  // back from a fight: the piece it cut short carries on
-    if (r) playDef(r.def, 2.5, 2.5, r.beat); else playDef(nextCalm(), 2.5, 2.5);
+  if (!state.cur || (want === 'lobby') !== (mood === 'lobby')) {                 // nothing playing, or between the lobby and a match: change at once
+    playDef(nextFor(want), want === 'lobby' ? 2 : 2.5, 1.5);
   }
-  const v = state.cur;
+  const v = state.cur, loops = Math.max(1, v ? v.def.loops || 1 : 1);
   if (!v) return;
-  v.schedule(a.ac.currentTime + 0.6);
-  // a piece hands over to the next one in its rotation once it has played through
-  if ((want === 'calm' || want === 'battle') && v.loopsPlayed >= (v.def.loops || 2) - 1 && v.loopEnd() - a.ac.currentTime < 2.6) {
-    if (want === 'calm') playDef(nextCalm(), 2.5, 3); else if (byMood('battle').length > 1) playDef(nextBattle(), 1.2, 2.5);
+  v.schedule(now + 0.6, loops);
+  // a piece plays through; just before its last note the next one is chosen for what is happening now (and the age)
+  const end = v.end();
+  if (want !== 'lobby' && end - now < 2.6) {
+    v.schedule(end + 0.05, loops);                                                // its last notes
+    const next = nextFor(want);
+    if (next) playDef(next, want === 'battle' ? 1.2 : 2.5, 3, 0, end - 0.6);
   }
 }
 
@@ -543,17 +561,23 @@ function startFile() {
   state.elIdx++;
   el.loop = state.elList.length === 1;
   el.volume = 0;
-  el.addEventListener('ended', () => { if (state.el === el && state.elKind) startFile(); });
+  el.addEventListener('ended', () => {
+    if (state.el !== el || !state.elKind) return;
+    if (state.elNext) { state.elKind = state.elNext; state.elNext = ''; state.elList = shuffled(state.custom[state.elKind] || []); state.elIdx = 0; }
+    startFile();
+  });
   el.play().catch(() => { /* autoplay blocked until the first click */ });
   state.el = el; state.elFade = 0; state.elTarget = 1;
 }
 
 export const music = {
-  /** 'off' | 'lobby' | 'calm' | 'battle' */
+  /** 'off' | 'lobby' | 'calm' | 'battle': what the game calls for. A playing piece finishes first (see the director above). */
   setState(s) {
     state.want = s;
     whenAudioReady(() => { if (!state.timer) state.timer = setInterval(tick, 120); });
   },
+  /** The player's age, 1 to 4: the next piece is one of that age's. */
+  setAge(n) { state.age = Math.max(1, Math.min(4, n | 0 || 1)); },
   /** { lobby:[urls], game:[urls], battle:[urls] } from the server's /api/audio */
   setCustom(lists) { state.custom = { lobby: [], game: [], battle: [], ...lists }; },
   /** Short fanfare over whatever is playing: 'win' | 'lose' */
@@ -571,16 +595,21 @@ export const music = {
     const a = audio();
     if (!a || a.ac.state !== 'running') return;
     if (state.elKind) { startFile(); return; }
-    state.resume = null;
     if (state.want === 'calm') playDef(nextCalm(), 1.2, 1.2);
     else if (state.want === 'battle') playDef(nextBattle(), 0.6, 1);
   },
+  /** For the development scripts: move the playing piece to `secs` seconds before its end. */
+  seek(secs) { const a = audio(); if (a && state.cur) state.cur.seek(a.ac.currentTime, secs); },
   now: () => (state.elKind ? 'your files (' + state.elKind + ')' : state.curDef ? state.curDef.name : ''),
   /** The soundfont: a SOUNDFONTS key. Takes effect on the next notes, so the piece carries on in the new voices. */
   setFont(key) { if (!SOUNDFONTS[key]) return; font = key; fontStore.set(key); if (state.revGain) state.revGain.gain.value = SOUNDFONTS[key].reverb || 0.55; },
   font: () => font,
-  /** For the development scripts: what is playing and where it is. */
-  debug() { const a = audio(), v = state.cur; return { want: state.want, piece: state.curDef ? state.curDef.id : '', beat: v && a ? Math.round(v.beatAt(a.ac.currentTime) * 10) / 10 : 0, left: v && a ? Math.round(v.left(a.ac.currentTime) * 100) / 100 : 0, resume: state.resume ? { id: state.resume.def.id, beat: Math.round(state.resume.beat * 10) / 10 } : null }; },
+  /** For the development scripts: what is playing, where it is, and the mood the next piece will take if it differs. */
+  debug() {
+    const a = audio(), v = state.cur, mood = state.curDef ? state.curDef.mood : '', want = state.want;
+    const pending = v && want !== 'off' && want !== 'lobby' && !(want === 'battle' ? mood === 'battle' : (mood === 'calm' || mood === 'ambient')) ? want : null;
+    return { want, age: state.age, piece: state.curDef ? state.curDef.id : '', beat: v && a ? Math.round(v.beatAt(a.ac.currentTime) * 10) / 10 : 0, left: v && a ? Math.round(v.left(a.ac.currentTime) * 100) / 100 : 0, pending };
+  },
 };
 
 /** Render a piece offline (used by the tests to check levels), or just its first `maxSeconds`. Returns an AudioBuffer. */

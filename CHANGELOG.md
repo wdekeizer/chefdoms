@@ -3,6 +3,18 @@
 Everyone in a match needs the same version: after the host updates, friends run `git pull` in their copy
 (the lobby chat warns when a copy and the server differ).
 
+## v1.7.1
+
+- **Pieces finish before the next one starts.** The music still follows the action, but a piece that is playing is no
+  longer interrupted: when it ends, the next one is chosen for what is happening right then. Fighting now (or in the last
+  fifteen seconds) brings a battle piece; otherwise a calm or ambient piece of your age. Only the lobby and the end of
+  a match change the music at once; "Next track" still skips. The host's own music files play through in the same way.
+- **The soundtrack follows your age.** Every piece now belongs to one or more ages (the `ages` field in
+  `public/client/tracks.js`): Morning Prep and Harvest Dance in the Food Cart Age; Market Day and Salt Road from the
+  Diner on; The Long Table and Deep Simmer in the fine-dining ages; the ambient pieces spread across them. Siege of the
+  Supper Club waits for the Diner Age, To Arms, Brigade! retires at Five-Star. Each age has four or five pieces (11 to
+  15 minutes). When you are watching a match, the music follows the most advanced kitchen.
+
 ## v1.7.0
 
 - **Garden Plots need a Farmers Market.** The seeds come from the market (Diner Age, 175 Firewood), so the first age is

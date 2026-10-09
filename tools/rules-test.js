@@ -51,7 +51,7 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
 
 // ------------------------------------------------------------------ soundtrack
 {
-  const { TRACKS, STINGERS, TRACK_PROBLEMS, parseSeq } = await import('../public/client/tracks.js');
+  const { TRACKS, STINGERS, TRACK_PROBLEMS, parseSeq, piecesFor } = await import('../public/client/tracks.js');
   const bad = [...TRACK_PROBLEMS];
   for (const t of [...TRACKS, ...Object.values(STINGERS)]) {
     let lens;
@@ -82,6 +82,18 @@ const setAge = (g, pi, age) => { const P = g.players[pi]; while (P.age < age) g.
     rhythms.add([...durs].sort().join(','));
   }
   ok(rhythms.size >= 8, 'the harp and lute parts use many different rhythms, not one shared pulse', rhythms.size + ' distinct');
+  // v1.7.1: the soundtrack follows the age: every age has a set of its own, each a good 10 minutes long
+  const game = TRACKS.filter((t) => t.mood !== 'lobby');
+  ok(game.every((t) => Array.isArray(t.ages) && t.ages.length && t.ages.every((a) => a >= 1 && a <= 4)), 'v1.7.1: every piece says which ages it belongs to', game.filter((t) => !t.ages).map((t) => t.id).join(', '));
+  const sets = [1, 2, 3, 4].map((a) => [...piecesFor('calm', a), ...piecesFor('ambient', a)]);
+  const mins = sets.map((s) => Math.round(s.reduce((x, t) => x + secs(t), 0) / 60));
+  ok(sets.every((s, i) => s.length >= 4 && mins[i] >= 10 && piecesFor('ambient', i + 1).length >= 1 && piecesFor('calm', i + 1).length >= 1) && new Set(sets.map((s) => s.map((t) => t.id).sort().join())).size === 4,
+    'v1.7.1: each age has four or more calm and ambient pieces (10+ minutes) and no two ages share a list', sets.map((s, i) => `age ${i + 1}: ${s.map((t) => t.id).join('/')} ${mins[i]}m`).join('; '));
+  ok([1, 2, 3, 4].every((a) => piecesFor('battle', a).length >= 2) && !piecesFor('battle', 1).some((t) => t.id === 'siege'), 'v1.7.1: every age has at least two battle pieces, and the Siege waits for the Diner Age');
+  ok(game.every((t) => [1, 2, 3, 4].some((a) => piecesFor(t.mood, a).includes(t))), 'v1.7.1: every piece is heard in some age');
+  // the director lets a piece finish: no mid-piece switching code is left, and the next piece is chosen for the mood and age
+  ok(!/shelve|state\.resume/.test(src) && /setAge\(n\)/.test(src) && /piecesFor\('calm', state\.age\)/.test(src) && /end - now < 2\.6/.test(src) && /playDef\(next, [^)]*end - 0\.6\)/.test(src),
+    'v1.7.1: the music director queues the change of mood for the end of the piece and picks by age');
 }
 
 // ---------------------------------------------------------------------- economy

@@ -431,20 +431,30 @@ const siegeSupper = arrange(
 
 // ------------------------------------------------------------------ the list
 // `loops`: how many times a piece plays before the rotation moves on.
+// `ages`: the ages (1 Food Cart, 2 Diner, 3 Bistro, 4 Five-Star) a piece belongs to. The director plays the pieces of
+// your current age, so the soundtrack moves on as your kitchen does: the dawn and harvest tunes of the Food Cart
+// Age, the market and the trade road of the Diner, the long table and the slow simmer of the fine-dining ages.
+// Every age has four or five pieces (about 11 to 14 minutes before one comes round again).
 export const TRACKS = [
   { id: 'lobby', name: 'The Grand Kitchen', mood: 'lobby', bpm: 88, loops: 99, parts: grandKitchen },
-  { id: 'morning', name: 'Morning Prep', mood: 'calm', bpm: 192, loops: 1, parts: morningPrep },
-  { id: 'market', name: 'Market Day', mood: 'calm', bpm: 116, loops: 1, parts: marketDay },
-  { id: 'harvest', name: 'Harvest Dance', mood: 'calm', bpm: 290, loops: 1, parts: harvestDance },
-  { id: 'table', name: 'The Long Table', mood: 'calm', bpm: 80, loops: 1, parts: longTable },
-  { id: 'road', name: 'Salt Road', mood: 'calm', bpm: 104, loops: 1, parts: saltRoad },
-  { id: 'starlit', name: 'Starlit Pantry', mood: 'ambient', bpm: 60, loops: 1, parts: starlitPantry },
-  { id: 'simmer', name: 'Deep Simmer', mood: 'ambient', bpm: 54, loops: 1, parts: deepSimmer },
-  { id: 'orchard', name: 'Moonlit Orchard', mood: 'ambient', bpm: 66, loops: 1, parts: moonlitOrchard },
-  { id: 'battle', name: 'To Arms, Brigade!', mood: 'battle', bpm: 138, loops: 1, parts: toArms },
-  { id: 'knives', name: 'Knives Out', mood: 'battle', bpm: 146, loops: 1, parts: knivesOut },
-  { id: 'siege', name: 'Siege of the Supper Club', mood: 'battle', bpm: 250, loops: 1, parts: siegeSupper },
+  { id: 'morning', name: 'Morning Prep', mood: 'calm', bpm: 192, loops: 1, ages: [1], parts: morningPrep },
+  { id: 'market', name: 'Market Day', mood: 'calm', bpm: 116, loops: 1, ages: [2, 3], parts: marketDay },
+  { id: 'harvest', name: 'Harvest Dance', mood: 'calm', bpm: 290, loops: 1, ages: [1, 2], parts: harvestDance },
+  { id: 'table', name: 'The Long Table', mood: 'calm', bpm: 80, loops: 1, ages: [3, 4], parts: longTable },
+  { id: 'road', name: 'Salt Road', mood: 'calm', bpm: 104, loops: 1, ages: [2, 3, 4], parts: saltRoad },
+  { id: 'starlit', name: 'Starlit Pantry', mood: 'ambient', bpm: 60, loops: 1, ages: [1, 2, 4], parts: starlitPantry },
+  { id: 'simmer', name: 'Deep Simmer', mood: 'ambient', bpm: 54, loops: 1, ages: [2, 3, 4], parts: deepSimmer },
+  { id: 'orchard', name: 'Moonlit Orchard', mood: 'ambient', bpm: 66, loops: 1, ages: [1, 3, 4], parts: moonlitOrchard },
+  { id: 'battle', name: 'To Arms, Brigade!', mood: 'battle', bpm: 138, loops: 1, ages: [1, 2, 3], parts: toArms },
+  { id: 'knives', name: 'Knives Out', mood: 'battle', bpm: 146, loops: 1, ages: [1, 2, 3, 4], parts: knivesOut },
+  { id: 'siege', name: 'Siege of the Supper Club', mood: 'battle', bpm: 250, loops: 1, ages: [2, 3, 4], parts: siegeSupper },
 ];
+
+/** The pieces of a mood that belong to an age (all of the mood's pieces when none is marked for it). */
+export function piecesFor(mood, age) {
+  const all = TRACKS.filter((t) => t.mood === mood), own = all.filter((t) => !t.ages || t.ages.includes(age));
+  return own.length ? own : all;
+}
 
 export const STINGERS = {
   win: { bpm: 120, parts: [

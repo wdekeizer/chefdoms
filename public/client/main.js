@@ -29,11 +29,20 @@ function show(phase) {
   $('hud').classList.toggle('hidden', phase !== 'game');
   if (phase !== 'game') { UI.resetMenu(); for (const m of document.querySelectorAll('.modal')) m.remove(); $('tooltip').classList.add('hidden'); }
   battleUntil = 0;
+  music.setAge(ageNow());
   music.setState(phase === 'game' ? 'calm' : 'lobby');
 }
 
-// ---- music follows the action, and the kitchen makes little working noises
+// ---- music follows the action and the age, and the kitchen makes little working noises
 let battleUntil = 0, fightSince = 0, lastAmbient = 0, lastMood = 0;
+/** The age the music follows: yours, or the most advanced kitchen's when you are watching. */
+function ageNow() {
+  const me = G.me >= 0 ? G.ps[G.me] : null;
+  if (me) return me.age || 1;
+  let a = 1;
+  for (const p of G.ps) if (p && p.age > a) a = p.age;
+  return a;
+}
 function soundscape(now) {
   if (now - lastMood > 500) {
     lastMood = now;
@@ -42,10 +51,10 @@ function soundscape(now) {
       let n = 0;
       for (const e of G.units) if (e.st === 2 && (G.me < 0 || e.owner === G.me)) { if (++n >= (G.me < 0 ? 6 : G.ctf ? 1 : 2)) { fighting = true; break; } }
     }
-    // a real fight (a few seconds of it) brings the battle music in; it stays for a good while after the last blow,
-    // so a skirmish does not keep cutting the calm pieces short (and the piece that was playing resumes afterwards)
-    if (fighting) { if (!fightSince) fightSince = now; if (now - fightSince > 3000) battleUntil = now + 25000; } else fightSince = 0;
-    if (!G.over) music.setState(now < battleUntil ? 'battle' : 'calm');
+    // a real fight (a few seconds of it) counts as fighting, and still counts for a while after the last blow. The music
+    // only looks at this (and at your age) when the piece that is playing ends: pieces are never cut short.
+    if (fighting) { if (!fightSince) fightSince = now; if (now - fightSince > 3000) battleUntil = now + 15000; } else fightSince = 0;
+    if (!G.over) { music.setAge(ageNow()); music.setState(now < battleUntil ? 'battle' : 'calm'); }
   }
   if (now - lastAmbient > 130 && G.cam.scale >= 24) {
     lastAmbient = now;

@@ -411,9 +411,23 @@ pieces that take turns while you are fighting. The harp and lute accompaniments 
 rolled, strummed, galloping, jigs...) rather than one shared pulse. Volumes and a "Next track" button are under Menu
 (in a match) or "Sound & music" (in the lobby).
 
-**Pieces play through.** The battle music only comes in after a few seconds of real fighting and stays for a while
-after the last blow, and the calm piece it interrupted picks up where it left off once the fight is over, so pieces
-are not forever being cut short by skirmishes.
+**Pieces play through.** A piece is never cut short: when it ends, the next one is chosen for what is happening at
+that moment. If you are fighting (or were in the last quarter of a minute) a battle piece comes in; otherwise a calm or
+ambient piece of your age. Only the lobby and the end of a match change the music at once, and "Next track" is always
+yours to press.
+
+**The soundtrack follows your age.** Each piece belongs to one or more ages, so the music moves on as your kitchen
+does (when you are watching, it follows the most advanced kitchen):
+
+| Age | Pieces | Battle |
+|---|---|---|
+| Food Cart | Morning Prep, Harvest Dance, Starlit Pantry, Moonlit Orchard | To Arms, Brigade! · Knives Out |
+| Diner | Market Day, Harvest Dance, Salt Road, Starlit Pantry, Deep Simmer | all three |
+| Bistro | Market Day, The Long Table, Salt Road, Deep Simmer, Moonlit Orchard | all three |
+| Five-Star | The Long Table, Salt Road, Starlit Pantry, Deep Simmer, Moonlit Orchard | Knives Out · Siege of the Supper Club |
+
+Each age has 11 to 15 minutes of music before a piece comes round again; the pieces of an age take turns, calm and
+ambient alternating. The lists are the `ages` field of each piece in `public/client/tracks.js`.
 
 **Soundfonts.** The same pieces can be played on different sets of instruments: pick one under Menu → Soundfont (it
 is remembered in your browser, and the piece carries on in the new voices at once).
